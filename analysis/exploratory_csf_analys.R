@@ -2,7 +2,7 @@ library(tidyverse)
 library(magrittr)
 library(made4)
 library(ggjoy)
-library(gbm)
+library(gbm3)
 
 positive_mode_data <- read_csv("~/course/ND_Metabolomics/data/csf_positive.csv")
 negative_mode_data <- read_csv("~/course/ND_Metabolomics/data/csf_negative.csv")
@@ -41,29 +41,46 @@ QC_long <- csf_long %>% filter(QC_indices)
 nd_data <- csf_long %>% filter(!QC_indices)
 nd_data$Index <- nd_data$Code %>% gsub(pattern="(NEG-CSF-06202017-)|(CSF-06122017-)", replacement="") %>% as.numeric
 
+nd_data$Abundance[nd_data$Abundance==-Inf] <- NA
 
-fit_boosted_model <- function(df, ntrees=100000, cv.folds=10){
+fit_boosted_model <- function(df, ntrees=10000, cv.folds=10){
+    print(df$Metabolite[1])
+    not_na_indices <- which(!is.na(df$Abundance))
+    df.omitted <- df %>% na.omit(Abundance)
 
-    boost_fit_cv <- gbm(Abundance ~ RunIndex + as.factor(Mode), data=df,
-                         distribution="laplace", n.trees=ntrees, cv.folds=10, verbose=FALSE)
+    boost_fit_cv <- gbm(Abundance ~ RunIndex, data=df.omitted,
+                        distribution="laplace", n.trees=ntrees, cv.folds=10, verbose=FALSE)
     opt_iters <- gbm.perf(boost_fit_cv, method="cv")
     print(opt_iters)
-    boost_fit <- gbm(Abundance ~ RunIndex, data=df, distribution="laplace", n.trees=opt_iters)
-    df$Abundance - boost_fit$fit
+
+    best_fit <- predict(boost_fit_cv, df.omitted, opt_iters)
+
+
+    
+    abund <- df$Abundance
+    bf <- rep(NA, length(abund))
+    
+    abund[not_na_indices] <- df.omitted$Abundance - best_fit
+    bf[not_na_indices] <- best_fit
+    
+    data.frame(Raw = df$Abundance, Abundance = abund, Trend = bf, RunIndex = df$RunIndex, Code=df$Code)
+
 }
 
-detrended <- nd_data %>% group_by(Metabolite, Mode) %>% do(data.frame(Abundance_Detrend=fit_boosted_model(.), RunIndex=.$RunIndex, Code=.$Code))
+detrended <- nd_data %>% group_by(Metabolite, Mode) %>% do(fit_boosted_model(.))
+save(detrended, file="normalized_csf_data.RData")
 
 ## some plots
-detrended %>% ggplot(aes(x=RunIndex, y=Abundance_Detrend, colour=Metabolite)) + geom_line() + geom_point()
-csf_long %>% filter(Metabolite %in% c("Creatinine", "Creatine", "Methionine")) %>% ggplot(aes(x=RunIndex, y=Abundance, colour=Metabolite)) + geom_line() + geom_point()
+detrended %>% filter(Metabolite %in% sample(unique(detrended$Metabolite), 4)) %>% ggplot(aes(x=RunIndex, y=Abundance, colour=Metabolite)) + geom_line() + geom_point() + theme(legend.position="none")
 
+detrended %>% filter(Metabolite %in% sample(unique(detrended$Metabolite), 4)) %>% ggplot(aes(x=RunIndex, y=Trend, colour=Metabolite)) + geom_line() + geom_point() + theme(legend.position="none")
+
+detrended %>% filter(Metabolite %in% c("Creatinine", "Creatine", "Methionine")) %>% ggplot(aes(x=RunIndex, y=Abundance, colour=Metabolite)) + geom_line() + geom_point()
+detrended %>% filter(Metabolite %in% c("Creatinine", "Creatine", "Methionine")) %>% ggplot(aes(x=RunIndex, y=Trend, colour=Metabolite)) + geom_line() + geom_point() + geom_line(aes(x=RunIndex, y=Raw))
 nd_data <- inner_join(nd_data, detrended, by="Code")
 
 
-
-
-
+met <- "3?-Hydroxy-12 Ketolithocholic Acid"   
 
 
 
@@ -127,10 +144,12 @@ rf <- randomForest(cdf$Abundance ~ cdf$RunIndex, maxnodes=12, keep.inbag=TRUE)
 
 boosted_trees <- gbm(Abundance ~ RunIndex + as.factor(Mode), data=cdf, distribution="laplace", n.trees=100000, cv.folds=10, verbose=FALSE)
 opt_iters <- gbm.perf(boosted_trees, method="cv")
+predict(boosted_trees, cdf, opt_iters)
 
 boosted_trees <- gbm(Abundance ~ RunIndex, data=cdf, distribution="laplace", n.trees=opt_iters)
 plot(cdf$RunIndex, cdf$Abundance, type="l", col="black")
 lines(cdf$RunIndex, boosted_trees$fit, col="red", lwd=3)
+lines(cdf$RunIndex, predict(boosted_trees, cdf, opt_iters), col="blue", lwd=3)
 
 res1 <- randomForest(cdf$Abundance ~ cdf$RunIndex, maxnodes = 5)
 res2 <- randomForest(cdf$Abundance ~ cdf$RunIndex, maxnodes = 3)
