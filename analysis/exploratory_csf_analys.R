@@ -3,6 +3,7 @@ library(magrittr)
 library(made4)
 library(ggjoy)
 library(gbm3)
+library(huge)
 
 load("normalized_csf_data.RData")
 
@@ -12,9 +13,11 @@ subject_data %>% group_by(RunIndex, Mode) %>% summarize(tot=sum(Raw)) %>%  ggplo
 
 QC_long %>% group_by(RunIndex, Mode) %>% summarize(tot=sum(Abundance)) %>%  ggplot(aes(x=RunIndex, y=tot, colour=Mode)) + geom_line() + ggtitle("Positive") + geom_smooth(method="lm", se=FALSE)
 
+
+## Look at Raw
 subject_data %>% filter(Mode=="neg") %>% group_by(RunIndex, Mode) %>% summarize(tot=sum(Raw)) %>%  ggplot(aes(x=RunIndex, y=tot, colour=Mode)) + geom_line() + ggtitle("Negative") + geom_smooth(method="lm", se=FALSE)
 
-## check that detrended data looks sensible 
+## check that detrended data looks sensible (for a random sample of metabolites)
 subject_data %>% filter(Metabolite %in% sample(unique(subject_data$Metabolite), 4)) %>% ggplot(aes(x=RunIndex, y=Abundance, colour=Metabolite)) + geom_line() + geom_point() + theme(legend.position="none")
 
 ## Which metabolites had the worst drift?
@@ -24,10 +27,20 @@ subject_data %>% group_by(Metabolite) %>% summarise(var = (max(Trend, na.rm=TRUE
 intercepts <- (subject_data %>% group_by(Batch) %>% summarise(mx = max(RunIndex)))$mx
 subject_data %>% filter(Metabolite %in% c("Creatinine", "Fructose", "Xanthine")) %>% ggplot(aes(x=RunIndex, y=Trend, colour=Metabolite)) + geom_line() + geom_point() + geom_line(aes(x=RunIndex, y=Raw)) + geom_vline(xintercept = intercepts)
 
+## Plot intensity versus log variance
+subject_data  %>% group_by(Metabolite) %>% summarise(med=median(Raw), var=log(var(Abundance))) %>% ggplot(aes(x=med, y=var)) + geom_point() + geom_smooth(method="lm")
+subject_data  %>% group_by(Metabolite) %>% summarise(med=median(Raw), var=log(var(Abundance))) %>% cor.test(.$med, .$var, data=.)
 
 
 ## and residuals..
 subject_data %>% filter(Metabolite %in% c("Creatinine", "Tryptophan", "Methionine")) %>% ggplot(aes(x=RunIndex, y=Abundance, colour=Metabolite)) + geom_line() + geom_point()
+
+## Do QC variances correlate with raw sample variances?
+met_var_qc <- QC_long %>% group_by(Metabolite) %>% summarize(var = var(Abundance))
+met_var_subj <-  subject_data %>% group_by(Metabolite) %>% summarize(var = var(Abundance, na.rm=TRUE))
+met_var <- left_join(met_var_qc, met_var_subj, by="Metabolite")
+
+met_var %>% ggplot(aes(x=log(var.x), y=log(var.y))) + geom_point() + geom_smooth(method="lm")
 
 
 
@@ -168,11 +181,13 @@ subject_data %>% filter(Metabolite %in% mets, Type %in% types) %>%
                fill=factor(APOE))) +  geom_joy(scale = 4) + theme_joy() + facet_wrap(~ Metabolite, nrow=2)
 dev.off()
 
+
+############################################
 tmp_data <- subject_data
 tmp_data$Abundance[is.na(tmp_data$Abundance)] <- 0
 lm_data <- tmp_data %>% group_by(Metabolite) %>% do(res=lm(Abundance ~ Age + Gender + Type, data=.)$residuals)
 tmp_data$residuals <- unlist(lm_data$res)
-tst <- tmp_data %>% spread(key=Metabolite, Mode, value=Abundance)
+tst <- tmp_data %>% spread(key=Metabolite, value=residuals, vars(-Abundaance, Raw)
 
 
 
@@ -188,6 +203,12 @@ sub_mat  <- tmp %>% filter(Type %in% comparison_groups) %>%
 type_vec <- sub_mat$Type
 pcres <- sub_mat %>%  select(-one_of("Id", "Type")) %>% prcomp
 plotarrays(pcres$x, axis1=1, axis2=2, classvec=type_vec)
+
+resid <- sub_mat %>%  select(-one_of("Id", "Type"))
+colors = rainbow(length(unique(type_vec)))
+names(colors) = unique(type_vec)
+ecb = function(x,y){ plot(x, t='n'); text(x, labels=type_vec, col=colors[type_vec]) }
+tsne(resid, epoch_callback = ecb)
 
 ## M v F
 comparison_groups <- c("CY", "CM", "CO")
@@ -223,6 +244,11 @@ type_vec <- sub_mat$Type
 pcres <- sub_mat %>%  select(-one_of("Id", "Type")) %>% prcomp
 plotarrays(pcres$x, axis1=1, axis2=5, classvec=type_vec)
 
+resid <- sub_mat %>%  select(-one_of("Id", "Type"))
+colors = rainbow(length(unique(type_vec)))
+names(colors) = unique(type_vec)
+ecb = function(x,y){ plot(x, t='n'); text(x, labels=type_vec, col=colors[type_vec]) }
+tsne(resid, epoch_callback = ecb)
 ## Test
 
 
