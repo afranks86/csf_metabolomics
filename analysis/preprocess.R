@@ -16,8 +16,6 @@ positive_mode_data$RunIndex <- negative_mode_data$RunIndex <- 1:nrow(positive_mo
 positive_mode_data$Mode <- ifelse(grepl("QC", positive_mode_data$Code), "QC_pos", "pos")
 negative_mode_data$Mode <- ifelse(grepl("QC", negative_mode_data$Code), "QC_neg", "neg")
 
-QC_pos <- positive_mode_data %>% filter(Mode == "QC_pos")
-
 pos_long <- positive_mode_data %>% gather(key=Metabolite, value=Abundance, -one_of("Code", "RunIndex", "Mode")) 
 neg_long <- negative_mode_data %>% gather(key=Metabolite, value=Abundance, -one_of("Code", "RunIndex", "Mode"))
 pos_long <- pos_long %>% mutate_at("Abundance", funs(log(.)))
@@ -36,20 +34,19 @@ nd_data$Index <- nd_data$Code %>% gsub(pattern="(NEG-CSF-06202017-)|(CSF-0612201
 ## 0 abundace peps are NA for now 
 nd_data$Abundance[nd_data$Abundance==-Inf] <- NA
 
-fit_boosted_model <- function(df, ntrees=10000, cv.folds=10){
+fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, min_node_size=10){
     print(df$Metabolite[1])
+
     not_na_indices <- which(!is.na(df$Abundance))
     df.omitted <- df %>% na.omit(Abundance)
 
-    boost_fit_cv <- gbm(Abundance ~ RunIndex, data=df.omitted,
-                        distribution="laplace", n.trees=ntrees, cv.folds=10, verbose=FALSE)
+    boost_fit_cv <- gbm(Abundance ~ RunIndex, data=df.omitted, distribution="laplace",
+                        n.trees=ntrees, cv.folds=10, n.minobsinnode=min_node_size, verbose=FALSE)
     opt_iters <- gbm.perf(boost_fit_cv, method="cv")
     print(opt_iters)
 
     best_fit <- predict(boost_fit_cv, df.omitted, opt_iters)
 
-
-    
     abund <- df$Abundance
     bf <- rep(NA, length(abund))
     
@@ -61,6 +58,8 @@ fit_boosted_model <- function(df, ntrees=10000, cv.folds=10){
 }
 
 detrended <- nd_data %>% group_by(Metabolite, Mode) %>% do(fit_boosted_model(.))
+
+detrended_QC <- QC_long %>% mutate(Index=RunIndex) %>% group_by(Metabolite, Mode) %>% do(fit_boosted_model(., cv.folds=22, min_node_size=2))
 
 
 ## Join with Tracking data
