@@ -79,10 +79,61 @@ subject_data <- subject_data %>% mutate(APOE=ifelse(is.na(APOE), "Unknown", as.c
 subject_data$Residual <- NA
 for(met in unique(subject_data$Metabolite)) {
     met_indices <- (subject_data$Metabolite == met & !is.na(subject_data$Raw))
-    lmod <- subject_data %>% filter(met_indices) %>% lm(Abundance ~ Age + Gender + APOE + Type, data=.)
+    lmod <- subject_data %>% filter(met_indices) %>% lm(Abundance ~ Age + Gender + Type2 + APOE, data=.)
     
-    subject_data$Residuals[met_indices] <- lmod$residuals
+    subject_data$Residual[met_indices] <- lmod$residuals
 
 }
 
-save(subject_data, QC_long, file = "preprocessed_csf_data.RData")
+lmod_info <- tibble(pred=rep(c("Age", "GenderM", "AD", "Other", "PD", "APOE24", "APOE33", "APOE34", "APOE44"), 2),
+                    stat=rep(c("Est", "Pval"), each=9))
+for(met in unique(subject_data$Metabolite)) {
+    met_indices <- (subject_data$Metabolite == met & !is.na(subject_data$Raw))
+    lmod <- subject_data %>% filter(met_indices) %>% lm(Abundance ~ Age + Gender + relevel(Type2, 2) + APOE, data=.)
+
+    lmod_info[[met]] <- as.vector(summary(lmod)$coef[2:10, c(1, 4)])
+}
+
+linear_model_info <- lmod_info %>% gather(key="Metabolite", value="Value", -one_of("pred", "stat"))
+
+
+
+## biocLite("KEGGREST")
+library(KEGGREST)
+listDatabases()
+
+metabolites <- unique(subject_data$Metabolite)
+
+matches <- sapply(metabolites, function(met) {
+    kegg_matches <- keggFind("compound", met)
+    pat1 <- paste0("^", met)
+    pat2 <- paste0("; ", met, ";")
+    match_idx1 <- grep(pat1, kegg_matches)
+    match_idx2 <- grep(pat2, kegg_matches)    
+    if(length(match_idx1) > 1) {
+        return(kegg_matches[match_idx1][1])
+    } else if(length(match_idx2) > 1) {
+        return(kegg_matches[match_idx2][1])
+    } else {
+        return(kegg_matches[1])
+    }
+
+    
+})
+matches_vec <- unlist(matches)
+metabolite_kegg_map <- tibble(metabolite = metabolites, kegg_id = sapply(strsplit(names(matches_vec), ":", fixed=TRUE), function(x) x[2]), description=matches_vec)
+
+metabolite_kegg_map[100, ]
+
+pathways <- sapply(metabolite_kegg_map$kegg_id, function(cid) {
+    print(cid)
+    if(is.na(cid)) {
+        NULL
+    } else {
+        keggGet(cid)[[1]]$PATHWAY
+    }
+})
+
+metabolite_kegg_map$pathways <- pathways
+
+save(subject_data, QC_long, linear_model_info, metabolite_kegg_map, file = "preprocessed_csf_data.RData")
