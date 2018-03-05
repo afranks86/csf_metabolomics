@@ -61,7 +61,6 @@ subject_data %<>% mutate_at(vars(c("Type", "Gender")), as.factor)
 subject_data %<>% mutate_at(vars(c("Index")), as.integer)
 
 
-
 fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, min_node_size=5) {
     
   print(df$Metabolite[1])
@@ -70,7 +69,7 @@ fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, min_node_size=5) {
   df.omitted <- df %>% filter(not_na_indices)
 
   boost_fit_cv <- gbm(
-    Abundance ~ RunIndex + Age + Gender + Type, data = df.omitted, distribution = "laplace",
+    Abundance ~ RunIndex + Gender + Type, data = df.omitted, distribution = "laplace",
     n.trees = ntrees, cv.folds = 10, n.minobsinnode = min_node_size, verbose = FALSE
   )
   opt_iters <- gbm.perf(boost_fit_cv, method = "cv")
@@ -79,22 +78,19 @@ fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, min_node_size=5) {
   abund <- df.omitted$Abundance
 
   trend <- plot(boost_fit_cv, 1, num_trees=opt_iters, grid_levels=df.omitted$RunIndex, return_grid=TRUE)$y
-  ageTrend <- plot(boost_fit_cv, 2, num_trees=opt_iters, grid_levels=df.omitted$Age, return_grid=TRUE)$y    
   
     abund <- df.omitted$Abundance - trend
        
     df$Raw <- df$Abundance
     df$Abundance[not_na_indices] <- abund
-    df$Trend <- df$Abundance
+    df$Trend <- df$Raw
     df$Trend[not_na_indices] <- trend
-    df$AgeTrend = df$Abundance
-    df$AgeTrend[not_na_indices] <- ageTrend
 
     df
 }
+tmp <- subject_data %>% filter(Metabolite == "483 Results") %>% fit_boosted_model
 
-detrended <- subject_data %>% filter(Mode == "neg") %>% group_by(Metabolite, Mode) %>% do(fit_boosted_model(.))
-## save(detrended, file="gotms_data.RData")
+detrended <- subject_data %>%  group_by(Metabolite, Mode) %>% do(fit_boosted_model(.))
 
 subject_data <- detrended
 
@@ -105,4 +101,4 @@ subject_data %<>% mutate(Type2 = ifelse(Type %in% c("CY", "CM", "CO"), "C", as.c
 subject_data <- subject_data %>% mutate(APOE=ifelse(is.na(APOE), "Unknown", as.character(APOE))) %>% mutate(APOE=factor(APOE))
 subject_data %<>% ungroup
 
-save(subject_data, QC_long, file = "~/Desktop/preprocessed_gotms_data.RData")
+save(subject_data, QC_long, file = "preprocessed_gotms_data.RData")
