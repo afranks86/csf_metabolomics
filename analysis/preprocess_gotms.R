@@ -57,8 +57,12 @@ nd_data$Abundance[nd_data$Abundance == 0] <- NA
 ## Join with Tracking data
 tracking_data <- read_csv("~/course/ND_Metabolomics/data/NDTracking.csv")
 subject_data <- inner_join(tracking_data, nd_data, by = c("Index" = "SampleId"))
-subject_data %<>% mutate_at(vars(c("Type", "Gender")), as.factor)
+subject_data %<>% mutate_at(vars(c("Type", "Gender", "APOE")), as.factor)
 subject_data %<>% mutate_at(vars(c("Index")), as.integer)
+
+subject_data %<>% rename(Raw = Abundance)
+
+subject_data %<>% group_by(Mode, RunIndex) %>% mutate(Abundance = Raw - median(Raw, na.rm=TRUE)) %>% ungroup
 
 
 fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, min_node_size=5) {
@@ -88,7 +92,6 @@ fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, min_node_size=5) {
 
     df
 }
-tmp <- subject_data %>% filter(Metabolite == "483 Results") %>% fit_boosted_model
 
 detrended <- subject_data %>%  group_by(Metabolite, Mode) %>% do(fit_boosted_model(.))
 
