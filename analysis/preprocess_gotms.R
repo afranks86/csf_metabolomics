@@ -39,8 +39,6 @@ csf_long <- bind_rows(neg_long,
                      pos_long_02,
                      pos_long_03)
 
-
-
 ################################
 ## Detrend data
 ################################
@@ -65,7 +63,7 @@ subject_data %<>% rename(Raw = Abundance)
 subject_data %<>% group_by(Mode, RunIndex) %>% mutate(Abundance = Raw - median(Raw, na.rm=TRUE)) %>% ungroup
 
 
-fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, min_node_size=5) {
+fit_boosted_model <- function(df, ntrees=20000, cv.folds=10, min_node_size=10, shrinkage=0.001) {
     
   print(df$Metabolite[1])
 
@@ -74,26 +72,27 @@ fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, min_node_size=5) {
 
   boost_fit_cv <- gbm(
     Abundance ~ RunIndex + Gender + Type, data = df.omitted, distribution = "laplace",
-    n.trees = ntrees, cv.folds = 10, n.minobsinnode = min_node_size, verbose = FALSE
+    shrinkage=shrinkage, n.trees = ntrees, cv.folds = 10, n.minobsinnode = min_node_size, verbose = FALSE
   )
   opt_iters <- gbm.perf(boost_fit_cv, method = "cv")
-  print(opt_iters)
+  print(sprintf("Opt iters: %g, err: %f", opt_iters, boost_fit_cv$cv_error[opt_iters]))
 
   abund <- df.omitted$Abundance
 
   trend <- plot(boost_fit_cv, 1, num_trees=opt_iters, grid_levels=df.omitted$RunIndex, return_grid=TRUE)$y
   
     abund <- df.omitted$Abundance - trend
-       
-    df$Raw <- df$Abundance
+
+    df$RawScaled <- df$Abundance
+    
     df$Abundance[not_na_indices] <- abund
-    df$Trend <- df$Raw
+    df$Trend <- df$Abundance
     df$Trend[not_na_indices] <- trend
 
     df
 }
 
-detrended <- subject_data %>%  group_by(Metabolite, Mode) %>% do(fit_boosted_model(.))
+detrended <- subject_data %>%  group_by(Metabolite, Mode) %>% do(fit_boosted_model(., shrinkage=0.001))
 
 subject_data <- detrended
 
@@ -104,4 +103,16 @@ subject_data %<>% mutate(Type2 = ifelse(Type %in% c("CY", "CM", "CO"), "C", as.c
 subject_data <- subject_data %>% mutate(APOE=ifelse(is.na(APOE), "Unknown", as.character(APOE))) %>% mutate(APOE=factor(APOE))
 subject_data %<>% ungroup
 
-save(subject_data, QC_long, file = "preprocessed_gotms_data.RData")
+save(subject_data, QC_long, file = sprintf("preprocessed_gotms_data-%s.RData", Sys.Date()))
+
+
+## Experiment with deterending
+if(FALSE) {
+    met <- sample(subject_data$Metabolite, 1)
+    tmp <- subject_data %>%  filter(Metabolite == met) %>% group_by(Metabolite, Mode) %>% do(fit_boosted_model(., shrinkage=0.01))
+    p1 <- tmp %>% filter(Metabolite == met) %>% ggplot(aes(x=RunIndex, y=Trend, colour=Metabolite)) + geom_line() + geom_point() + geom_line(aes(x=RunIndex, y=RawScaled))
+
+    tmp <- subject_data %>%  filter(Metabolite == met) %>% group_by(Metabolite, Mode) %>% do(fit_boosted_model(., shrinkage=0.001))
+    p2 <- tmp %>% filter(Metabolite == met) %>% ggplot(aes(x=RunIndex, y=Trend, colour=Metabolite)) + geom_line() + geom_point() + geom_line(aes(x=RunIndex, y=RawScaled))
+    p1 + p2
+}

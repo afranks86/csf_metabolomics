@@ -17,18 +17,20 @@ library(modelr)
 library(robust)
 
 source("~/course/rstiefel/R/opt.stiefel.R")
+source("envelope_functions.R")
 source("utility.R")
 
-load("preprocessed_gotms_data.RData")
+## load("preprocessed_gotms_data.RData")
+load("preprocessed_gotms_data-2018-03-21.RData")
 
 ## Dimension of envelope reduction
-S <- 2
+s <- 2
 
 wide_data <- subject_data %>%     
     filter(!(Type %in% c("Other"))) %>%
     unite("Metabolite", c("Metabolite", "Mode")) %>% 
     mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
-    dplyr::select(-one_of("Raw", "RunIndex", "Trend", "Batch", "Name", "Id", "Data File")) %>%
+    dplyr::select(-one_of("Raw", "RawScaled", "RunIndex", "Trend", "Batch", "Name", "Id", "Data File")) %>%
     spread(key=Metabolite, value=Abundance)
 
 ## Impute missing values
@@ -36,9 +38,127 @@ Y <- wide_data %>%
   dplyr::select(-one_of("Type", "Type2", "Gender", "Age", "APOE", "Index")) %>%
   as.matrix()
 Yt <- amelia(t(Y), m = 1, empri = 100)$imputations$imp1
-Y <- t(Yt)
+Y <- t(Yt) %>% as.matrix
 
-wide_data[, -one_of("Type", "Type2", "Gender", "Age", "APOE", "Index", vars=colnames(wide_data))]  <- Y
+X <- wide_data %>% 
+  dplyr::select(one_of("Gender", "Age", "Type", "APOE")) %>%
+  mutate(APOE = droplevels(APOE)) %>% 
+  model_matrix(~ Age + Type + Gender + APOE - 1) %>%
+  dplyr::select(-one_of("APOEUnknown")) %>% 
+  as.matrix
+
+
+Age_comparison <- wide_data %>% filter(Type2 == "C") %>% 
+mutate(Type2 = droplevels(Type2), Type = droplevels(Type))
+
+Y <- wide_data %>% mutate(Type2 = droplevels(Type2), Type = droplevels(Type)) %>% dplyr::select(-one_of("Index", "Type", "Type2", "Gender", "Age", "APOE", "Index")) 
+Yt <- amelia(t(Y), m = 1, empri = 100)$imputations$imp1
+Y <- t(Yt) %>% as.matrix
+
+met_var_qc <- QC_long %>%
+    mutate(Abundance=replace(Abundance, Abundance == -Inf, NA)) %>% 
+    group_by(Metabolite, Mode) %>%
+    summarize(qc_var = var(Abundance, na.rm=TRUE),
+              qc_mad = median(abs(Abundance - median(Abundance, na.rm=TRUE)), na.rm=TRUE),
+              qc_mean=mean(Abundance))
+
+met_var_qc <- met_var_qc %>% ungroup %>% mutate(Mode = str_replace(met_var_qc$Mode, "QC_", "")) %>% unite(Metabolite, Metabolite, Mode)
+
+## Match QC variances with Y columns
+met_var_qc %<>% arrange(colnames(Y))
+
+r <- 20
+
+betaHat <- solve(t(X) %*% X) %*% t(X) %*% Y
+betav <- svd(betaHat)$v
+Vinit <- cbind(betav, NullC(betav)[, 1:r])
+
+D <- Diagonal(ncol(Y), 1/sqrt(met_var_qc$qc_var))
+D <- Diagonal(ncol(Y), 1/sqrt(apply(Y, 2, function(x) var(x, na.rm=TRUE))))
+
+
+## works well with large s and small r??
+s <- 10
+r=10
+Vfit <- fit_envelope(Y, X, s=s, r=r, prior_counts=1000)
+
+
+## colnames(Y)[order(rowSums(Vfit[, 1:2]^2), decreasing=TRUE)] %>% head(n=20)
+
+Yproj <- as.matrix(Y) %*% Vfit[, 1:s]
+YprojPerp <- as.matrix(Y) %*% Vfit[, (s+1):(s+r)]
+
+eta <- solve((1 + 10000/nrow(Y))*t(X) %*% X) %*% t(X) %*% Yproj
+eta
+
+## Vfit2 <- Vfit[, 1:s] %*% svd(eta)$v
+Vfit2 <- Vfit[, 1:s] %*% t(eta)
+YprojGender <- as.matrix(Y) %*% Vfit[, 1:s] %*% t(eta)[, 7]
+YprojPD <- as.matrix(Y) %*% Vfit[, 1:s] %*% t(eta)[, 6]
+APOEproj <- as.matrix(Y) %*% rowMeans((Vfit[, 1:s] %*% svd(eta[8:11, ])$v[, 1:2]))
+
+
+Yproj <- as.matrix(Y) %*% Vfit2
+
+## Age
+tib <- tibble(x=Yproj[, 1], y=Yproj[, 2], Gender=factor(X[, "GenderM"]), Age=as.numeric(X[, "Age"]), Type=wide_data$Type2)
+tib <- tib %>% filter(Type == "C")
+ggplot(tib) + geom_point(aes(x=x, y=y, col=Age, shape=Type)) + scale_color_gradientn(colors=heat.colors(10))
+
+
+tib <- tibble(x=Yproj[, 6], y=Yproj[, 4], Gender=factor(X[, "GenderM"]), Age=as.numeric(X[, "Age"]), Type=wide_data$Type2)
+tib <- tib %>% filter(Type %in% c("C", "PD"))
+ggplot(tib) + geom_point(aes(x=x, y=y, col=Type, shape=Type))
+
+
+
+ggplot(tibble(GenderAxis=as.numeric(YprojGender), Gender=factor(X[, "GenderM"]), Age=X[, "Age"])) + geom_joy(aes(x=GenderAxis, y=Gender, fill=Gender))
+ggplot(tibble(x=as.numeric(YprojPD), Type=wide_data$Type2)) + geom_joy(aes(x=x, y=Type, fill=Type))
+ggplot(tibble(x=as.numeric(APOEproj), APOE=wide_data$APOE)) + geom_joy(aes(x=x, y=APOE, fill=APOE))
+
+
+
+
+
+ggplot(tibble(x=Yproj[, 5], y=Yproj[, 4], Gender=factor(X[, "GenderM"]), Age=X[, "Age"], Type=wide_data$Type2)) + geom_point(aes(x=x, y=y, shape=Type, col=Type))
+
+ggplot(tibble(Axis=Yproj[, 1]-Yproj[, 2], Gender=Xplot$Gender, Age=Xplot$Age)) + geom_joy(aes(x=Axis, y=Age < 40, fill=Age < 40))
+
+ggplot(tibble(Axis=Yproj[, 1], Gender=Xplot$Gender, Age=Xplot$Age)) + geom_joy(aes(x=Axis, y=Gender, fill=Gender))
+
+median(Yproj[Xplot$Gender=="F", 1]-Yproj[Xplot$Gender=="F", 2])
+median(Yproj[Xplot$Gender=="M", 1]-Yproj[Xplot$Gender=="M", 2])
+
+
+dim(X1[, 2] %*% tmp[2, ,drop=FALSE] %*% t(Vfit))
+
+Xplot <- Age_comparison %>% 
+  dplyr::select(one_of("Gender", "Age"))
+
+
+
+proj_data <- bind_cols(as.tibble(as.matrix(Yproj)), Xplot)
+summary_data <- proj_data %>% group_by(cut(Age, 3)) %>% summarise(med1=median(V1), med2=median(V2))
+ggplot(proj_data)  + geom_point(aes(x = V1, y = V2, col = cut(Age, 3), shape=Gender, size=4)) +  geom_point(data=summary_data, aes(x=med1, y=med2, size=3,))
+
+
+
+colnames(Y)[order(rowSums(Vfit^2), decreasing=TRUE)] %>% head(n=20)
+
+plot(log(diag(D)), log(apply(Y, 2, function(x) var(x, na.rm=TRUE))))
+
+plot(log(apply(Y, 2, function(x) var(x, na.rm=TRUE)))), log(apply(Y %*% D, 2, function(x) var(x, na.rm=TRUE))))
+
+hist(log(apply(Y %*%  D, 2, function(x) var(x, na.rm=TRUE))))
+
+
+
+
+
+
+
+
+
 
 folds <- crossv_kfold(wide_data, k = nrow(wide_data))
 folds <- folds[1, ]
@@ -91,98 +211,6 @@ fit_resampled <- function(resamp, S=2) {
   fit_envelope(Y, X, S)
 
 }
-
-## This is a general envelope function
-fit_envelope <- function(Y, X, S=2) {
-
-  Y %<>% as.matrix
-  X %<>% model_matrix(~ .) %>% as.matrix()
-
-  ## remove intercept
-  X <- X[, -1]
-
-
-  N <- nrow(Y)
-  P <- ncol(Y)
-
-  evals <- eigen(t(X) %*% X)$values
-  if (evals[length(evals)] < 1e-6) {
-    browser()
-  }
-
-  betaHat <- t(Y) %*% X %*% solve(t(X) %*% X)
-
-  res <- (Y - X %*% t(betaHat))
-
-  rankM <- getRank(res)
-  rankMU <- getRank(Y)
-
-  MU <- t(Y) %*% Y / N
-
-
-  ## MUeigen <- eigen(MU)
-  ## MU <- MUeigen$vectors[, 1:rankMU] %*% diag(MUeigen$values[1:rankMU]) %*% t(MUeigen$vectors[, 1:rankMU])
-  ## MUinv <- MUeigen$vectors[, 1:rankMU] %*% diag(1/MUeigen$values[1:rankMU]) %*% t(MUeigen$vectors[, 1:rankMU])
-
-  ## shrinakge estimation
-  MUvecs <- eigen(MU)$vectors[, (getRank(MU) + 1):P]
-  MU <- MU - MUvecs %*% t(MUvecs) %*% MU %*% MUvecs %*% t(MUvecs) + diag(rep(0.01, P))
-
-  M <- t(res) %*% res / N
-  SigmaHat <- M
-
-  Mvecs <- eigen(M)$vectors[, (getRank(M) + 1):P]
-  M <- M - Mvecs %*% t(Mvecs) %*% M %*% Mvecs %*% t(Mvecs) + diag(rep(0.01, P))
-
-  ## M <- M + 0.01*diag(nrow(M))
-  ## MUinv <- M + 0.01*diag(nrow(MUinv))
-  print("Inverting...")
-  MUinv <- solve(MU)
-
-  F <- function(V, M, MUinv) {
-    determinant(t(V) %*% M %*% V, logarithm = TRUE)$modulus +
-      determinant(t(V) %*% MUinv %*% V, logarithm = TRUE)$modulus
-  }
-
-  dF <- function(V, M, MUinv) {
-    2 * M %*% V %*% solve(t(V) %*% M %*% V) +
-      2 * MUinv %*% V %*% solve(t(V) %*% MUinv %*% V)
-  }
-
-  print("Fitting Stiefel manifold")
-  Vfit <- optStiefel(
-    function(V) F(V, M, MUinv),
-    function(V) dF(V, M, MUinv),
-    method = "bb",
-    Vinit = rustiefel(P, S),
-    verbose = TRUE,
-    maxIters = 1000,
-    maxLineSearchIters = 20
-  )
-    
-  Yproj <- Y %*% Vfit
-
-  ## Covariance is determed by betahat
-
-  gam <- svd(betaHat)$u
-  gam0 <- rstiefel::NullC(gam)
-
-  res_proj <- res %*% gam
-  psihat <- t(res_proj) %*% res_proj / N
-
-  res_proj0 <- res %*% gam0
-  psihat.0 <- t(res_proj0) %*% res_proj0 / N
-
-  SigmaHatCov <- gam %*% psihat %*% t(gam) + gam0 %*% psihat.0 %*% t(gam0) + diag(rep(1, P))
-
-
-  ## Envelope estimates
-  etaHat <- t(Yproj) %*% X %*% solve(t(X) %*% X)
-  betaHatNew <- Vfit %*% etaHat
-
-  list(betaHat = betaHat, betaHatNew = betaHatNew, SigmaHat = SigmaHat, SigmaHatNew = M, SigmaHatCov = SigmaHatCov, Vfit = Vfit)
-}
-
 
 test_out_of_sample <- function(test, params) {
   df <- test$data[test$idx, ]
@@ -257,7 +285,7 @@ res <- fit_envelope(Y, X, 3)
 Vfit <- res$Vfit
 Vfit <- rustiefel(ncol(Y), S)
 
-Yproj <- as.matrix(Y) %*% Vfit %>% as.tibble()
+Yproj <- as.matrix(Y) %*% Vfit[, 1:2] %>% as.tibble()
 proj_data <- bind_cols(Yproj, X)
 
 proj_data %>% ggplot(aes(x = V1, y = V2, col = Type, shape=Gender)) + geom_point()
