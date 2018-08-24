@@ -4,10 +4,6 @@
 library(tidyverse)
 library(ggExtra)
 library(magrittr)
-library(made4)
-library(ggjoy)
-library(gbm3)
-library(huge)
 library(microbenchmark)
 library(mvtnorm)
 library(mvnfast)
@@ -15,9 +11,10 @@ library(rstiefel)
 library(Amelia)
 library(modelr)
 library(robust)
+library(ggridges)
+library(envelopeR)
+library(Matrix)
 
-source("~/course/rstiefel/R/opt.stiefel.R")
-source("envelope_functions.R")
 source("utility.R")
 
 ## load("preprocessed_gotms_data.RData")
@@ -41,6 +38,13 @@ Yt <- amelia(t(Y), m = 1, empri = 100)$imputations$imp1
 Y <- t(Yt) %>% as.matrix
 
 X <- wide_data %>% 
+  dplyr::select(one_of("Gender", "Age", "Type2", "APOE")) %>%
+  mutate(APOE = droplevels(factor(APOE, c("Unknown", "23", "24", "33", "34", "44")))) %>% 
+  model_matrix(~ Age + Type2 + Gender + APOE - 1)
+X <- X %>% select(-"Type2C") %>% as.matrix
+
+
+X <- wide_data %>% 
   dplyr::select(one_of("Gender", "Age", "Type", "APOE")) %>%
   mutate(APOE = droplevels(APOE)) %>% 
   model_matrix(~ Age + Type + Gender + APOE - 1) %>%
@@ -49,7 +53,8 @@ X <- wide_data %>%
 
 
 Age_comparison <- wide_data %>% filter(Type2 == "C") %>% 
-mutate(Type2 = droplevels(Type2), Type = droplevels(Type))
+    mutate(Type2 = droplevels(Type2), Type = droplevels(Type))
+
 
 Y <- wide_data %>% mutate(Type2 = droplevels(Type2), Type = droplevels(Type)) %>% dplyr::select(-one_of("Index", "Type", "Type2", "Gender", "Age", "APOE", "Index")) 
 Yt <- amelia(t(Y), m = 1, empri = 100)$imputations$imp1
@@ -67,64 +72,222 @@ met_var_qc <- met_var_qc %>% ungroup %>% mutate(Mode = str_replace(met_var_qc$Mo
 ## Match QC variances with Y columns
 met_var_qc %<>% arrange(colnames(Y))
 
-r <- 20
+s <- 10
+r <- 0
+q <- ncol(X)
 
 betaHat <- solve(t(X) %*% X) %*% t(X) %*% Y
 betav <- svd(betaHat)$v
-Vinit <- cbind(betav, NullC(betav)[, 1:r])
+Vinit <- cbind(betav, NullC(betav)[, 1:(s+r-q)])
 
 D <- Diagonal(ncol(Y), 1/sqrt(met_var_qc$qc_var))
+D <- Diagonal(ncol(Y), sqrt(met_var_qc$qc_var))
 D <- Diagonal(ncol(Y), 1/sqrt(apply(Y, 2, function(x) var(x, na.rm=TRUE))))
-
+D <- Diagonal(ncol(Y), 1)
 
 ## works well with large s and small r??
-s <- 10
-r=10
-Vfit <- fit_envelope(Y, X, s=s, r=r, prior_counts=1000)
 
+prior_counts <- 0
+
+envelopeR::test_envelope(Y=Y, X=X, s=s, r=r, prior_counts=prior_counts,
+                         Vinit="OLS")
+
+envelopeR::test_envelope(Y=Y, X=X, s=s, r=r, prior_counts=prior_counts,
+                          Vinit=Vinit)
+
+V <- Vinit
+res <- envelopeR::fit_envelope(Y=Y, X=X, D=D, s=s, r=r, prior_counts=prior_counts,
+                               maxIters=10000, Vinit="OLS")
+
+V <- res$V
+res <- fit_envelope(Y=Y, X=X, D=D, s=s, r=r, prior_counts=prior_counts,
+                    maxIters=10000, Vinit="OLS")
+
+test_envelope(Y=Y, X=X, s=s, r=r,
+              prior_counts=prior_counts,
+              U1=10*diag(s), U0=10*diag(r), Vinit=V)
+
+test_envelope(Y=Y, X=X, s=s, r=r,
+              prior_counts=prior_counts,
+              Vinit=V)
+
+save(res, file=sprintf("env_s%i_r%i_prior%i_diag_%s", s, r, prior_counts, Sys.Date()))
+Vfit <- res$V
 
 ## colnames(Y)[order(rowSums(Vfit[, 1:2]^2), decreasing=TRUE)] %>% head(n=20)
 
-Yproj <- as.matrix(Y) %*% Vfit[, 1:s]
+eta <- res$eta_hat
+Yproj <- as.matrix(Y) %*% Vfit[, 1:s] %*% t(eta)
 YprojPerp <- as.matrix(Y) %*% Vfit[, (s+1):(s+r)]
 
-eta <- solve((1 + 10000/nrow(Y))*t(X) %*% X) %*% t(X) %*% Yproj
-eta
+beta_env <- res$beta_env
+colnames(beta_env) <- colnames(Y)
 
-## Vfit2 <- Vfit[, 1:s] %*% svd(eta)$v
-Vfit2 <- Vfit[, 1:s] %*% t(eta)
-YprojGender <- as.matrix(Y) %*% Vfit[, 1:s] %*% t(eta)[, 7]
-YprojPD <- as.matrix(Y) %*% Vfit[, 1:s] %*% t(eta)[, 6]
-APOEproj <- as.matrix(Y) %*% rowMeans((Vfit[, 1:s] %*% svd(eta[8:11, ])$v[, 1:2]))
-
-
-Yproj <- as.matrix(Y) %*% Vfit2
-
-## Age
-tib <- tibble(x=Yproj[, 1], y=Yproj[, 2], Gender=factor(X[, "GenderM"]), Age=as.numeric(X[, "Age"]), Type=wide_data$Type2)
-tib <- tib %>% filter(Type == "C")
-ggplot(tib) + geom_point(aes(x=x, y=y, col=Age, shape=Type)) + scale_color_gradientn(colors=heat.colors(10))
+YprojGender <- as.matrix(Y) %*% Vfit[, 1:s] %*% t(eta)[, "GenderM"]
+YprojPD <- as.matrix(Y) %*% Vfit[, 1:s] %*% t(eta)[, "TypePD"]
+YprojAD <- as.matrix(Y) %*% Vfit[, 1:s] %*% t(eta)[, c("TypeAD", "GenderM")]
+APOEproj <- as.matrix(Y) %*% rowMeans((Vfit[, 1:s] %*% svd(eta[grepl("APOE", rownames(eta)), ])$v[, 1:2]))
 
 
-tib <- tibble(x=Yproj[, 6], y=Yproj[, 4], Gender=factor(X[, "GenderM"]), Age=as.numeric(X[, "Age"]), Type=wide_data$Type2)
-tib <- tib %>% filter(Type %in% c("C", "PD"))
-ggplot(tib) + geom_point(aes(x=x, y=y, col=Type, shape=Type))
+Ysub <- as.matrix(Y) %*% Vfit[, 1:s]
+dim(Ysub)
+
+
+##############################
+## age plot
+##############################
+tib <- tibble(x=Yproj[, 1], y=Yproj[, 4], Gender=factor(X[, "GenderM"]), Age=as.numeric(X[, "Age"]), Type=factor(wide_data$Type, c("CY", "CM", "CO")), Type2=wide_data$Type2)
+tib %>% ggplot() + geom_point(aes(x=x, y=y, col=Age, shape=Gender), size=2) + scale_color_gradientn(colors=rainbow(3))
+
+
+pdf("~/Desktop/age_ridges.pdf")
+tib %>%  filter(Type2 == "C") %>%  ggplot() + geom_density_ridges(aes(x=x, y=Type, fill=Type)) + xlab("")
+dev.off()
+
+tib %>% filter(y > -2)  %>% ggplot() + geom_point(aes(x=x, y=y, col=Age, shape=Gender), size=2) + scale_color_gradientn(colors=rainbow(3))
+tib %>% ggplot() + geom_point(aes(x=x, y=y, col=Age, shape=Gender), size=2) + scale_color_gradientn(colors=rainbow(3))
+
+age_loadings <- Vfit[, 1:s] %*% eta[1, ]
+age_loadings <- age_loadings / sqrt(sum(age_loadings^2))
+hist(age_loadings, breaks=100)
+colnames(Y)[abs(age_loadings) > 0.05]
+write.csv(colnames(Y)[abs(age_loadings) > 0.05],
+          file="../results/age_features.csv",
+          row.names=FALSE, quote=FALSE)
+
+##############################
+## PD plot
+##############################
+tib <- tibble(x=Yproj[, "TypePD"], y=Yproj[, "TypeCO"], Gender=factor(X[, "GenderM"]), Age=as.numeric(X[, "Age"]), Type=wide_data$Type2)
+tib %>% filter(Type %in% c("C", "PD")) %>% 
+    ggplot() + geom_point(aes(x=x, y=y, col=Type, shape=Type))
+
+pd_loadings <- (Vfit[, 1:s] %*% t(eta))[, c("TypePD", "TypeCO")] %*%  prcomp(Yproj[, c("TypePD", "TypeCO")])$rotation[, 2]
+
+tibble(x=as.numeric(Y %*% pd_loadings), Type=wide_data$Type) %>%
+    filter(Type %in% c("CO", "PD")) %>% 
+    ggplot() + geom_density_ridges(aes(x=x, y=Type, fill=Type))
+
+names(pd_loadings) <- colnames(Y)
+hist(pd_loadings , breaks=100)
+colnames(Y)[abs(pd_loadings) > 0.5]
+
+pd_loadings <- pd_loadings[abs(pd_loadings) > quantile(abs(pd_loadings), 0.95)]
+
+write.csv(colnames(Y)[abs(pd_loadings) > 0.1],
+          file="../results/pd_features.csv",
+          row.names=FALSE, quote=FALSE)
+
+##############################
+## AD plot
+##############################
+
+
+tib <- tibble(x=Yproj[, "TypeAD"], y=Yproj[, "TypeCO"], APOE=factor(wide_data$APOE), Age=as.numeric(X[, "Age"]), Gender=as.numeric(X[, "GenderM"]), Type=wide_data$Type)
+ad_plot <- tib %>% filter(Type %in% c("CO", "AD")) %>% 
+    ggplot() + geom_point(aes(x=x, y=y, col=Type, shape=as.factor(Type)))
+
+ad_plot
+
+
+tib <- tibble(x=Yproj[, 2], y=Yproj[, 3], APOE=factor(wide_data$APOE), Age=as.numeric(X[, "Age"]), Gender=as.numeric(X[, "GenderM"]), Type=wide_data$Type)
+ad_plot <- tib %>% filter(Type %in% c("CO", "AD")) %>% 
+    ggplot() + geom_point(aes(x=x, y=y, col=Type, shape=as.factor(APOE)))
+
+ad_plot
+
+
+ad_loadings <- (Vfit[, 1:s] %*% t(eta)[, 1:9])[, 2:3] %*%  prcomp(Yproj[, 2:3])$rotation[, 2]
+
+tibble(x=as.numeric(Y %*% ad_loadings), Type=wide_data$Type) %>%
+    filter(Type %in% c("CO", "AD")) %>% 
+    ggplot() + geom_density_ridges(aes(x=x, y=Type, fill=Type))
+
+hist(ad_loadings , breaks=100)
+colnames(Y)[abs(ad_loadings) > 0.05]
+write.csv(colnames(Y)[abs(ad_loadings) > 0.05],
+          file="../results/ad_features.csv",
+          row.names=FALSE, quote=FALSE)
+
+library(slipper)
+xsamps <- tib %>% filter(Type %in% c("CO", "AD")) %>% group_by(Type) %>%
+    do(slipper(mean(x), B=100, df=.))
+ysamps <- tib %>% filter(Type %in% c("CO", "AD")) %>% group_by(Type) %>%
+    do(slipper(mean(y), B=100, df=.))
+
+bind_cols(xsamps, ysamps[, -c(1:2)]) %>% ggplot() + geom_point(aes(x=value, y=value1, col=Type))
+
+
+ad_means <- tib %>% filter(Type %in% c("CO", "AD")) %>% group_by(Type) %>%
+    summarise(meanx=median(x), meany=median(y))    
 
 
 
-ggplot(tibble(GenderAxis=as.numeric(YprojGender), Gender=factor(X[, "GenderM"]), Age=X[, "Age"])) + geom_joy(aes(x=GenderAxis, y=Gender, fill=Gender))
-ggplot(tibble(x=as.numeric(YprojPD), Type=wide_data$Type2)) + geom_joy(aes(x=x, y=Type, fill=Type))
-ggplot(tibble(x=as.numeric(APOEproj), APOE=wide_data$APOE)) + geom_joy(aes(x=x, y=APOE, fill=APOE))
 
+##############################
+## Gender plot
+##############################
+tibble(GenderAxis=as.numeric(YprojGender), Gender=factor(X[, "GenderM"]), Age=X[, "Age"]) %>% 
+    ggplot() + geom_density_ridges(aes(x=GenderAxis, y=Gender, fill=Gender))
+
+
+gender_loadings <- Vfit[, 1:s] %*% eta["GenderM", ]
+gender_loadings <- gender_loadings / sqrt(sum(gender_loadings^2))
+hist(gender_loadings, breaks=100)
+colnames(Y)[abs(gender_loadings) > 0.05]
+write.csv(colnames(Y)[abs(gender_loadings) > 0.05],
+          file="../results/gender_features.csv",
+          row.names=FALSE, quote=FALSE)
+
+##############################
+## APOE plot
+##############################
+
+apoe_plot <- tibble(x=as.numeric(APOEproj), APOE=wide_data$APOE, Gender=wide_data$Gender) %>%
+    filter(APOE != "Unknown") %>% 
+    ggplot() + geom_density_ridges(aes(x=x, y=APOE, fill=APOE))
+apoe_plot
+
+apoe_plot2 <- tibble(x=as.numeric(APOEproj), APOE=wide_data$APOE, Gender=wide_data$Gender) %>% unite("combo", c("APOE", "Gender"), remove=FALSE) %>%
+    filter(APOE != "Unknown") %>% 
+    ggplot() + geom_density_ridges(aes(x=x, y=combo, fill=APOE, col=Gender), alpha=0.5)
+apoe_plot2
+
+apoe_plot3 <- tibble(x=as.numeric(APOEproj), APOE=wide_data$APOE, Gender=wide_data$Gender, Type2=wide_data$Type2) %>% unite("combo", c("APOE", "Gender"), remove=FALSE) %>%
+    filter(APOE != "Unknown") %>%
+    filter(Type2 == "C") %>% 
+    ggplot() + geom_density_ridges(aes(x=x, y=combo, fill=APOE, col=Gender), alpha=0.5)
+apoe_plot3
+
+
+tibble(x=as.numeric(APOEproj), APOE=wide_data$APOE, Gender=wide_data$Gender) %>% unite("combo", c("APOE", "Gender"), remove=FALSE) %>% select(combo) %>% table
+
+meds <- tibble(x=as.numeric(APOEproj), APOE=factor(wide_data$APOE)) %>%
+    filter(APOE != "Unknown") %>% 
+    group_by(APOE) %>%
+    summarise(med = median(x, na.rm=TRUE)) %>% ungroup()
+
+apoe_plot + geom_segment(data=meds, aes(x=med, xend=med, y=0, yend=0.75, color=APOE), size=1.5)
+
+apoe_loadings <- svd(Vfit[, 1:s] %*% t(eta[c("APOE24", "APOE33", "APOE34", "APOE44"), ]))$u[, 1]
+apoe_loadings <- apoe_loadings / sqrt(sum(apoe_loadings^2))
+hist(apoe_loadings, breaks=100)
+colnames(Y)[abs(apoe_loadings) > 0.05]
+write.csv(colnames(Y)[abs(apoe_loadings) > 0.05],
+          file="../results/apoe_features.csv",
+          row.names=FALSE, quote=FALSE)
+
+bind_cols(as_tibble(Yproj), as_tibble(X)) %>% filter(Type %in% c("CO", "AD"))
+AD_analysis <- fit_envelope(Yproj, X, s=s, r=r, prior_counts=1000, maxIters=2000, U1=diag(s), nu1=100, U0=diag(r), nu0 = 100, Vinit="OLS")
 
 
 
 
 ggplot(tibble(x=Yproj[, 5], y=Yproj[, 4], Gender=factor(X[, "GenderM"]), Age=X[, "Age"], Type=wide_data$Type2)) + geom_point(aes(x=x, y=y, shape=Type, col=Type))
 
-ggplot(tibble(Axis=Yproj[, 1]-Yproj[, 2], Gender=Xplot$Gender, Age=Xplot$Age)) + geom_joy(aes(x=Axis, y=Age < 40, fill=Age < 40))
+ggplot(tibble(Axis=Yproj[, 1]-Yproj[, 2], Gender=Xplot$Gender, Age=Xplot$Age)) + geom_density_ridges(aes(x=Axis, y=Age < 40, fill=Age < 40))
 
-ggplot(tibble(Axis=Yproj[, 1], Gender=Xplot$Gender, Age=Xplot$Age)) + geom_joy(aes(x=Axis, y=Gender, fill=Gender))
+ggplot(tibble(Axis=Yproj[, 1], Gender=Xplot$Gender, Age=Xplot$Age)) + geom_density_ridges(aes(x=Axis, y=Gender, fill=Gender))
 
 median(Yproj[Xplot$Gender=="F", 1]-Yproj[Xplot$Gender=="F", 2])
 median(Yproj[Xplot$Gender=="M", 1]-Yproj[Xplot$Gender=="M", 2])
