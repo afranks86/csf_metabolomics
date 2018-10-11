@@ -46,25 +46,33 @@ remaining <- 1:N
 groupAssignment <- rep(0, N)
 count <- 1
 
+######################################33
+## Compute design matrix and rescale so all variables have unit variance
+######################################33
+
 formula <- "~  Age + Gender + Type + APOE + Type:Gender + Type:Age - 1"
 mat <- model.matrix(as.formula(formula), dat=NDTracking)
 tokeep <- which(colSums(mat) > 0)
 mat <- mat[, tokeep]
-
 mat <- apply(mat, 2, scale)
-
-## mat <- mat[, setdiff(colnames(mat), "GenderM:TypeOther")]
 
 group.means <- matrix(0, nrow=nbatch, ncol=ncol(mat))
 
+###########################################
+## Core algorithm  
+###########################################
+
 for(round in 1:floor(N / nbatch)){
 
+    ## for g in random group order
     for(g in sample(1:nbatch)){
         
-
-        MSE <- apply(sweep(mat[remaining, , drop=FALSE], 2, group.means[g,], "-")^2, 1, sum)
+        ## Find the observation that is _furthest_ from the current mean
+        ## And select it for current group g
+        MSE <- apply(sweep(mat[remaining, , drop=FALSE], 2, group.means[g, ], "-")^2, 1, sum)
         choice <- remaining[which.max(MSE)]
-        
+
+        ## add the choice, update group means
         groupAssignment[choice] <- g
         assigned <- c(assigned, choice)
         group.means[g, ] <- group.means[g, ]*(round-1)/(round)+mat[choice,] / round
@@ -74,9 +82,12 @@ for(round in 1:floor(N / nbatch)){
 
 }
 
-## for remainder, find which minimize between group var
+####################################################
+## For remainder, find which minimize between group var
+## Or more simply randomize the remainder
+####n################################################
 
-## function to calculat ebetween group variance
+## function to calculate between group variance
 calcB <- function(X, asgn.vec, nbatch){
 
     xbar <- apply(X, 2, mean)
@@ -112,31 +123,47 @@ NDTracking$Batch <- groupAssignment
 table(NDTracking$Batch)
 
 ## Check age balance
+pdf("figs/design/age_balance.pdf")
 t(sapply(1:nbatch, function(g) quantile(NDTracking$Age[NDTracking$Batch==g])))
 ggplot(data=NDTracking, aes(y = Age, x=as.factor(Batch))) + geom_boxplot()
+dev.off()
 
 ## Check gender balance
+pdf("figs/design/gender_balance.pdf")
 table(NDTracking$Gender, NDTracking$Batch)
 ggplot(data=NDTracking, aes(Batch)) + geom_bar() + facet_wrap(~ Gender)
+dev.off()
 
 ## Check balance of disease types
+pdf("figs/design/type_balance.pdf")
 table(NDTracking$Type, NDTracking$Batch)
 ggplot(data=NDTracking, aes(Batch)) + geom_bar() + facet_wrap(~ Type)
+dev.off()
 
 ## Check balance of APOE status
+pdf("figs/design/apoe_balance.pdf")
 table(NDTracking$APOE, NDTracking$Batch)
 ggplot(data=NDTracking, aes(Batch)) + geom_bar() + facet_wrap(~ APOE)
+dev.off()
 
 ## Interaction between gender and type
+pdf("figs/design/gender_type_balance.pdf")
 table(paste(as.character(NDTracking$Type), as.character(NDTracking$Gender), sep="-"), NDTracking$Batch)
 ggplot(data=NDTracking, aes(Batch)) + geom_bar() + facet_wrap(~ Gender + Type)
+dev.off()
 
 ## APOE and Gender
+pdf("figs/design/apoe_gender_balance.pdf")
 table(paste(as.character(NDTracking$APOE), as.character(NDTracking$Gender), sep="-"), NDTracking$Batch)
+dev.off()
 
 ## Age and Type
+pdf("figs/design/age_type_balance.pdf")
 ggplot(data=NDTracking[-163, ], aes(y = Age, x=as.factor(Batch), fill=Type)) + geom_boxplot()
+dev.off()
 
 ## write.csv(NDTracking[, c("Id", "Batch")], file="SampleBatches.csv", row.names=FALSE)
 
-write.csv(NDTracking, file="../data/NDTracking.csv", row.names=FALSE)
+if(FALSE) {
+    write.csv(NDTracking, file="../data/NDTracking.csv", row.names=FALSE)
+}
