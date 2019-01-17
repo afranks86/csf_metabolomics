@@ -1,21 +1,34 @@
 library(tidyverse)
+library(ggExtra)
 library(magrittr)
 library(made4)
-library(ggjoy)
+library(ggridges)
 library(gbm3)
 library(huge)
 
-load("normalized_csf_data.RData")
+source("utility.R")
 
-## Look at average
+load("preprocessed_csf_data.RData")
 
+
+## Notes:
+## Raw: raw intensities
+## Abundance: detrended intensiteis (raw intensity - boosted fit on RunIndex)
+## Trend: boosted fit on RunIndex
+
+subject_data %<>% mutate_at(c("Type", "Gender", "APOE"), factor)
+
+## Look at average raw data
 subject_data %>% group_by(RunIndex, Mode) %>% summarize(tot=sum(Raw)) %>%  ggplot(aes(x=RunIndex, y=tot, colour=Mode)) + geom_line() + ggtitle("Positive") + geom_smooth(method="lm", se=FALSE)
 
+## Look at quality control
 QC_long %>% group_by(RunIndex, Mode) %>% summarize(tot=sum(Abundance)) %>%  ggplot(aes(x=RunIndex, y=tot, colour=Mode)) + geom_line() + ggtitle("Positive") + geom_smooth(method="lm", se=FALSE)
 
-
-## Look at Raw
+## Focus on raw neg
 subject_data %>% filter(Mode=="neg") %>% group_by(RunIndex, Mode) %>% summarize(tot=sum(Raw)) %>%  ggplot(aes(x=RunIndex, y=tot, colour=Mode)) + geom_line() + ggtitle("Negative") + geom_smooth(method="lm", se=FALSE)
+
+## Focus on raw pos
+subject_data %>% filter(Mode=="pos") %>% group_by(RunIndex, Mode) %>% summarize(tot=sum(Raw)) %>%  ggplot(aes(x=RunIndex, y=tot, colour=Mode)) + geom_line() + ggtitle("Negative") + geom_smooth(method="lm", se=FALSE)
 
 ## check that detrended data looks sensible (for a random sample of metabolites)
 subject_data %>% filter(Metabolite %in% sample(unique(subject_data$Metabolite), 4)) %>% ggplot(aes(x=RunIndex, y=Abundance, colour=Metabolite)) + geom_line() + geom_point() + theme(legend.position="none")
@@ -23,30 +36,151 @@ subject_data %>% filter(Metabolite %in% sample(unique(subject_data$Metabolite), 
 ## Which metabolites had the worst drift?
 subject_data %>% group_by(Metabolite) %>% summarise(var = (max(Trend, na.rm=TRUE) - min(Trend, na.rm=TRUE))/sd(Raw, na.rm=TRUE)) %>% arrange(desc(var))
 
-## Look at some trends fits for a few metabolites
+## Look at some trends fits for a few metabolites with large trends
 intercepts <- (subject_data %>% group_by(Batch) %>% summarise(mx = max(RunIndex)))$mx
-subject_data %>% filter(Metabolite %in% c("Creatinine", "Fructose", "Xanthine")) %>% ggplot(aes(x=RunIndex, y=Trend, colour=Metabolite)) + geom_line() + geom_point() + geom_line(aes(x=RunIndex, y=Raw)) + geom_vline(xintercept = intercepts)
+subject_data %>% filter(Metabolite %in% c("Creatinine", "Fructose", "Xanthine", "Indole")) %>% ggplot(aes(x=RunIndex, y=Trend, colour=Metabolite)) + geom_line() + geom_point() + geom_line(aes(x=RunIndex, y=Raw)) + geom_vline(xintercept = intercepts)
 
-## Plot intensity versus log variance
+## Plot raw intensity versus log variance of the abundance (detrended)
 subject_data  %>% group_by(Metabolite) %>% summarise(med=median(Raw), var=log(var(Abundance))) %>% ggplot(aes(x=med, y=var)) + geom_point() + geom_smooth(method="lm")
 subject_data  %>% group_by(Metabolite) %>% summarise(med=median(Raw), var=log(var(Abundance))) %>% cor.test(.$med, .$var, data=.)
 subject_data  %>% group_by(Metabolite) %>% summarise(med=median(Raw), var=log(var(Abundance))) %>% lm(.$var ~ .$med, data=.) %>% summary
 
-lm_model <- subject_data  %>% group_by(Metabolite) %>% summarise(med=median(Raw), var=log(var(Abundance))) %>% lm(.$var ~ .$med, data=.)
-lm_model$residuals %>% hist(., breaks=50, col="grey")
+## Pairwise scatter plots
+wide_data <- subject_data %>% dplyr::select(-one_of("Code", "Mode", "RunIndex", "Raw", "Trend", "Residual", "Type2")) %>% spread(key=Metabolite, value=Abundance)
 
-## and residuals..
-subject_data %>% filter(Metabolite %in% c("Creatinine", "Tryptophan", "Methionine")) %>% ggplot(aes(x=RunIndex, y=Abundance, colour=Metabolite)) + geom_line() + geom_point()
+wide_data_res <- subject_data %>% dplyr::select(-one_of("Code", "Mode", "RunIndex", "Raw", "Trend", "Abundance")) %>% spread(key=Metabolite, value=Residual)
+
+p <- wide_data %>% dplyr::select(sort(sample(8:ncol(wide_data), 2))) %>% rename_all(make.names) %>% ggplot(aes_string(x=colnames(.)[1], y=colnames(.)[2])) + geom_point() + geom_density_2d()
+ggMarginal(p, size=5) 
+
+## Look what happens after normalization
+norm_subj <- subject_data %>% group_by(Metabolite) %>% mutate(normalized_abundance = normalize_density(Abundance))
+norm_wide <- norm_subj %>% dplyr::select(-one_of("Code", "Mode", "RunIndex", "Raw", "Trend", "Abundance", "Residual")) %>% spread(key=Metabolite, value=normalized_abundance)
+p <- norm_wide %>% dplyr::select(sort(sample(8:ncol(norm_wide), 2))) %>% rename_all(make.names) %>% ggplot(aes_string(x=colnames(.)[1], colnames(.)[2])) + geom_point() + geom_density2d()
+ggMarginal(p, size=5)
+
+#######################
+## Compute all pairwise correlations and look at some scatter plots
+#######################
+
+
+
+
+cormat <- cor(wide_data %>% dplyr::select(-(1:7)), use="pairwise.complete.obs")
+covmat <- cov(wide_data %>% dplyr::select(-(1:7)), use="pairwise.complete.obs")
+wide_data %>% dplyr::select(-(1:7)) %>% colnames
+## Find most correlated
+cor_tri <- cormat * upper.tri(diag(108))
+indices <- order(abs(cor_tri), decreasing=TRUE)
+cor_vec <- cor_tri[indices]
+row_idx <- indices %% nrow(cormat)
+col_idx <- floor(indices / nrow(cormat)) + 1
+
+
+length(row_idx)
+length(col_idx)
+length(cor_vec)
+head(names(cor_vec))
+length(rownames(cormat)[row_idx])
+head(cbind(rownames(cormat)[row_idx], rownames(cormat)[col_idx], cor_vec), n=20)
+
+
+met_id <- 12
+p <- wide_data %>% dplyr::select(-c(1, 3, 4, 5, 6, 7)) %>% rename_all(make.names) %>% dplyr::select(1, row_idx[met_id] + 1 , col_idx[met_id] + 1) %>% ggplot(aes_string(x=colnames(.)[2], colnames(.)[3], col="Type")) + geom_point()  + abline()
+ggMarginal(p, size=5)
+
+QCcor <- QC_long %>% spread(key=Metabolite, value=Abundance) %>% dplyr::select(-c(1, 2, 3)) %>% rename_all(make.names) %>% cor(use="pairwise.complete.obs") %>% as.matrix
+cor_tri <- QCcor * upper.tri(diag(nrow(QCcor)))
+plot(sort(head(cor_tri[upper.tri(diag(nrow(QCcor)))], 300), decreasing=TRUE))
+
+p <- QC_long %>% spread(key=Metabolite, value=Abundance) %>% dplyr::select(-c(1, 2, 3)) %>% rename_all(make.names) %>% dplyr::select(Leucine, Isoleucine) %>% ggplot(aes(x=Leucine, y=Isoleucine)) + geom_point()  + abline()
+ggMarginal(p, size=5)
+
+## Compute correlations on residuals (todo: correction for attenuation?)
+cormat <- cor(wide_data_res %>% dplyr::select(-(1:7)), use="pairwise.complete.obs", method="spearman")
+
+## cormat <- cor(wide_data_res %>% filter(Type=="AD") %>% dplyr::select(-(1:7)), use="pairwise.complete.obs", method="spearman")
+
+## Find most correlated
+cor_tri <- cormat * upper.tri(diag(108))
+indices <- order(abs(cor_tri), decreasing=TRUE)
+cor_vec <- cor_tri[indices]
+row_idx <- indices %% nrow(cormat)
+col_idx <- floor(indices / nrow(cormat)) + 1
+
+head(cor_vec, n=300)
+
+met_id <- 919
+p <- wide_data_res %>% dplyr::select(-c(1, 3, 4, 5, 6, 7)) %>% rename_all(make.names) %>% dplyr::select(1, row_idx[met_id] + 1 , col_idx[met_id] + 1) %>% ggplot(aes_string(x=colnames(.)[2], colnames(.)[3], col="Type")) + geom_point()
+ggMarginal(p, size=5)
+
+head(cormat["Creatine",][order(abs(cormat["Creatine", ]), decreasing=TRUE)], n=50)
+met_id <- 919
+p <- wide_data_res %>% dplyr::select(-c(1, 3, 4, 5, 6, 7)) %>% rename_all(make.names) %>% dplyr::select(1,  "Kynurenine", "Cystine") %>% ggplot(aes_string(x=colnames(.)[2], colnames(.)[3], col="Type")) + geom_point()
+ggMarginal(p, size=5)
+
+p <- wide_data_res %>% filter(Type2 %in% c("C", "AD")) %>% dplyr::select(-c(1, 3, 4, 5, 6, 7)) %>% rename_all(make.names) %>% dplyr::select(1:2,  "Creatine", "Homocysteine") %>% ggplot(aes_string(x=colnames(.)[3], colnames(.)[4], col="Type2")) + geom_point()
+ggMarginal(p, size=5)
+
+cor.test(as.numeric(unlist(wide_data_res[, "Homocysteine"])), as.numeric(unlist(wide_data_res[, "Creatine"])), method="spearman")
+
+#######################
+## QC and variance analysis
+#######################
+colnames(QC_long)
+
+covmat <- QC_long %>% spread(key=Metabolite, value=Abundance) %>% filter(Mode == "QC_neg") %>% dplyr::select(-one_of(c("Code", "RunIndex", "Mode"))) %>% cov(use="pairwise.complete.obs") %>% as.matrix
+dim(covmat)
+
+covmat <- QC_long %>% filter(Mode == "QC_neg") %>% spread(key=Metabolite, value=Abundance) %>% dplyr::select(-one_of(c("Code", "RunIndex", "Mode"))) %>% cov(use="pairwise.complete.obs") %>% as.matrix
+
+covmat[1, 1] - covmat[1, 2:ncol(covmat)] %*% solve(covmat[2:ncol(covmat), 2:ncol(covmat)]) %*% covmat[2:ncol(covmat), 1]
+
+eigen(covmat)$values
+
+QC_long %>% spread(key=Metabolite, value=Abundance) %>% dplyr::select(Fructose) %>% as.matrix
+
 
 ## Do QC variances correlate with raw sample variances?
-met_var_qc <- QC_long %>% group_by(Metabolite) %>% summarize(qc_var = var(Abundance))
-met_var_subj <-  subject_data %>% group_by(Metabolite) %>% summarize(subject_var = var(Abundance, na.rm=TRUE))
+
+## QC variance decreases with increasing intensity!
+met_var_qc <- QC_long %>% group_by(Metabolite) %>%
+    summarize(qc_var = var(Abundance),
+              qc_mad = median(abs(Abundance - median(Abundance, na.rm=TRUE)), na.rm=TRUE),
+              qc_mean=mean(Abundance))
+
+met_var_qc %>% ggplot(aes(x=qc_mean, y=log(qc_var))) + geom_point() + geom_smooth(method="lm")
+
+met_var_qc %>% cor.test(.$qc_mean, log(.$qc_var), data=.)
+
+## Subject data variance decreases with increasing intensity!
+met_var_subj <-  subject_data %>% group_by(Metabolite) %>%
+    summarize(subject_var = var(Abundance, na.rm=TRUE),
+              subject_mad = median(abs(Raw - median(Raw, na.rm=TRUE)), na.rm=TRUE),
+              subject_mean = mean(Raw, na.rm=TRUE))
+
+met_var_subj %>% ggplot(aes(x=subject_mean, y=log(subject_mad))) + geom_point() + geom_smooth(method="lm")
+
+met_var_subj %>% cor.test(.$subject_mean, log(.$subject_var), data=.)
+
 met_var <- left_join(met_var_qc, met_var_subj, by="Metabolite")
 
-met_var %>% cor.test(.$qc_var, .$subject_var,  data=., method="spearman")
-met_var %>% ggplot(aes(x=log(qc_var), y=log(subject_var))) + geom_point() + geom_smooth(method="lm")
 
+## log variances 
+met_var %>% ggplot(aes(x=log(qc_var), y=log(subject_var))) + geom_point() + geom_smooth(method="lm") + geom_abline()
 
+met_var %>% ggplot(aes(x=log(qc_mad), y=log(subject_mad))) + geom_point() + geom_smooth(method="lm") + geom_abline()
+
+met_var %>% ggplot(aes(x=qc_mean, y=subject_mean)) + geom_point() + geom_smooth(method="lm")
+
+met_var %>% cor.test(log(.$qc_mad), log(.$subject_mad),  data=., method="spearman")
+
+## QC mean intensity and subject means matchup
+met_var %>% ggplot(aes(x=qc_mean, y=subject_mean)) + geom_point() + geom_smooth(method="lm") + geom_abline()
+
+met_var %>% ggplot(aes(x=qc_mean, y=subject_mean)) + geom_point() + geom_smooth(method="lm") + geom_abline()
+
+met_var %>% dplyr::select(2:7) %>% as.matrix %>% cor(method="spearman")
 
 ###############################
 ## Metabolites that show effects with age
@@ -66,15 +200,16 @@ age_diff <- subject_data %>% group_by(Metabolite) %>%
 mets <- age_diff$Met[1:8]
 subject_data %>% filter(Metabolite %in% mets, Type %in% types) %>%
     ggplot(aes(x = Abundance, y = factor(Type, levels=types),
-               fill=Type)) +  geom_joy(scale = 4) + theme_joy() + facet_wrap(~ Metabolite, nrow=2)
+               fill=Type)) +  geom_density_ridges() + facet_wrap(~ Metabolite, nrow=2, scales="free")
 
 subject_data %>% group_by(Metabolite) %>%
+    filter(Type %in% types) %>% 
     do(lmres=lm(Abundance ~ Age, data=.)) %>%
     summarize(Met=Metabolite,
               est=summary(lmres)$coefficients[2, 1],
               pval=summary(lmres)$coefficients[2, 4]) %>%
     filter(pval < 0.05) %>%
-    arrange(est)
+    arrange(abs(est)) %>% xtable
 dev.off()
 
 ###############################
@@ -95,7 +230,7 @@ gender_diff <- subject_data %>% group_by(Metabolite) %>%
 mets <- gender_diff$Met[1:8]
 subject_data %>% filter(Metabolite %in% mets, Type %in% types) %>%
     ggplot(aes(x = Abundance, y = factor(Gender),
-               fill=Gender)) +  geom_joy(scale = 4) + theme_joy() + facet_wrap(~ Metabolite, nrow=2)
+               fill=Gender)) +  geom_density_ridges(scale = 4) + theme_joy() + facet_wrap(~ Metabolite, nrow=2)
 dev.off()
 
 ###############################
@@ -117,7 +252,7 @@ ad_diff <- subject_data %>% group_by(Metabolite) %>%
 mets <- ad_diff$Met[1:8]
 subject_data %>% filter(Metabolite %in% mets, Type %in% types) %>%
     ggplot(aes(x = Abundance, y = factor(Type),
-               fill=Type)) +  geom_joy(scale = 4) + theme_joy() + facet_wrap(~ Metabolite, nrow=2)
+               fill=Type)) +  geom_density_ridges(scale = 4) + theme_joy() + facet_wrap(~ Metabolite, nrow=2)
 dev.off()
 
 ###############################
@@ -139,7 +274,7 @@ pd_diff <- subject_data %>% group_by(Metabolite) %>%
 mets <- pd_diff$Met[1:8]
 subject_data %>% filter(Metabolite %in% mets, Type %in% types) %>%
     ggplot(aes(x = Abundance, y = factor(Type),
-               fill=Type)) +  geom_joy(scale = 4) + theme_joy() + facet_wrap(~ Metabolite, nrow=2)
+               fill=Type)) +  geom_density_ridges(scale = 4) + theme_joy() + facet_wrap(~ Metabolite, nrow=2)
 dev.off()
 
 ###############################
@@ -153,7 +288,7 @@ ad_pd_diff <- subject_data %>% group_by(Metabolite) %>%
     filter(Type %in% types) %>% 
     do(lmres=lm(Abundance ~ Age + Type + Gender, data=.)) %>%
     summarize(Met=Metabolite,
-              est=summary(lmres)$coefficients["TypePD", 1],
+p              est=summary(lmres)$coefficients["TypePD", 1],
               pval=summary(lmres)$coefficients["TypePD", 4]) %>%
     filter(pval < 0.05) %>%
     arrange(desc(abs(est)))
@@ -161,7 +296,7 @@ ad_pd_diff <- subject_data %>% group_by(Metabolite) %>%
 mets <- ad_pd_diff$Met[1:8]
 subject_data %>% filter(Metabolite %in% mets, Type %in% types) %>%
     ggplot(aes(x = Abundance, y = factor(Type),
-               fill=Type)) +  geom_joy(scale = 4) + theme_joy() + facet_wrap(~ Metabolite, nrow=2)
+               fill=Type)) +  geom_density_ridges(scale = 4) + theme_joy() + facet_wrap(~ Metabolite, nrow=2)
 dev.off()
 
 ############################################
@@ -182,18 +317,42 @@ apoe_diff <- subject_data %>% group_by(Metabolite) %>%
 mets <- apoe_diff$Met
 subject_data %>% filter(Metabolite %in% mets, Type %in% types) %>%
     ggplot(aes(x = Abundance, y = factor(APOE),
-               fill=factor(APOE))) +  geom_joy(scale = 4) + theme_joy() + facet_wrap(~ Metabolite, nrow=2)
+               fill=factor(APOE))) +  geom_density_ridges(scale = 4) + theme_joy() + facet_wrap(~ Metabolite, nrow=2)
 dev.off()
 
 
-############################################
+############ Fit linear model and compute residuals########################
+
+
+
+linear_model_info %>% filter(stat == "Pval" & pred == "AD" & Value < 0.05)
+
+linear_model_info %>% filter(stat == "Pval" & pred == "APOE33" & Value < 0.05)
+
+linear_model_info %>% filter(stat == "Pval" & pred == "GenderM" & Value < 0.05)
+
+linear_model_info %>% filter(stat == "Pval" & pred == "PD" & Value < 0.05)
+linear_model_info %>% filter(stat == "Pval" & pred == "AD" & Value < 0.05)
+
+
+
+
+
 tmp_data <- subject_data
 tmp_data$Abundance[is.na(tmp_data$Abundance)] <- 0
-lm_data <- tmp_data %>% group_by(Metabolite) %>% do(res=lm(Abundance ~ Age + Gender + Type, data=.)$residuals)
+lm_data <- tmp_data %>% group_by(Metabolite) %>% do(res=lm(Abundance ~ Gender + Type, data=.)$residuals)
 tmp_data$residuals <- unlist(lm_data$res)
-tst <- tmp_data %>% spread(key=Metabolite, value=residuals, vars(-Abundaance, Raw)
+tst <- tmp_data %>% dplyr::select(-c(Abundance, Raw, Trend, Mode, Code, RunIndex)) %>% spread(key=Metabolite, value=residuals)
 
+glimpse(tst[, 10:30])
+glimpse(tst[10, ])
 
+met_var_qc <- QC_long %>% group_by(Metabolite) %>% summarize(qc_var = var(Abundance))
+met_var_subj <-  tst %>% gather(key=Metabolite, value=Residual, -(1:7)) %>% group_by(Metabolite) %>% summarize(subject_var = var(Residual, na.rm=TRUE))
+met_var <- left_join(met_var_qc, met_var_subj, by="Metabolite")
+
+met_var %>% cor.test(log(.$qc_var), log(.$subject_var),  data=., method="spearman")
+met_var %>% ggplot(aes(x=qc_var, y=subject_var)) + geom_point() + geom_smooth(method="lm") + geom_abline()
 
 
 ## Principle component analysis for control subjects at different ages
@@ -254,10 +413,6 @@ names(colors) = unique(type_vec)
 ecb = function(x,y){ plot(x, t='n'); text(x, labels=type_vec, col=colors[type_vec]) }
 tsne(resid, epoch_callback = ecb)
 ## Test
-
-
-
-
 
 
 
