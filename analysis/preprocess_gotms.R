@@ -94,10 +94,10 @@ subject_data %<>% mutate_at(vars(c("Index")), as.integer)
 subject_data %<>% rename(Raw = Abundance)
 
 subject_data %<>% group_by(Mode, RunIndex) %>%
-    mutate(Abundance = Raw - median(Raw, na.rm=TRUE)) %>% ungroup
+     mutate(Abundance = Raw - median(Raw, na.rm=TRUE)) %>% ungroup
 
 fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, shrinkage=0.001,
-                              min_node_size=10, fig_dir=NULL) {
+                              min_node_size=5, fig_dir=NULL) {
 
     print(df$Metabolite[1])
 
@@ -105,7 +105,7 @@ fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, shrinkage=0.001,
     not_na_indices <- which(!is.na(df$Abundance))
     df.omitted <- df %>% drop_na(Abundance)
 
-    boost_fit_cv <- gbm(Abundance ~ RunIndex,
+    boost_fit_cv <- gbm(Abundance ~ RunIndex + Age + Type + Gender + APOE,
                         data = df.omitted, distribution = "laplace",
                         shrinkage = shrinkage,
                         n.trees = ntrees, cv.folds = 10,
@@ -116,19 +116,20 @@ fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, shrinkage=0.001,
 
     best_fit <- predict(boost_fit_cv, df.omitted, opt_iters)
 
+    ## Note: this isn't ordered by run index 
     trend <- plot(boost_fit_cv, 1, num_trees=opt_iters,
                   grid_levels=df.omitted$RunIndex, return_grid=TRUE)$y
     
     abund <- df$Abundance
     bf <- rep(NA, length(abund))
 
-    abund[not_na_indices] <- df.omitted$Abundance - best_fit
+    abund[not_na_indices] <- df.omitted$Abundance - trend
     bf[not_na_indices] <- best_fit
 
     df$RawScaled <- df$Abundance
     
     df$Abundance <- abund
-    df$Trend <- bf
+    df$Trend <- trend
 
     ## save figures
     if(!is.null(fig_dir)) {
@@ -151,6 +152,11 @@ fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, shrinkage=0.001,
 detrended <- subject_data %>%
     group_by(Metabolite, Mode) %>%
     do(fit_boosted_model(., fig_dir = "../results/gotms_trend_data/"))
+
+## detrended <- subject_data %>%
+##     group_by(Metabolite, Mode) %>%
+##     filter(Metabolite == "1391-7.063 Results") %>% 
+##     do(fit_boosted_model(., fig_dir = "../results/gotms_trend_data/"))
 
 subject_data <- detrended
 
