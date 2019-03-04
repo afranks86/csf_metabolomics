@@ -9,51 +9,54 @@ library(quantreg)
 library(gbm3)
 library(patchwork)
 
-negative_mode_data <- read_csv("~/course/ND_Metabolomics/data/got-ms/NEG-AUTO.csv")
-positive_mode_data_01 <- read_csv("~/course/ND_Metabolomics/data/got-ms/POS-AUTO-01.csv")
-positive_mode_data_02 <- read_csv("~/course/ND_Metabolomics/data/got-ms/POS-AUTO-02.csv")
-positive_mode_data_03 <- read_csv("~/course/ND_Metabolomics/data/got-ms/POS-AUTO-03.csv")
+positive_mode_data <- read_csv("~/course/ND_Metabolomics/data/got-ms/measurement_ESI+.csv")
+
+negative_mode_data <- read_csv("~/course/ND_Metabolomics/data/got-ms/measurement_ESI-.csv")
 
 format_data <- function(df, type="Unknown") {
 
-    df %<>%  mutate_at(vars(-one_of(c("Name", "Data File"))), funs(log(.)))
+
+
+    meta_data_columns <- c("Compound", "Neutral mass (Da)", "m/z",
+                                  "Charge", "Retention time (min)",
+                                  "Chromatographic peak width (min)",
+                                  "Identifications", "Isotope Distribution",
+                                  "Maximum Abundance", "Minimum CV%",
+                                  "Accepted Compound ID",
+                                  "Accepted Description",
+                                  "Adducts", "Compound Link",
+                                  "Formula", "Score", "Fragmentation Score",
+                                  "Isotope Similarity", "Mass Error (ppm)",
+                                  "Retention Time Error (mins)",
+                                  "Compound Link")
+
+    cnms <- setdiff(colnames(df), meta_data_columns)
+    RunIndex <- 1:length(cnms)
+    names(RunIndex) <- cnms
+    
+    df <- df %>% gather(key = Name, value = Abundance,
+                        -one_of(meta_data_columns)) 
+
+    df <- df %>% mutate(Abundance = ifelse(Abundance == 0, NA, Abundance))
+    df <- df %>% mutate(Abundance = log(as.numeric(Abundance)))
+
     df %<>% mutate(Mode = ifelse(grepl("QC", Name),
                                  sprintf("QC_%s", type),
                                  type))
-    df$RunIndex <- 1:nrow(df)
-    df %<>% mutate(SampleId = as.numeric(gsub("(Sample)|(CSF)", "", Name)))
 
+    df %<>% mutate(SampleId = as.numeric(gsub(toupper(type), "", Name)))
+    df %<>% mutate(RunIndex = recode(Name, !!!RunIndex))
+    
     df
     
 }
 
 negative_mode_data <- format_data(negative_mode_data, "neg")
-positive_mode_data_01 <- format_data(positive_mode_data_01, "pos01")
-positive_mode_data_02 <- format_data(positive_mode_data_02, "pos02")
-positive_mode_data_03 <- format_data(positive_mode_data_03, "pos03")
-
-## Gather mode data in long table format
-neg_long <- negative_mode_data %>%
-    gather(key = Metabolite, value = Abundance,
-           -one_of("Name", "RunIndex", "Mode", "Data File", "SampleId"))
-
-pos_long_01 <- positive_mode_data_01 %>%
-    gather(key = Metabolite, value = Abundance,
-           -one_of("Name", "RunIndex", "Mode", "Data File", "SampleId"))
-
-pos_long_02 <- positive_mode_data_02 %>%
-    gather(key = Metabolite, value = Abundance,
-           -one_of("Name", "RunIndex", "Mode", "Data File", "SampleId"))
-
-pos_long_03 <- positive_mode_data_03 %>%
-    gather(key = Metabolite, value = Abundance,
-           -one_of("Name", "RunIndex", "Mode", "Data File", "SampleId"))
+positive_mode_data <- format_data(positive_mode_data, "pos")
 
 ## combine data into one long table
-csf_long <- bind_rows(neg_long,
-                     pos_long_01,
-                     pos_long_02,
-                     pos_long_03)
+csf_long <- bind_rows(negative_mode_data,
+                      positive_mode_data)
 
 ## Split QC and sample data
 QC_long <- csf_long %>% filter(grepl("QC", Mode))
@@ -105,12 +108,12 @@ fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, shrinkage=0.001,
     not_na_indices <- which(!is.na(df$Abundance))
     df.omitted <- df %>% drop_na(Abundance)
 
-    boost_fit_cv <- gbm(Abundance ~ RunIndex,
+    boost_fit_cv <- gbm(Abundance ~ RunIndex + Gender + Type,
                         data = df.omitted, distribution = "laplace",
                         shrinkage = shrinkage,
                         n.trees = ntrees, cv.folds = 10,
                         n.minobsinnode = min_node_size, verbose = FALSE)
-
+    
     opt_iters <- gbm.perf(boost_fit_cv, method = "cv")
     print(opt_iters)
 
@@ -152,6 +155,11 @@ detrended <- subject_data %>%
     group_by(Metabolite, Mode) %>%
     do(fit_boosted_model(., fig_dir = "../results/gotms_trend_data/"))
 
+detrended <- subject_data %>%
+    filter(Metabolite == "1391-7.063 Results") %>% 
+    fit_boosted_model(., fig_dir = "../results/gotms_trend_data/")
+
+
 subject_data <- detrended
 
 ## Type2 collapse (CO, CM, CY) to C
@@ -170,6 +178,6 @@ subject_data <- subject_data %>%
     ungroup
 
 save(subject_data, QC_long,
-     file = sprintf("preprocessed_gotms_data-%s.RData", Sys.Date()))
+     file = sprintf("preprocessed_untargted_data-%s.RData", Sys.Date()))
 
 
