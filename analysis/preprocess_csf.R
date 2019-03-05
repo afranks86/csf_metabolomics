@@ -1,4 +1,5 @@
 library(tidyverse)
+library(patchwork)
 library(broom)
 library(magrittr)
 library(made4)
@@ -46,9 +47,6 @@ nd_data$Index <- nd_data$Code %>%
 ## 0 abundace peps are NA for now
 nd_data$Abundance[nd_data$Abundance == -Inf] <- NA
 
-
-
-
 ## Join with Tracking data
 tracking_data <- read_csv("../data/NDTracking.csv")
 
@@ -83,48 +81,54 @@ subject_data %<>% rename(Raw = Abundance)
 subject_data %<>% group_by(Mode, RunIndex) %>%
     mutate(Abundance = Raw - median(Raw, na.rm=TRUE)) %>% ungroup
 
-fit_boosted_model <- function(df, ntrees=10000, cv.folds=10,
-                              min_node_size=10, fig_dir=NULL) {
-  print(df$Metabolite[1])
+fit_boosted_model <- function(df, ntrees=10000, shrinkage=0.001,
+                              cv.folds=10,  min_node_size=10,
+                              fig_dir=NULL) {
 
-  df$Abundance[!is.finite(df$Abundance)] <- NA
-  not_na_indices <- which(!is.na(df$Abundance))
-  df.omitted <- df %>% drop_na(Abundance)
+    print(df$Metabolite[1])
 
-  boost_fit_cv <- gbm(Abundance ~ RunIndex,
-                      data = df.omitted, distribution = "laplace",
-                      n.trees = ntrees, cv.folds = 10,
-                      n.minobsinnode = min_node_size, verbose = FALSE)
-  opt_iters <- gbm.perf(boost_fit_cv, method = "cv")
-  print(opt_iters)
+    df$Abundance[!is.finite(df$Abundance)] <- NA
+    not_na_indices <- which(!is.na(df$Abundance))
+    df.omitted <- df %>% drop_na(Abundance)
+    
+    boost_fit_cv <- gbm(Abundance ~ RunIndex + Age + Type + Gender + APOE,
+                        data = df.omitted, distribution = "laplace",
+                        shrinkage = shrinkage,
+                        n.trees = ntrees, cv.folds = cv.folds,
+                        n.minobsinnode = min_node_size, verbose = FALSE)
 
-  best_fit <- predict(boost_fit_cv, df.omitted, opt_iters)
+    opt_iters <- gbm.perf(boost_fit_cv, method = "cv")
+    print(opt_iters)
 
-  abund <- df$Abundance
-  bf <- rep(NA, length(abund))
+    ## Note: this isn't ordered by run index 
+    trend <- plot(boost_fit_cv, 1, num_trees=opt_iters,
+                  grid_levels=df.omitted$RunIndex, return_grid=TRUE)$y
+    
+    abund <- df$Abundance
+    trend_fit <- rep(NA, length(abund))
 
-  abund[not_na_indices] <- df.omitted$Abundance - best_fit
-  bf[not_na_indices] <- best_fit
+    abund[not_na_indices] <- df.omitted$Abundance - trend
+    trend_fit[not_na_indices] <- trend
 
-  df$RawScaled <- df$Abundance
-  
-  df$Abundance <- abund
-  df$Trend <- bf
+    df$RawScaled <- df$Abundance
+    
+    df$Abundance <- abund
+    df$Trend <- trend_fit
 
-  ## save figures
-  if(!is.null(fig_dir)) {
-      print(df$Metabolite[1])
-      trend_plot <- ggplot(df[not_na_indices,]) +
-          geom_point(aes(x=RunIndex, y=RawScaled, shape=Type, col=Type)) +
-          geom_line(aes(x=RunIndex, y=Trend), size=2, col="red")
-      residual_plot <- ggplot(df[not_na_indices,]) +
-          geom_point(aes(x=RunIndex, y=Abundance, shape=Type, col=Type))
-      combo_plot <- trend_plot + residual_plot
-      ggsave(paste0(fig_dir, make.names(df$Metabolite[1]), ".pdf"),
-             combo_plot, width=14)
-  }
+    ## save figures
+    if(!is.null(fig_dir)) {
 
-  df 
+        trend_plot <- ggplot(df[not_na_indices,]) +
+            geom_point(aes(x=RunIndex, y=RawScaled, shape=Type, col=Type)) +
+            geom_line(aes(x=RunIndex, y=Trend), size=2, col="red")
+        residual_plot <- ggplot(df[not_na_indices,]) +
+            geom_point(aes(x=RunIndex, y=Abundance, shape=Type, col=Type))
+        combo_plot <- trend_plot + residual_plot
+        ggsave(paste0(fig_dir, make.names(df$Metabolite[1]), ".pdf"),
+               combo_plot, width=14)
+    }
+
+    df 
 
 }
 

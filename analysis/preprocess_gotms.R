@@ -96,7 +96,7 @@ subject_data %<>% rename(Raw = Abundance)
 subject_data %<>% group_by(Mode, RunIndex) %>%
      mutate(Abundance = Raw - median(Raw, na.rm=TRUE)) %>% ungroup
 
-fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, shrinkage=0.001,
+fit_boosted_model <- function(df, ntrees=5000, cv.folds=10, shrinkage=0.001,
                               min_node_size=5, fig_dir=NULL) {
 
     print(df$Metabolite[1])
@@ -105,31 +105,34 @@ fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, shrinkage=0.001,
     not_na_indices <- which(!is.na(df$Abundance))
     df.omitted <- df %>% drop_na(Abundance)
 
-    boost_fit_cv <- gbm(Abundance ~ RunIndex + Age + Type + Gender + APOE,
-                        data = df.omitted, distribution = "laplace",
-                        shrinkage = shrinkage,
-                        n.trees = ntrees, cv.folds = 10,
-                        n.minobsinnode = min_node_size, verbose = FALSE)
 
-    opt_iters <- gbm.perf(boost_fit_cv, method = "cv")
-    print(opt_iters)
 
-    best_fit <- predict(boost_fit_cv, df.omitted, opt_iters)
+    ntrees <- ntrees/2
+    opt_iters <- ntrees
+    while(opt_iters > 0.95*ntrees & opt_iters < 20000) {
+        ntrees <- 2*ntrees
+        boost_fit_cv <- gbm(Abundance ~ RunIndex + Age + Type + Gender + APOE,
+                            data = df.omitted, distribution = "laplace",
+                            n.trees = ntrees, cv.folds = 10,
+                            n.minobsinnode = min_node_size, verbose = FALSE)
+        opt_iters <- gbm.perf(boost_fit_cv, method = "cv")
+        print(opt_iters)
+    }
 
     ## Note: this isn't ordered by run index 
     trend <- plot(boost_fit_cv, 1, num_trees=opt_iters,
                   grid_levels=df.omitted$RunIndex, return_grid=TRUE)$y
     
     abund <- df$Abundance
-    bf <- rep(NA, length(abund))
+    trend_fit <- rep(NA, length(abund))
 
     abund[not_na_indices] <- df.omitted$Abundance - trend
-    bf[not_na_indices] <- best_fit
+    trend_fit[not_na_indices] <- trend
 
     df$RawScaled <- df$Abundance
     
     df$Abundance <- abund
-    df$Trend <- trend
+    df$Trend <- trend_fit
 
     ## save figures
     if(!is.null(fig_dir)) {
@@ -148,15 +151,15 @@ fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, shrinkage=0.001,
 
 }
 
-## boosted model 
+test_boosted <- subject_data %>%
+    group_by(Metabolite, Mode) %>%
+    filter(Metabolite == "1391-7.063 Results") %>% 
+    do(fit_boosted_model(.))
+
+## fit boosted model to all
 detrended <- subject_data %>%
     group_by(Metabolite, Mode) %>%
     do(fit_boosted_model(., fig_dir = "../results/gotms_trend_data/"))
-
-## detrended <- subject_data %>%
-##     group_by(Metabolite, Mode) %>%
-##     filter(Metabolite == "1391-7.063 Results") %>% 
-##     do(fit_boosted_model(., fig_dir = "../results/gotms_trend_data/"))
 
 subject_data <- detrended
 

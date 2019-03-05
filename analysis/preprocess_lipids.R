@@ -76,50 +76,6 @@ subject_data %<>% rename(Raw = Abundance)
 subject_data %<>% group_by(Mode, RunIndex) %>%
     mutate(Abundance = Raw - median(Raw, na.rm=TRUE)) %>% ungroup
 
-fit_spline_model <- function(df, knots, Boundary.knots, fig_dir = NULL) {
-
-    ## At least 20 observations
-    if( sum( !is.na( df$Abundance) ) > 40 ){
-
-        train <- df %>% select(RunIndex, Gender, Type) %>%
-            mutate_at(vars(Gender, Type), as.factor) %>%
-            model_matrix(~ RunIndex) %>% as.matrix
-
-        not_na_indices <- !is.na(df$Abundance)
-        df.omitted <- df %>% filter(not_na_indices)
-
-        rq_fit <- rq(Abundance ~ bs(RunIndex, knots=knots, Boundary.knots),
-                     data = df.omitted, tau=0.5)
-
-        abund <- df.omitted$Abundance
-
-        trend <- predict(rq_fit)
-        
-        abund <- df.omitted$Abundance - trend
-
-        df$RawScaled <- df$Abundance
-        
-        df$Abundance[not_na_indices] <- abund
-        df$Trend <- df$Abundance
-        df$Trend[not_na_indices] <- trend
-
-        ## save figures
-        if(!is.null(fig_dir)) {
-            print(df$Lipid[1])
-            trend_plot <- ggplot(df[not_na_indices,]) +
-                geom_point(aes(x=RunIndex, y=RawScaled, shape=Type, col=Type)) +
-                geom_line(aes(x=RunIndex, y=trend), size=2, col="red")
-            residual_plot <- ggplot(df[not_na_indices,]) +
-                geom_point(aes(x=RunIndex, y=Abundance, shape=Type, col=Type))
-            combo_plot <- trend_plot + residual_plot
-            ggsave(paste0(fig_dir, make.names(df$Lipid[1]), ".pdf"),
-                   combo_plot, width=14)
-        }
-    }
-
-    df
-}
-
 fit_boosted_model <- function(df, ntrees=20000, cv.folds=10,
                               min_node_size=10, fig_dir=NULL) {
   print(df$Lipid[1])
@@ -133,7 +89,7 @@ fit_boosted_model <- function(df, ntrees=20000, cv.folds=10,
       opt_iters <- ntrees
       while(opt_iters == ntrees) {
           ntrees <- 2*ntrees
-          boost_fit_cv <- gbm(Abundance ~ RunIndex,
+          boost_fit_cv <- gbm(Abundance ~ RunIndex + Age + Type + Gender + APOE,
                               data = df.omitted, distribution = "laplace",
                               n.trees = ntrees, cv.folds = 10,
                               n.minobsinnode = min_node_size, verbose = FALSE)
@@ -141,18 +97,20 @@ fit_boosted_model <- function(df, ntrees=20000, cv.folds=10,
           print(opt_iters)
       }
 
-      best_fit <- predict(boost_fit_cv, df.omitted, opt_iters)
-
+      ## Note: this isn't ordered by run index 
+      trend <- plot(boost_fit_cv, 1, num_trees=opt_iters,
+                    grid_levels=df.omitted$RunIndex, return_grid=TRUE)$y
+      
       abund <- df$Abundance
-      bf <- rep(NA, length(abund))
+      trend_fit <- rep(NA, length(abund))
 
-      abund[not_na_indices] <- df.omitted$Abundance - best_fit
-      bf[not_na_indices] <- best_fit
+      abund[not_na_indices] <- df.omitted$Abundance - trend
+      trend_fit[not_na_indices] <- trend
 
       df$RawScaled <- df$Abundance
       
       df$Abundance <- abund
-      df$Trend <- bf
+      df$Trend <- trend_fit
 
       ## save figures
       if(!is.null(fig_dir)) {
@@ -170,10 +128,6 @@ fit_boosted_model <- function(df, ntrees=20000, cv.folds=10,
   df 
 
 }
-
-
-
-
 
 total <- subject_data %>%
     group_by(RunIndex) %>%
