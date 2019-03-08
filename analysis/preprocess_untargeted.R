@@ -47,7 +47,7 @@ format_data <- function(df, type="Unknown") {
     df %<>% mutate(SampleId = as.numeric(gsub(toupper(type), "", Name)))
     df %<>% mutate(RunIndex = recode(Name, !!!RunIndex))
     
-    df
+    df %<>% rename(Metabolite = Compound)
     
 }
 
@@ -103,35 +103,57 @@ fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, shrinkage=0.001,
                               min_node_size=10, fig_dir=NULL) {
 
     print(df$Metabolite[1])
+    if( sum( !is.na( df$Abundance) ) > 50 ){
+        
+        df$Abundance[!is.finite(df$Abundance)] <- NA
+        not_na_indices <- which(!is.na(df$Abundance))
+        df.omitted <- df %>% drop_na(Abundance)
+        
+        boost_fit_cv <- gbm(Abundance ~ RunIndex + Age + Type + Gender + APOE,
+                            data = df.omitted, distribution = "laplace",
+                            shrinkage = shrinkage,
+                            n.trees = ntrees, cv.folds = 10,
+                            n.minobsinnode = min_node_size, verbose = FALSE)
 
-    df$Abundance[!is.finite(df$Abundance)] <- NA
-    not_na_indices <- which(!is.na(df$Abundance))
-    df.omitted <- df %>% drop_na(Abundance)
+        opt_iters <- gbm.perf(boost_fit_cv, method = "cv")
+        print(opt_iters)
 
-    boost_fit_cv <- gbm(Abundance ~ RunIndex + Gender + Type,
-                        data = df.omitted, distribution = "laplace",
-                        shrinkage = shrinkage,
-                        n.trees = ntrees, cv.folds = 10,
-                        n.minobsinnode = min_node_size, verbose = FALSE)
-    
-    opt_iters <- gbm.perf(boost_fit_cv, method = "cv")
-    print(opt_iters)
+        ## Note: this isn't ordered by run index 
+        trend <- plot(boost_fit_cv, 1, num_trees=opt_iters,
+                      grid_levels=df.omitted$RunIndex, return_grid=TRUE)$y
+        
+        abund <- df$Abundance
+        trend_fit <- rep(NA, length(abund))
 
-    best_fit <- predict(boost_fit_cv, df.omitted, opt_iters)
+        abund[not_na_indices] <- df.omitted$Abundance - trend
+        trend_fit[not_na_indices] <- trend
 
-    trend <- plot(boost_fit_cv, 1, num_trees=opt_iters,
-                  grid_levels=df.omitted$RunIndex, return_grid=TRUE)$y
-    
-    abund <- df$Abundance
-    bf <- rep(NA, length(abund))
+        df$RawScaled <- df$Abundance
+        
+        df$Abundance <- abund
+        df$Trend <- trend_fit
+        
+        
+    } else {
 
-    abund[not_na_indices] <- df.omitted$Abundance - best_fit
-    bf[not_na_indices] <- best_fit
+        df$Abundance[!is.finite(df$Abundance)] <- NA
+        not_na_indices <- which(!is.na(df$Abundance))
+        df.omitted <- df %>% drop_na(Abundance)
+        
+        med_value <- median(df.omitted$Abundance)
+        trend <- rep(med_value, nrow(df.omitted))
+        
+        abund <- df$Abundance
+        trend_fit <- rep(NA, length(abund))
 
-    df$RawScaled <- df$Abundance
-    
-    df$Abundance <- abund
-    df$Trend <- bf
+        abund[not_na_indices] <- df.omitted$Abundance - trend
+        trend_fit[not_na_indices] <- trend
+
+        df$RawScaled <- df$Abundance
+        
+        df$Abundance <- abund
+        df$Trend <- trend_fit
+    }
 
     ## save figures
     if(!is.null(fig_dir)) {
@@ -145,7 +167,7 @@ fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, shrinkage=0.001,
         ggsave(paste0(fig_dir, make.names(df$Metabolite[1]), ".pdf"),
                combo_plot, width=14)
     }
-
+    
     df 
 
 }
@@ -153,12 +175,7 @@ fit_boosted_model <- function(df, ntrees=10000, cv.folds=10, shrinkage=0.001,
 ## boosted model 
 detrended <- subject_data %>%
     group_by(Metabolite, Mode) %>%
-    do(fit_boosted_model(., fig_dir = "../results/gotms_trend_data/"))
-
-detrended <- subject_data %>%
-    filter(Metabolite == "1391-7.063 Results") %>% 
-    fit_boosted_model(., fig_dir = "../results/gotms_trend_data/")
-
+    do(fit_boosted_model(., fig_dir = "../results/untargeted_trend_data/"))
 
 subject_data <- detrended
 
@@ -178,6 +195,6 @@ subject_data <- subject_data %>%
     ungroup
 
 save(subject_data, QC_long,
-     file = sprintf("preprocessed_untargted_data-%s.RData", Sys.Date()))
+     file = sprintf("preprocessed_untargeted_data-%s.RData", Sys.Date()))
 
 
