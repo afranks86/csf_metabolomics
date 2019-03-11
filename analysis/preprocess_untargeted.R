@@ -195,6 +195,4 @@ subject_data <- subject_data %>%
     ungroup
 
 save(subject_data, QC_long,
-     file = sprintf("preprocessed_untargeted_data-%s.RData", Sys.Date()))
-
-
+     file = sprintf("../preprocessed_data/preprocessed_untargeted_data-%s.RData", Sys.Date()))
