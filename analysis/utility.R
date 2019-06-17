@@ -38,3 +38,28 @@ getRank <- function(Y) {
 
   rank
 }
+
+
+fit_lm <- function(df, predictors, type="lm") {
+    form <- as.formula(paste("Abundance", paste(predictors, collapse = " + "), 
+                             sep = " ~ "))
+
+    if(sum(is.na(df$Abundance)) > 50)
+        return(NULL)
+    else {
+        if(type=="lm") {
+            return(summary(lm(form, data=df))$coefficients)
+        }
+        else if(type == "rq") {
+
+            rq_fit <- rq(form, data=df, tau=0.5)
+            coefs <- summary(rq_fit, se="boot")$coefficients
+            colnames(coefs)[1] <- "Estimate" ## to match lm
+            coefs
+
+        }
+    
+        
+    }
+}
+
