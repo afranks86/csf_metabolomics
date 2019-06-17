@@ -20,26 +20,136 @@ library(gbm3)
 library(huge)
 library(modelr)
 library(robust)
+library(cowplot)
+library(colorspace)
 
-source("~/course/rstiefel/R/opt.stiefel.R")
+
+
 source("utility.R")
-load("preprocessed_csf_data.RData")
+load("../data/preprocessed_csf_data.RData")
 
-
-## Dimension of envelope reduction
-S <- 2
 
 ## X <- matrix(rnorm(N, sd = 5), ncol=1)
-wide_data <- subject_data %>%
+wide_data <- subject_data %>% 
   filter(!(Type %in% c("Other"))) %>%
   mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
-  dplyr::select(-one_of("Code", "Mode", "RunIndex", "Raw", "Trend", "Residual")) %>%
+    dplyr::select(-one_of("Code", "Mode", "RunIndex",
+                          "Raw", "Trend", "RawScaled")) %>%
   spread(key = Metabolite, value = Abundance)
 
 Y <- wide_data %>%
-  dplyr::select(-one_of("Id", "Type", "Type2", "Gender", "Age", "APOE", "Batch", "Index")) %>%
-  as.matrix()
+    dplyr::select(-one_of("Id", "Type", "Type2", "Gender",
+                          "Age", "APOE", "Batch", "Index",
+                          "GBAStatus", "GBA_T369M", "cognitive_status")) %>%
+    as.matrix()
+
 Y <- amelia(Y, m = 1, empri = 100)$imputations$imp1
+
+
+X <- wide_data %>% 
+  dplyr::select(one_of("Gender", "Age", "Type2", "APOE")) %>%
+  mutate(APOE = factor(APOE, c("22", "23", "24", "33", "34", "44"))) %>%
+  model_matrix(~ Age + Type2 + Gender + APOE) %>% as.matrix
+
+s <- getRank(Y)
+r <- 0
+
+res <- fit_envelope(Y, X, s=s, r=r, Vinit="OLS",
+                    prior_counts=10, use_py=FALSE, maxIters=1000,
+                    U1=0.1*diag(s), U0=0.1*diag(r),
+                    searchParams=list(rho=0.1, eta=0.9))
+
+
+names(res)
+plot(res$beta_ols, res$beta_env, xlim=c(-2, 2), ylim=c(-2, 2))
+
+plot(res$beta_env["APOE44", ])
+
+Vfit <- res$V
+rownames(Vfit) <- colnames(Y)
+eta <- res$eta_hat
+dim(eta)
+
+### Age Fit
+Z <- eta["Age", ] %*% t(Vfit)
+names(Z) <- rownames(Vfit)
+Z[order(abs(Z), decreasing=TRUE)]
+
+tibble(Yproj=as.numeric(eta["Age", ] %*% t(Vfit) %*% t(Y)),
+       Age=wide_data$Age, Type=wide_data$Type2) %>%
+    ggplot() + geom_point(aes(x=Age, y=Yproj, col=Type)) +
+    geom_smooth(aes(x=Age, y=Yproj), method="lm")
+
+
+### Age Fit
+Z <- as.numeric(eta["GenderM", ] %*% t(Vfit))
+names(Z) <- rownames(Vfit)
+Z[order(abs(Z), decreasing=TRUE)]
+
+tibble(Yproj= as.numeric(Z %*% t(Y)), Gender=wide_data$Gender,
+       Type=wide_data$Type2) %>%
+    ggplot() + geom_density_ridges(aes(y=Gender, x=Yproj))
+
+t.test(as.numeric(Z %*% t(Y))[wide_data$Gender == "M"],
+       as.numeric(Z %*% t(Y))[wide_data$Gender == "F"])
+
+## Check APOE for controls vs AD
+indices <- wide_data$Type != "PD"
+res <- fit_envelope(Y[indices, ], X[indices, ], s=s, r=r, Vinit="OLS",
+                    prior_counts=10, use_py=FALSE, maxIters=1000,
+                    U1=0.1*diag(s), U0=0.1*diag(r),
+                    searchParams=list(rho=0.1, eta=0.9))
+
+
+
+
+res <- fit_envelope(Y[wide_data$Type == "AD",],
+                    X[wide_data$Type == "AD",
+                      grep("APOE", colnames(X)), drop=FALSE],
+                    s=s, r=r, use_py=FALSE)
+
+YP_apoe <- Y[wide_data$Type == "AD",] %*% res$V %*% svd(res$eta)$v[, 2:3]
+tib <- tibble(x=YP_apoe[, 1], col=wide_data$APOE[wide_data$Type == "AD"])
+tib %>% ggplot(aes(x=x, y=y, col=col)) + geom_point()
+tib %>% ggplot() + geom_density_ridges(aes(x=x, y=col, fill=col)) + xlab("")
+
+plot(apply(Y, 1, mean))
+
+
+
+
+
+
+X %*% beta_env
+
+Y$Methylhistamine
+
+beta_env <- res$beta_env
+colnames(beta_env) <- colnames(Y)
+
+YprojGender <- as.matrix(Y) %*% Vfit[, 1:s] %*% t(eta)[, "GenderM"]
+YprojPD <- as.matrix(Y) %*% Vfit[, 1:s] %*% t(eta)[, "Type2PD"]
+APOEproj <- as.matrix(Y) %*% rowMeans((Vfit[, 1:s] %*% svd(eta[grepl("APOE", rownames(eta)), ])$v[, 1:2]))
+
+apoe_plot <- tibble(x=as.numeric(APOEproj), APOE=wide_data$APOE, Gender=wide_data$Gender) %>%
+    ggplot() + geom_density_ridges(aes(x=x, y=APOE, fill=APOE)) + scale_fill_brewer(type="qual", palette=6)
+apoe_plot
+
+
+
+
+Ysub <- as.matrix(Y) %*% Vfit[, 1:s]
+dim(Ysub)
+
+
+APOE_indicator <- wide_data %>% filter(Type2 != "PD") %>% dplyr::select(APOE)
+APOE_indicator
+tibble(x = as.numeric(unlist(Y2 %*% V[, 2])),
+       y=as.factor(unlist(APOE_indicator))) %>%
+    ggplot(aes(x=x, y=y)) +
+    geom_density_ridges(aes(fill=y)) +
+    scale_fill_brewer(type="qual", palette=6)
+
 
 wide_data[, -(1:8)] <- Y
 
@@ -89,96 +199,6 @@ fit_resampled <- function(resamp, S=2) {
     dplyr::select(-one_of("APOEUnknown"))
 
   fit_envelope(Y, X, S)
-}
-
-## This is a general envelope function
-fit_envelope <- function(Y, X, S=2) {
-
-    Y %<>% as.matrix
-    X %<>% model_matrix(~ .) %>% as.matrix()
-
-  ## remove intercept
-  X <- X[, -1]
-
-
-  N <- nrow(Y)
-  P <- ncol(Y)
-
-  evals <- eigen(t(X) %*% X)$values
-  if (evals[length(evals)] < 1e-6) {
-    browser()
-  }
-
-  betaHat <- t(Y) %*% X %*% solve(t(X) %*% X)
-
-  res <- (Y - X %*% t(betaHat))
-
-  rankM <- getRank(res)
-  rankMU <- getRank(Y)
-
-  MU <- t(Y) %*% Y / N
-
-
-  ## MUeigen <- eigen(MU)
-  ## MU <- MUeigen$vectors[, 1:rankMU] %*% diag(MUeigen$values[1:rankMU]) %*% t(MUeigen$vectors[, 1:rankMU])
-  ## MUinv <- MUeigen$vectors[, 1:rankMU] %*% diag(1/MUeigen$values[1:rankMU]) %*% t(MUeigen$vectors[, 1:rankMU])
-
-  ## shrinakge estimation
-  MUvecs <- eigen(MU)$vectors[, (getRank(MU) + 1):P]
-  MU <- MU - MUvecs %*% t(MUvecs) %*% MU %*% MUvecs %*% t(MUvecs) + diag(rep(1, P))
-
-  M <- t(res) %*% res / N
-  SigmaHat <- M
-
-  Mvecs <- eigen(M)$vectors[, (getRank(M) + 1):P]
-  M <- M - Mvecs %*% t(Mvecs) %*% M %*% Mvecs %*% t(Mvecs) + diag(rep(1, P))
-
-  ## M <- M + 0.01*diag(nrow(M))
-  ## MUinv <- M + 0.01*diag(nrow(MUinv))
-  print("Inverting...")
-  MUinv <- solve(MU)
-
-  F <- function(V, M, MUinv) {
-    determinant(t(V) %*% M %*% V, logarithm = TRUE)$modulus +
-      determinant(t(V) %*% MUinv %*% V, logarithm = TRUE)$modulus
-  }
-
-  dF <- function(V, M, MUinv) {
-    2 * M %*% V %*% solve(t(V) %*% M %*% V) +
-      2 * MUinv %*% V %*% solve(t(V) %*% MUinv %*% V)
-  }
-
-  print("Fitting Stiefel manifold")
-  Vfit <- optStiefel(
-    function(V) F(V, M, MUinv),
-    function(V) dF(V, M, MUinv),
-    method = "bb",
-    Vinit = rustiefel(P, S),
-    verbose = FALSE,
-    maxIters = 1000,
-    maxLineSearchIters = 20
-  )
-
-  Yproj <- Y %*% Vfit
-
-  ## Covariance is determed by betahat
-  gam <- svd(betaHat)$u
-  gam0 <- rstiefel::NullC(gam)
-
-  res_proj <- res %*% gam
-  psihat <- t(res_proj) %*% res_proj / N
-
-  res_proj0 <- res %*% gam0
-  psihat.0 <- t(res_proj0) %*% res_proj0 / N
-
-  SigmaHatCov <- gam %*% psihat %*% t(gam) + gam0 %*% psihat.0 %*% t(gam0) + diag(rep(1, P))
-
-
-  ## Envelope estimates
-  etaHat <- t(Yproj) %*% X %*% solve(t(X) %*% X)
-  betaHatNew <- Vfit %*% etaHat
-
-  list(betaHat = betaHat, betaHatNew = betaHatNew, SigmaHat = SigmaHat, SigmaHatNew = M, SigmaHatCov = SigmaHatCov, Vfit = Vfit)
 }
 
 test_out_of_sample <- function(test, params) {
@@ -231,15 +251,22 @@ AD_comparison <- wide_data %>%
   mutate(Type2 = droplevels(Type2), Type = droplevels(Type))
 
 Y <- AD_comparison %>% dplyr::select(-one_of("Id", "Type", "Type2", "Gender", "Age", "APOE", "Batch", "Index"))
-Y <- amelia(Y, m = 1, empri = 1000)$imputations$imp1
+if(any(is.na(Y))) {
+    Y <- amelia(Y, m = 1, empri = 1000)$imputations$imp1
+}
 
 X <- AD_comparison %>%
   mutate(Type2 = relevel(Type2, 2)) %>%
   dplyr::select(one_of("Type2", "Gender", "Age", "APOE")) %>%
-  mutate(APOE = droplevels(APOE))
+  mutate(APOE = droplevels(APOE)) %>% model.matrix
 
+X <- wide_data %>% 
+  dplyr::select(one_of("Gender", "Age", "Type2", "APOE")) %>%
+  mutate(APOE = droplevels(factor(APOE, c("Unknown", "23", "24", "33", "34", "44")))) %>% 
+  model_matrix(~ Age + Type2 + Gender + APOE - 1)
+X <- X %>% select(-"Type2C") %>% as.matrix
 
-res <- fit_envelope(Y, X, 20)
+res <- fit_envelope(as.matrix(Y), as.matrix(X), s=20, use_py=FALSE)
 
 
 Vfit <- res$Vfit
