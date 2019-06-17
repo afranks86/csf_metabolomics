@@ -123,15 +123,18 @@ NDTracking$Batch <- groupAssignment
 table(NDTracking$Batch)
 
 ## Check age balance
-pdf("figs/design/age_balance.pdf")
+pdf("../figs/design/age_balance.pdf")
 t(sapply(1:nbatch, function(g) quantile(NDTracking$Age[NDTracking$Batch==g])))
-ggplot(data=NDTracking, aes(y = Age, x=as.factor(Batch))) + geom_boxplot()
+ggplot(data=NDTracking, aes(y = Age, x=as.factor(Batch))) +
+    geom_boxplot(fill="grey") +
+    theme_bw(base_size=20) + xlab("Batch")
 dev.off()
 
 ## Check gender balance
-pdf("figs/design/gender_balance.pdf")
+pdf("../figs/design/gender_balance.pdf")
 table(NDTracking$Gender, NDTracking$Batch)
-ggplot(data=NDTracking, aes(Batch)) + geom_bar() + facet_wrap(~ Gender)
+ggplot(data=NDTracking, aes(Batch)) + geom_bar() + facet_wrap(~ Gender) +
+    theme_bw(base_size=20) + ylab("Count")
 dev.off()
 
 ## Check balance of disease types
