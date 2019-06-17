@@ -2,7 +2,7 @@ library(tidyverse)
 library(broom)
 library(magrittr)
 library(made4)
-library(ggjoy)
+library(ggridges)
 library(gbm3)
 
 positive_mode_data <- read_csv("~/course/ND_Metabolomics/data/csf_positive.csv")
@@ -65,7 +65,17 @@ detrended_QC <- QC_long %>% mutate(Index = RunIndex) %>% group_by(Metabolite, Mo
 
 
 ## Join with Tracking data
-tracking_data <- read_csv("~/course/ND_Metabolomics/data/NDTracking.csv")
+tracking_data <- read_csv("../data/NDTracking.csv")
+
+## incorporate supplementary PD info provided by Cyrus
+pd_supplement <- read_csv("../data/PANUC/panuc.csv")
+
+pd_supplement <- pd_supplement %>% dplyr::select(summary_id, ApoE, GBAStatus, GBA_T369M, cognitive_status) %>% rename(Id = summary_id)
+pd_supplement <- pd_supplement %>% rename(APOE = ApoE) %>% mutate(APOE = sub(".", "", APOE, fixed=TRUE))
+
+tracking_data <- tracking_data %>% mutate(Id = gsub("IPD.+;\\s", "", Id)) %>% mutate(APOE = as.character(APOE))
+tracking_data <- left_join(tracking_data, pd_supplement, by="Id") %>% mutate(APOE = coalesce(APOE.x, APOE.y)) %>% dplyr::select(-c(APOE.x, APOE.y))
+
 subject_data <- inner_join(tracking_data, detrended, by = "Index")
 
 ## Type2 collapse (CO, CM, CY) to C
@@ -95,8 +105,6 @@ for(met in unique(subject_data$Metabolite)) {
 }
 
 linear_model_info <- lmod_info %>% gather(key="Metabolite", value="Value", -one_of("pred", "stat"))
-
-
 
 ## biocLite("KEGGREST")
 library(KEGGREST)
