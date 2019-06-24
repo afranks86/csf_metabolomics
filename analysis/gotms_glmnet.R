@@ -110,7 +110,7 @@ imputed_all_Y <- imputed_all[[1]]
 imputed_all_labels <- imputed_all[[2]] 
 
 
-### PD vs CO analysis ###
+### START PD vs CO analysis ###
 
 #filter dataset to only include PD, CO
 imputed_pd_co <- filter_and_impute(c('PD', 'CO'))
@@ -155,14 +155,27 @@ pred_pd_co_list <- lapply(fit_pd_co_list,
 importance_pd_co_list <- lapply(fit_pd_co_list, function(x) importance(x))
 
 #roc for each of the alphas
-roc_list <- lapply(pred_pd_co_list, function(x) fpr_tpr(x, imputed_pd_co_labels)) %>%
+roc_pd_co_list <- lapply(pred_pd_co_list, function(x) fpr_tpr(x, imputed_pd_co_labels)) %>%
   bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
   mutate(alpha = seq(0,1,.1) %>%    #match with the actual alpha value
            rep(each = length(imputed_pd_co_labels)+1) %>%  #+1 for the 0,0 point
            as.factor)
 
 #plot for all alphas
-ggplot(roc_list, mapping = aes(fpr, tpr, color = alpha))+ 
+ggplot(roc_pd_co_list, mapping = aes(fpr, tpr, color = alpha))+ 
   geom_line()
+
+### END PD vs CO analysis ###
+
+
+
+### START {AD,PD} vs CO analysis ###
+imputed_adpd_co <- filter_and_impute(c('AD', 'PD', 'CO'))
+imputed_adpd_co_y <- imputed_adpd_co[[1]]
+#Group AD, PD into D (for diseased)
+imputed_adpd_co_labels <- imputed_adpd_co[[2]] %>% 
+  fct_collapse(D = c('AD', 'PD'))
+  
+
 
 
