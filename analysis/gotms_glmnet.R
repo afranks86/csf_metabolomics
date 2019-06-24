@@ -65,18 +65,19 @@ filter_and_impute <- function(types){
 }
 
 #does loocv for logistic regression, using misclass error loss (maybe better to use deviance?), eval at different elastic net alphas
-fit_pd_co <- function(alpha, measure = 'class'){
+fit_glmnet <- function(features, labels, alpha, measure = 'class'){
   set.seed(1)
   #set foldid so that same folds every time (it's loocv so it's just an ordering)
-  foldid <- sample(nrow(imputed_pd_co_y))
+  foldid <- sample(nrow(features))
   
-  fit <- cv.glmnet(imputed_pd_co_y, imputed_pd_co_labels, family = 'binomial', 
-                   type.measure = measure, nfolds = nrow(imputed_pd_co_y),
+  fit <- cv.glmnet(features, labels, family = 'binomial', 
+                   type.measure = measure, nfolds = nrow(features),
                    foldid = foldid, alpha = alpha, grouped = FALSE, standardize = FALSE)
+  return(fit)
 }
 
 
-#function to return fpr, trp given prediction and true label
+#function to return fpr, tpr given prediction and true label
 fpr_tpr <- function(pred, label){
   rocpred <- ROCR::prediction(pred, label)
   rocperf <- ROCR::performance(rocpred, measure = 'tpr', x.measure = 'fpr')
@@ -92,7 +93,11 @@ importance <- function(fit){
   coefficients <- coef(fit, s = 'lambda.min') %>% 
     abs %>%
     as.matrix
+  #order the coefficients for weak measure of importance, and remove coefs with 0 coeff
   coefficients_sorted <- coefficients[order(coefficients, decreasing = TRUE) & coefficients > 0,]
+  #map names to the metabolite name
+  names(coefficients_sorted) <- str_replace_all(names(coefficients_sorted), ' Result.*', '') %>%
+    sapply(function(x) all_matches[match(x, all_matches$Name), 'Metabolite'] %>% deframe)
   return(coefficients_sorted)
   
 }
@@ -120,9 +125,9 @@ imputed_pd_co_labels <- imputed_pd_co[[2]]
 
 ## START sample analysis with a few extreme alphas ##
 # fit
-fit_pd_co_lasso <- fit_pd_co(alpha = 1, measure = 'class')
-fit_pd_co_ridge <- fit_pd_co(alpha = 0, measure = 'class')
-fit_pd_co_half <- fit_pd_co(alpha = 0.5, measure = 'class')
+fit_pd_co_lasso <- fit_glmnet(imputed_pd_co_y, imputed_pd_co_labels, alpha = 1, measure = 'class')
+fit_pd_co_ridge <- fit_glmnet(imputed_pd_co_y, imputed_pd_co_labels, alpha = 0, measure = 'class')
+fit_pd_co_half <- fit_glmnet(imputed_pd_co_y, imputed_pd_co_labels, alpha = 0.5, measure = 'class')
 
 # predict using response (for prob) or class (.5 threshold) using min lambda (complexity determined by cv)
 pred_pd_co_lasso <- predict(fit_pd_co_lasso, newx = imputed_pd_co_y, type = 'response', s = 'lambda.min')
@@ -145,7 +150,7 @@ abline(a = 0, b = 1, lty= 2)
 ## END sample analysis with a few extreme alphas##
 
 ## START try 10 alphas between 0 and 1
-fit_pd_co_list <- lapply(seq(0, 1, .1), function(x) fit_pd_co(alpha = x, measure = 'class'))
+fit_pd_co_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_co_y, imputed_pd_co_labels, alpha = x, measure = 'class'))
 
 #fit models with each of the alphas
 pred_pd_co_list <- lapply(fit_pd_co_list, 
@@ -163,19 +168,60 @@ roc_pd_co_list <- lapply(pred_pd_co_list, function(x) fpr_tpr(x, imputed_pd_co_l
 
 #plot for all alphas
 ggplot(roc_pd_co_list, mapping = aes(fpr, tpr, color = alpha))+ 
-  geom_line()
+  geom_line() + 
+  labs(title = 'ROC: PD vs CO')
 
 ### END PD vs CO analysis ###
 
 
 
 ### START {AD,PD} vs CO analysis ###
+
+#imputation
 imputed_adpd_co <- filter_and_impute(c('AD', 'PD', 'CO'))
 imputed_adpd_co_y <- imputed_adpd_co[[1]]
 #Group AD, PD into D (for diseased)
 imputed_adpd_co_labels <- imputed_adpd_co[[2]] %>% 
   fct_collapse(D = c('AD', 'PD'))
-  
+
+
+
+#fit models with each of the alphas
+fit_adpd_co_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_adpd_co_y, imputed_adpd_co_labels, alpha = x, measure = 'class'))
+
+pred_adpd_co_list <- lapply(fit_adpd_co_list, 
+                          function(x) predict(x, newx = imputed_adpd_co_y, 
+                                              type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_adpd_co_list <- lapply(fit_adpd_co_list, function(x) importance(x))
+
+#roc for each of the alphas
+#note: both alpha = 0 and alpha = 1 give constant prediction probability for all observations
+  #something is probably wrong with the code, need to look at it.
+roc_adpd_co_list <- lapply(pred_adpd_co_list, function(x) fpr_tpr(x, imputed_adpd_co_labels)) %>%
+  bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
+  mutate(alpha = c(0,0, seq(0.1,.9,.1) %>%    #match with the actual alpha value
+          rep(each = length(imputed_adpd_co_labels)+1),  #+1 for the 0,0 point
+          1,1) %>% as.factor)
+
+#plot for all alphas
+  #note: tpr and fpr are switched because the roc curve was going the wrong way
+ggplot(roc_adpd_co_list, mapping = aes(tpr, fpr, color = alpha))+ 
+  geom_line() + 
+  labs(title = 'ROC, {AD,PD} vs CO')
+
+
+## look at the ridge regression in particular, since it gave constant results.
+  # same thing happened in the lasso case. not sure why yet
+a <- fit_glmnet(imputed_adpd_co_y, imputed_adpd_co_labels, alpha = 0, measure = 'class')
+apred <- predict(a, newx = imputed_adpd_co_y, s = 'lambda.min', type = 'response')
+apred2 <- ROCR::prediction(apred, imputed_adpd_co_labels)
+aperf <- ROCR::performance(apred2, measure = 'tpr', x.measure = 'fpr')
+
+# todo: look into https://www.ggplot2-exts.org/plotROC.html
+plot(aperf)
+abline(a = 0, b = 1, lty= 2)
+
 
 
 
