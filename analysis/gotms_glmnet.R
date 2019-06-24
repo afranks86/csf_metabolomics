@@ -80,9 +80,11 @@ fit_glmnet <- function(features, labels, alpha, measure = 'class'){
 #function to return fpr, tpr given prediction and true label
 fpr_tpr <- function(pred, label){
   rocpred <- ROCR::prediction(pred, label)
-  rocperf <- ROCR::performance(rocpred, measure = 'tpr', x.measure = 'fpr')
-  return(tibble(fpr = deframe(rocperf@x.values), 
-                tpr = deframe(rocperf@y.values)))
+  rocfpr_tpr <- ROCR::performance(rocpred, measure = 'tpr', x.measure = 'fpr')
+  rocauc <- ROCR::performance(rocpred, measure = 'auc')
+  return(tibble(fpr = deframe(rocfpr_tpr@x.values), 
+                tpr = deframe(rocfpr_tpr@y.values),
+                auc = as.numeric(rocauc@y.values)))
 }
 
 ## get idea of variable importance. note that this relies on our variables being standardized before 
@@ -171,6 +173,12 @@ ggplot(roc_pd_co_list, mapping = aes(fpr, tpr, color = alpha))+
   geom_line() + 
   labs(title = 'ROC: PD vs CO')
 
+#look at auc's for each alpha
+roc_pd_co_list %>% 
+  group_by(alpha) %>%
+  slice(1) %>%
+  select(alpha, auc)
+
 ### END PD vs CO analysis ###
 
 
@@ -210,16 +218,23 @@ ggplot(roc_adpd_co_list, mapping = aes(tpr, fpr, color = alpha))+
   geom_line() + 
   labs(title = 'ROC, {AD,PD} vs CO')
 
+#look at auc for each alpha. need to do (1- auc) to show the flip
+roc_adpd_co_list %>% 
+  mutate(auc = 1 - auc) %>%
+  group_by(alpha) %>%
+  slice(1) %>%
+  select(alpha, auc)
+
 
 ## look at the ridge regression in particular, since it gave constant results.
   # same thing happened in the lasso case. not sure why yet
-a <- fit_glmnet(imputed_adpd_co_y, imputed_adpd_co_labels, alpha = 0, measure = 'class')
-apred <- predict(a, newx = imputed_adpd_co_y, s = 'lambda.min', type = 'response')
-apred2 <- ROCR::prediction(apred, imputed_adpd_co_labels)
-aperf <- ROCR::performance(apred2, measure = 'tpr', x.measure = 'fpr')
+fit_adpd_co_ridge <- fit_glmnet(imputed_adpd_co_y, imputed_adpd_co_labels, alpha = 0, measure = 'class')
+pred_adpd_co_ridge <- predict(fit_adpd_co_ridge, newx = imputed_adpd_co_y, s = 'lambda.min', type = 'response')
+rocpred_adpd_co_ridge <- ROCR::prediction(pred_adpd_co_ridge, imputed_adpd_co_labels)
+rocperf_adpd_co_ridge <- ROCR::performance(rocpred_adpd_co_ridge, measure = 'tpr', x.measure = 'fpr')
 
 # todo: look into https://www.ggplot2-exts.org/plotROC.html
-plot(aperf)
+plot(rocperf_adpd_co_ridge)
 abline(a = 0, b = 1, lty= 2)
 
 
