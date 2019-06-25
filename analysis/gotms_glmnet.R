@@ -45,6 +45,7 @@ filter_and_impute <- function(types){
   filtered <- wide_data %>%
     filter(Type %in% types)
   
+  #drop unused levels
   type <- filtered$Type %>%
     droplevels
   
@@ -124,6 +125,11 @@ imputed_pd_co <- filter_and_impute(c('PD', 'CO'))
 imputed_pd_co_y <- imputed_pd_co[[1]]
 imputed_pd_co_labels <- imputed_pd_co[[2]]
 
+#write new file as csv
+imputed_pd_co_y %>% 
+  as.data.frame() %>%
+  mutate(Type = imputed_pd_co_labels) %>%
+  write_csv(path = 'gotms_imputed_pd_co.csv')
 
 ## START sample analysis with a few extreme alphas ##
 # fit
@@ -161,6 +167,15 @@ pred_pd_co_list <- lapply(fit_pd_co_list,
 #some measure of variable importance
 importance_pd_co_list <- lapply(fit_pd_co_list, function(x) importance(x))
 
+#write one to csv
+#choice of 7th element (ie alpha = .6) is mostly arbitrary.
+  #normally, between 30-50 predictors are significant, this one has 40.
+importance_pd_co_list[[7]] %>% 
+  enframe(name = 'metabolite', value= 'coefficient') %>% 
+  filter(!is.na(metabolite)) %>%  #na metabolite is the intercept
+  arrange(desc(coefficient)) %>% 
+  write_csv(path = 'gotms_glmnet.6_predictors.csv')
+
 #roc for each of the alphas
 roc_pd_co_list <- lapply(pred_pd_co_list, function(x) fpr_tpr(x, imputed_pd_co_labels)) %>%
   bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
@@ -192,6 +207,10 @@ imputed_adpd_co_y <- imputed_adpd_co[[1]]
 imputed_adpd_co_labels <- imputed_adpd_co[[2]] %>% 
   fct_collapse(D = c('AD', 'PD'))
 
+imputed_adpd_co_y %>% 
+  as.data.frame() %>%
+  mutate(Type = imputed_adpd_co_labels) %>%
+  write_csv(path = 'gotms_imputed_adpd_co.csv')
 
 
 #fit models with each of the alphas
