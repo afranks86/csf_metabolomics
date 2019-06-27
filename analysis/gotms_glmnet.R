@@ -56,10 +56,20 @@ filter_and_impute <- function(types){
                         "GBA_T369M", "cognitive_status")) %>%
     as.matrix()
   Y[Y==0] <- NA
-  dim(Y)
   
+  #do imputation
   Yt <- amelia(t(Y), m = 1, empri = 100)$imputations$imp1
-  Y <- t(Yt) %>% as.matrix
+  #our functions take matrices, and we add age/gender (1 = F, 2 = M)
+  Y_tmp <- t(Yt) %>% 
+    as_tibble %>%
+    mutate(Age = filtered$Age,
+           Gender = filtered$Gender)
+  #convert gender to a dummy var (1 if male, 0 if female)
+  Y_tmp <- model.matrix(~., Y_tmp)
+  #remove intercept column created by model.matrix
+  Y <- Y_tmp[,-1]
+    
+    
   
   
   return(list(Y, type))
@@ -125,11 +135,11 @@ imputed_pd_co <- filter_and_impute(c('PD', 'CO'))
 imputed_pd_co_y <- imputed_pd_co[[1]]
 imputed_pd_co_labels <- imputed_pd_co[[2]]
 
-#write new file as csv
-imputed_pd_co_y %>% 
-  as.data.frame() %>%
-  mutate(Type = imputed_pd_co_labels) %>%
-  write_csv(path = 'gotms_imputed_pd_co.csv')
+# #write new file as csv
+# imputed_pd_co_y %>% 
+#   as.data.frame() %>%
+#   mutate(Type = imputed_pd_co_labels) %>%
+#   write_csv(path = 'gotms_imputed_pd_co.csv')
 
 ## START sample analysis with a few extreme alphas ##
 # fit
