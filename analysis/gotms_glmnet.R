@@ -75,8 +75,8 @@ filter_and_impute <- function(types){
   return(list(Y, type))
 }
 
-#does loocv for logistic regression, using misclass error loss (maybe better to use deviance?), eval at different elastic net alphas
-fit_glmnet <- function(features, labels, alpha, measure = 'class'){
+#does loocv for logistic regression, using deviance loss by default (check?), eval at different elastic net alphas
+fit_glmnet <- function(features, labels, alpha, measure = 'deviance'){
   set.seed(1)
   #set foldid so that same folds every time (it's loocv so it's just an ordering)
   foldid <- sample(nrow(features))
@@ -168,7 +168,7 @@ abline(a = 0, b = 1, lty= 2)
 ## END sample analysis with a few extreme alphas##
 
 ## START try 10 alphas between 0 and 1
-fit_pd_co_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_co_y, imputed_pd_co_labels, alpha = x, measure = 'class'))
+fit_pd_co_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_co_y, imputed_pd_co_labels, alpha = x, measure = 'deviance'))
 
 #fit models with each of the alphas
 pred_pd_co_list <- lapply(fit_pd_co_list, 
@@ -212,19 +212,21 @@ roc_pd_co_list %>%
 
 #imputation
 imputed_adpd_co <- filter_and_impute(c('AD', 'PD', 'CO'))
+#features
 imputed_adpd_co_y <- imputed_adpd_co[[1]]
 #Group AD, PD into D (for diseased)
 imputed_adpd_co_labels <- imputed_adpd_co[[2]] %>% 
   fct_collapse(D = c('AD', 'PD'))
 
-imputed_adpd_co_y %>% 
-  as.data.frame() %>%
-  mutate(Type = imputed_adpd_co_labels) %>%
-  write_csv(path = 'gotms_imputed_adpd_co.csv')
+# #write the dataset used to csv if imputation takes a long time
+# imputed_adpd_co_y %>% 
+#   as.data.frame() %>%
+#   mutate(Type = imputed_adpd_co_labels) %>%
+#   write_csv(path = 'gotms_imputed_adpd_co.csv')
 
 
 #fit models with each of the alphas
-fit_adpd_co_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_adpd_co_y, imputed_adpd_co_labels, alpha = x, measure = 'class'))
+fit_adpd_co_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_adpd_co_y, imputed_adpd_co_labels, alpha = x, measure = 'deviance'))
 
 pred_adpd_co_list <- lapply(fit_adpd_co_list, 
                           function(x) predict(x, newx = imputed_adpd_co_y, 
@@ -237,10 +239,10 @@ importance_adpd_co_list <- lapply(fit_adpd_co_list, function(x) importance(x))
   #something is probably wrong with the code, need to look at it.
 roc_adpd_co_list <- lapply(pred_adpd_co_list, function(x) fpr_tpr(x, imputed_adpd_co_labels)) %>%
   bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
-  mutate(alpha = c(0,0, seq(0.1,.9,.1) %>%    #match with the actual alpha value
-          rep(each = length(imputed_adpd_co_labels)+1),  #+1 for the 0,0 point
-          1,1) %>% as.factor)
-
+  mutate(alpha  = seq(0,1,.1) %>%
+           rep(each = length(imputed_adpd_co_labels) + 1) %>%
+           as.factor)
+  
 #plot for all alphas
   #note: tpr and fpr are switched because the roc curve was going the wrong way
 ggplot(roc_adpd_co_list, mapping = aes(tpr, fpr, color = alpha))+ 
@@ -255,8 +257,7 @@ roc_adpd_co_list %>%
   select(alpha, auc)
 
 
-## look at the ridge regression in particular, since it gave constant results.
-  # same thing happened in the lasso case. not sure why yet
+## look at the ridge regression in particular, since it gave weird results.
 fit_adpd_co_ridge <- fit_glmnet(imputed_adpd_co_y, imputed_adpd_co_labels, alpha = 0, measure = 'class')
 pred_adpd_co_ridge <- predict(fit_adpd_co_ridge, newx = imputed_adpd_co_y, s = 'lambda.min', type = 'response')
 rocpred_adpd_co_ridge <- ROCR::prediction(pred_adpd_co_ridge, imputed_adpd_co_labels)
@@ -265,6 +266,10 @@ rocperf_adpd_co_ridge <- ROCR::performance(rocpred_adpd_co_ridge, measure = 'tpr
 # todo: look into https://www.ggplot2-exts.org/plotROC.html
 plot(rocperf_adpd_co_ridge)
 abline(a = 0, b = 1, lty= 2)
+
+
+
+### End {AD,PD} vs CO analysis ###
 
 
 
