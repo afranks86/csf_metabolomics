@@ -104,10 +104,13 @@ fpr_tpr <- function(pred, label){
 # numbers are not on any kind of scale, but give some idea of relative importance
 importance <- function(fit){
   coefficients <- coef(fit, s = 'lambda.min') %>% 
-    abs %>%
     as.matrix
   #order the coefficients for weak measure of importance, and remove coefs with 0 coeff
-  coefficients_sorted <- coefficients[order(coefficients, decreasing = TRUE) & coefficients > 0,]
+  coefficients_sorted <- coefficients[order(abs(coefficients), decreasing = TRUE) & abs(coefficients) > 0,]
+  coefficients_sorted_with_zeroes <- coefficients[order(abs(coefficients), decreasing = TRUE),]
+  coefficients_sorted <- coefficients_sorted_with_zeroes[coefficients_sorted_with_zeroes != 0]
+  
+  
   #map metabolites to their names. keep the names of gender and age, since they aren't metabolites
   names(coefficients_sorted) <- if_else(names(coefficients_sorted) %in% c('Age', 'GenderM', 'TypeCM', 'TypeCO', 'TypeCY', 'TypePD'),
                                         names(coefficients_sorted), 
@@ -296,6 +299,13 @@ accuracy_ad_pd_co_ridge <- (data.frame(predicted = pred_ad_pd_co_ridge, truth = 
   diag %>%
   sum)/length(pred)
 
+
+confusion_ad_pd_co_ridge <- (data.frame(predicted = pred_ad_pd_co_ridge, truth = imputed_ad_pd_co_labels) %>%
+                              table %>%
+                              diag %>%
+                              sum)/length(pred)
+
+
 importance_ad_pd_co_ridge <- importance(fit_ad_pd_co_ridge)
 
 
@@ -315,6 +325,10 @@ accuracy_ad_pd_co_list <- lapply(pred_ad_pd_co_list, function(x) (data.frame(pre
                                                                                               diag %>%
                                                                                               sum)/length(pred)
 )
+
+confusion_ad_pd_co_list <- lapply(pred_ad_pd_co_list, function(x) data.frame(predicted = x, truth = imputed_ad_pd_co_labels) %>%
+                                                                     table)
+
 
 ### End AD vs PD vs CO analysis ###
 
