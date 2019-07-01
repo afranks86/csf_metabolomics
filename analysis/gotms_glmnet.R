@@ -108,9 +108,13 @@ importance <- function(fit){
     as.matrix
   #order the coefficients for weak measure of importance, and remove coefs with 0 coeff
   coefficients_sorted <- coefficients[order(coefficients, decreasing = TRUE) & coefficients > 0,]
-  #map names to the metabolite name
-  names(coefficients_sorted) <- str_replace_all(names(coefficients_sorted), ' Result.*', '') %>%
-    sapply(function(x) all_matches[match(x, all_matches$Name), 'Metabolite'] %>% deframe)
+  #map metabolites to their names. keep the names of gender and age, since they aren't metabolites
+  names(coefficients_sorted) <- if_else(names(coefficients_sorted) %in% c('Age', 'GenderM', 'TypeCM', 'TypeCO', 'TypeCY', 'TypePD'),
+                                        names(coefficients_sorted), 
+                                        str_replace_all(names(coefficients_sorted), ' Result.*', "") %>%
+                                          str_replace_all('`', '') %>%
+                                          str_replace_all('\\\\', '') %>%
+                                          sapply(function(x) all_matches[match(x, all_matches$Name), 'Metabolite'] %>% deframe))
   return(coefficients_sorted)
   
 }
@@ -272,5 +276,90 @@ abline(a = 0, b = 1, lty= 2)
 ### End {AD,PD} vs CO analysis ###
 
 
+### Start AD vs PD vs CO analysis ###
+
+#start with same imputation as the {ad,pd} vs CO analysis, just without grouping ad and pd
+imputed_ad_pd_co_y <- imputed_adpd_co[[1]]
+imputed_ad_pd_co_labels <- imputed_adpd_co[[2]]
+
+set.seed(1)
+#set foldid so that same folds every time (it's loocv so it's just an ordering)
+foldid <- sample(nrow(imputed_ad_pd_co_y))
+
+fit_ad_pd_co_ridge <- cv.glmnet(imputed_ad_pd_co_y, imputed_ad_pd_co_labels, family = 'multinomial', 
+                 type.measure = 'deviance', nfolds = nrow(imputed_ad_pd_co_y),
+                 foldid = foldid, alpha = 0, grouped = FALSE, standardize = FALSE)
+pred_ad_pd_co_ridge <- predict(fit_ad_pd_co_ridge, newx = imputed_ad_pd_co_y, 'lambda.min', 'class')
+
+accuracy_ad_pd_co_ridge <- (data.frame(predicted = pred_ad_pd_co_ridge, truth = imputed_ad_pd_co_labels) %>%
+  table %>%
+  diag %>%
+  sum)/length(pred)
+
+importance_ad_pd_co_ridge <- importance(fit_ad_pd_co_ridge)
+
+
+#now do the list with multiple alphas
+fit_ad_pd_co_list <- lapply(seq(0, 1, .1), function(x) cv.glmnet(imputed_ad_pd_co_y, imputed_ad_pd_co_labels, family = 'multinomial', 
+                                                                 type.measure = 'deviance', nfolds = nrow(imputed_ad_pd_co_y),
+                                                                 foldid = foldid, alpha = x, grouped = FALSE, standardize = FALSE))
+pred_ad_pd_co_list <- lapply(fit_ad_pd_co_list, 
+                            function(x) predict(x, newx = imputed_ad_pd_co_y, 
+                                                type = 'class', s = 'lambda.min'))
+#some measure of variable importance
+importance_ad_pd_co_list <- lapply(fit_ad_pd_co_list, function(x) importance(x))
+
+
+accuracy_ad_pd_co_list <- lapply(pred_ad_pd_co_list, function(x) (data.frame(predicted = x, truth = imputed_ad_pd_co_labels) %>%
+                                                                                              table %>%
+                                                                                              diag %>%
+                                                                                              sum)/length(pred)
+)
+
+### End AD vs PD vs CO analysis ###
+
+
+
+### Start AGE analysis ###
+## use previously created imputation for total dataset
+imputed_all_age <- imputed_all_Y[,'Age']
+# readd type as a feature in this analysis
+imputed_all_features_age_tmp <- imputed_all_Y %>% 
+  as_tibble %>%
+  mutate(Type = imputed_all_labels) %>%
+  select(-Age)
+
+#turn type into a dummy var (multiple columns. AD is the redundant column (chosen))
+imputed_all_features_age_tmp<- model.matrix(~., imputed_all_features_age_tmp)
+#remove intercept column created by model.matrix
+imputed_all_features_age <- imputed_all_features_age_tmp[,-1]
+
+#using same foldid as with previous analyses
+fit_age_ridge <- cv.glmnet(imputed_all_features_age, imputed_all_age, family = 'gaussian', 
+                           type.measure = 'mse', nfolds = nrow(imputed_all_features_age),
+                           foldid = foldid, alpha = 0, standardize = FALSE, grouped = FALSE)
+
+pred_age_ridge <- predict(fit_age_ridge, newx = imputed_all_features_age, s= 'lambda.min')
+
+mse_age_ridge <- (pred_age_ridge - imputed_all_age)^2 %>% mean
+mae_age_ridge <- (pred_age_ridge - imputed_all_age) %>% 
+  abs %>%
+  mean
+
+importance_age_ridge <- importance(fit_age_ridge)
+
+
+#now try with list of multiple alphas
+fit_age_list <- lapply(seq(0,1,.1), function(x) cv.glmnet(imputed_all_features_age, imputed_all_age, family = 'gaussian', 
+                                                          type.measure = 'mse', nfolds = nrow(imputed_all_features_age),
+                                                          foldid = foldid, alpha = x, standardize = FALSE, grouped = FALSE))
+pred_age_list <- lapply(fit_age_list, 
+                             function(x) predict(x, newx = imputed_all_features_age, 
+                                                 type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_age_list <- lapply(fit_age_list, function(x) importance(x))
+
+
+### End AGE analysis ###
 
 
