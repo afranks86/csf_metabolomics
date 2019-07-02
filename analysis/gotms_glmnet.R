@@ -15,6 +15,7 @@ library(Matrix)
 #library(patchwork)
 library(glmnet)
 library(ROCR)
+library(latex2exp)
 
 source("utility.R")
 
@@ -157,20 +158,32 @@ fit_pd_co_half <- fit_glmnet(imputed_pd_co_y, imputed_pd_co_labels, alpha = 0.5,
 # predict using response (for prob) or class (.5 threshold) using min lambda (complexity determined by cv)
 pred_pd_co_lasso <- predict(fit_pd_co_lasso, newx = imputed_pd_co_y, type = 'response', s = 'lambda.min')
 pred_pd_co_ridge <- predict(fit_pd_co_ridge, newx = imputed_pd_co_y, type = 'class', s = 'lambda.min')
-pred_pd_co_half <- predict(fit_pd_co_half, newx = imputed_pd_co_y, type = 'class', s = 'lambda.min')
+pred_pd_co_half <- predict(fit_pd_co_half, newx = imputed_pd_co_y, type = 'response', s = 'lambda.min')
 
 # some measure of variable importance
 importance_pd_co_lasso <- importance(fit_pd_co_lasso)
 importance_pd_co_ridge <- importance(fit_pd_co_ridge)
 importance_pd_co_half <- importance(fit_pd_co_half)
 
-# roc plot for lasso only
-rocpred_pd_co_lasso <- ROCR::prediction(pred_pd_co_lasso, imputed_pd_co_labels)
-rocperf_pd_co_lasso <- ROCR::performance(rocpred_pd_co_lasso, measure = 'tpr', x.measure = 'fpr')
+# roc plot for half only
+rocpred_pd_co_half <- ROCR::prediction(pred_pd_co_half, imputed_pd_co_labels)
+rocperf_pd_co_half <- ROCR::performance(rocpred_pd_co_half, measure = 'tpr', x.measure = 'fpr')
 
 # todo: look into https://www.ggplot2-exts.org/plotROC.html
-plot(rocperf_pd_co_lasso)
+plot(rocperf_pd_co_half)
 abline(a = 0, b = 1, lty= 2)
+
+#alt: use ggplot
+roc_pd_co_half <- fpr_tpr(pred_pd_co_half, imputed_pd_co_labels)
+ggplot(roc_pd_co_half) + 
+  geom_line(mapping = aes(fpr, tpr)) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+  theme_minimal() + 
+  labs(title = "ROC: PD vs CO",
+       subtitle = TeX('$\\alpha = 0.5$'),
+       x = 'False Positive Rate',
+       y = 'True Positive Rate')
+ggsave(filename = 'gotms_roc_pdco.png')
 
 ## END sample analysis with a few extreme alphas##
 
@@ -182,6 +195,8 @@ pred_pd_co_list <- lapply(fit_pd_co_list,
                           function(x) predict(x, newx = imputed_pd_co_y, 
                                               type = 'response', s = 'lambda.min'))
 #some measure of variable importance
+  #positive means higher abundance => more likely to have pd
+  #negative means higher abundance => more likely to be control
 importance_pd_co_list <- lapply(fit_pd_co_list, function(x) importance(x))
 
 #write one to csv
@@ -348,7 +363,7 @@ imputed_all_features_age_tmp<- model.matrix(~., imputed_all_features_age_tmp)
 #remove intercept column created by model.matrix
 imputed_all_features_age <- imputed_all_features_age_tmp[,-1]
 
-#using same foldid as with previous analyses
+foldid <- sample(nrow(imputed_all_features_age))
 fit_age_ridge <- cv.glmnet(imputed_all_features_age, imputed_all_age, family = 'gaussian', 
                            type.measure = 'mse', nfolds = nrow(imputed_all_features_age),
                            foldid = foldid, alpha = 0, standardize = FALSE, grouped = FALSE)
@@ -376,4 +391,22 @@ importance_age_list <- lapply(fit_age_list, function(x) importance(x))
 
 ### End AGE analysis ###
 
+
+
+#### START LIPIDS ONLY ANALYSIS ####
+processed_files_lipids <- dir(path = data_path, pattern="^preprocessed_lipid_data*")
+load(max(file.path(data_path, processed_files_lipids[grep("-20+", processed_files_lipids)])))
+
+
+wide_data_lipids <- subject_data %>%     
+  filter(!(Type %in% c("Other"))) %>%
+  mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+  dplyr::select(-one_of("Raw", "RawScaled", "Trend", "Batch", "Name",
+                        "Id", "Index", "GBAStatus", "GBA_T369M",
+                        "cognitive_status")) %>%
+  spread(key=Lipid, value=Abundance)
+
+
+
+#### END LIPIDS ONLY ANALYSIS ####
 
