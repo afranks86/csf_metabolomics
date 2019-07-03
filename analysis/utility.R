@@ -1,4 +1,5 @@
-kegg_map <- read_csv("~/course/ND_Metabolomics/data/kegg_map.csv", trim_ws=TRUE) %>% dplyr::select(1:6)
+kegg_map <- read_csv("E:/Projects/metabolomics/ND_Metabolomics/data/kegg_map.csv", trim_ws=TRUE) %>% dplyr::select(1:6)
+#kegg_map <- read_csv("~/course/ND_Metabolomics/data/kegg_map.csv", trim_ws=TRUE) %>% dplyr::select(1:6)
 
 n2k <- function(nms) {
     kegg_map %>% filter(METABOLITE %in% nms)
