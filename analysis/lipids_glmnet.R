@@ -1,3 +1,6 @@
+source('analysis/gotms_glmnet.R')
+
+
 #### START LIPIDS ONLY ANALYSIS ####
 
 processed_files_lipids <- dir(path = data_path, pattern="^preprocessed_lipid_data*")
@@ -120,7 +123,52 @@ ggplot(roc_pd_co_list_lipids %>% filter(alpha == 0.7), mapping = aes(fpr, tpr))+
 ggsave(filename = 'lipids_roc_pdco.png')
 
 
-### predict GBA vs metabolites for pd ###
+### start predict GBA vs metabolites for pd ###
+
 imputed_pd <- filter_and_impute(wide_data_lipids,c('PD'))
+imputed_pd_features <- imputed_pd[[1]]
+imputed_pd_gba <- imputed_pd[[3]] %>%
+  fct_collapse(Carrier = c('E326K Carrier', 'Pathogenic Carrier'))
+
+
+fit_carrier_pd_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_features, imputed_pd_gba, alpha = x, measure = 'deviance'))
+
+pred_carrier_pd_list <- lapply(fit_carrier_pd_list, 
+                            function(x) predict(x, newx = imputed_pd_features, 
+                                                type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_carrier_pd_list <- lapply(fit_carrier_pd_list, function(x) importance(x, metabolites = FALSE))
+
+#roc for each of the alphas
+#note: both alpha = 0 and alpha = 1 give constant prediction probability for all observations
+#something is probably wrong with the code, need to look at it.
+roc_carrier_pd_list <- lapply(pred_carrier_pd_list, function(x) fpr_tpr(x, imputed_pd_gba)) %>%
+  bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
+  mutate(alpha  = seq(0,1,.1) %>%
+           rep(each = length(imputed_pd_gba) + 1) %>%
+           as.factor)
+
+#plot for all alphas
+#note: tpr and fpr are switched because the roc curve was going the wrong way
+ggplot(roc_carrier_pd_list, mapping = aes(fpr, tpr, color = alpha))+ 
+  geom_line() + 
+  labs(title = 'ROC, {E326K, Pathogenic Carrier} vs Non-Carrier')
+ggsave(filename = 'lipids_roc_gba.png')
+
+#look at auc for each alpha. need to do (1- auc) to show the flip
+roc_carrier_pd_list %>% 
+  group_by(alpha) %>%
+  slice(1) %>%
+  select(alpha, auc)
+
+
+#confusion matrix for one of them
+data.frame(pred = ifelse(pred_carrier_pd_list[[5]] > .5, 'Non-Carrier', 'Carrier'), 
+           truth = imputed_pd_gba) %>% 
+  table
+
+### end predict GBA vs metabolites for pd ###
+
+
 
 #### END LIPIDS ONLY ANALYSIS ####

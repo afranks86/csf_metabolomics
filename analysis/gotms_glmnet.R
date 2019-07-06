@@ -59,6 +59,12 @@ filter_and_impute <- function(data, types){
   type <- filtered$Type %>%
     droplevels
   
+  #keep gba for potential gba analysis
+  gba <- filtered$GBAStatus %>%
+    as.factor
+    
+  
+  
   Y <- filtered %>% 
     dplyr::select(-one_of("Type", "Type2", "Gender", "Age", "APOE", "Batch",
                         #"Data File",  (not found in dataset, so removed)
@@ -82,7 +88,7 @@ filter_and_impute <- function(data, types){
     
   
   
-  return(list(Y, type))
+  return(list(Y, type, gba))
 }
 
 #does loocv for logistic regression, using deviance loss by default (check?), eval at different elastic net alphas
@@ -360,6 +366,55 @@ confusion_ad_pd_co_list <- lapply(pred_ad_pd_co_list, function(x) data.frame(pre
 
 ### End AD vs PD vs CO analysis ###
 
+
+
+
+### Start PD vs {CO, CM, CY} analysis ###
+
+imputed_pd_c <- filter_and_impute(wide_data, c('PD', 'CO', 'CM', 'CY'))
+imputed_pd_c_y <- imputed_pd_c[[1]]
+#Group AD, PD into D (for diseased)
+imputed_pd_c_labels <- imputed_pd_c[[2]] %>% 
+  fct_collapse(C = c('CO', 'CM', 'CY'))
+
+# #write the dataset used to csv if imputation takes a long time
+# imputed_adpd_co_y %>% 
+#   as.data.frame() %>%
+#   mutate(Type = imputed_adpd_co_labels) %>%
+#   write_csv(path = 'gotms_imputed_adpd_co.csv')
+
+
+#fit models with each of the alphas
+fit_pd_c_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y, imputed_pd_c_labels, alpha = x, measure = 'deviance'))
+
+pred_pd_c_list <- lapply(fit_pd_c_list, 
+                            function(x) predict(x, newx = imputed_pd_c_y, 
+                                                type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_pd_c_list <- lapply(fit_pd_c_list, function(x) importance(x))
+
+#roc for each of the alphas
+roc_pd_c_list <- lapply(pred_pd_c_list, function(x) fpr_tpr(x, imputed_pd_c_labels)) %>%
+  bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
+  mutate(alpha  = seq(0,1,.1) %>%
+           rep(each = length(imputed_pd_c_labels) + 1) %>%
+           as.factor)
+
+#plot for all alphas
+#note: tpr and fpr are switched because the roc curve was going the wrong way
+ggplot(roc_pd_c_list, mapping = aes(fpr, tpr, color = alpha))+ 
+  geom_line() + 
+  labs(title = 'ROC, PD vs {CO, CM, CY}')
+
+#look at auc for each alpha.
+roc_pd_c_list %>% 
+  group_by(alpha) %>%
+  slice(1) %>%
+  select(alpha, auc)
+
+
+
+### End PD vs {CO, CM, CY} analysis ###
 
 
 
