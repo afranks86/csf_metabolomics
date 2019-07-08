@@ -94,7 +94,7 @@ filter_and_impute <- function(data, types){
 
 #does loocv for logistic regression, using deviance loss by default (check?), eval at different elastic net alphas
 #if penalize_age_gender is false, set penalty coeff to 0
-fit_glmnet <- function(features, labels, alpha, measure = 'deviance', penalize_age_gender = TRUE){
+fit_glmnet <- function(features, labels, alpha, measure = 'deviance', penalize_age_gender = TRUE, standardize = FALSE){
   set.seed(1)
   #set foldid so that same folds every time (it's loocv so it's just an ordering)
   foldid <- sample(nrow(features))
@@ -109,7 +109,7 @@ fit_glmnet <- function(features, labels, alpha, measure = 'deviance', penalize_a
   
   fit <- cv.glmnet(features, labels, family = 'binomial', 
                    type.measure = measure, nfolds = nrow(features),
-                   foldid = foldid, alpha = alpha, grouped = FALSE, standardize = FALSE, penalty.factor = p_factors)
+                   foldid = foldid, alpha = alpha, grouped = FALSE, standardize = standardize, penalty.factor = p_factors)
   
   return(fit)
 }
@@ -534,6 +534,104 @@ ggsave('roc_pd_c_loo.png')
 
 
 
+
+
+## Now try the analysis with raw scaled instead of abundances
+wide_data_rawscaled <- subject_data %>%     
+  filter(!(Type %in% c("Other"))) %>%
+  unite("Metabolite", c("Metabolite", "Mode")) %>% 
+  mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+  dplyr::select(-one_of("Raw", "Abundance", "Trend",
+                        "RunIndex", "Name","Data File")) %>%
+  spread(key=Metabolite, value=RawScaled)
+
+imputed_pd_c_rawscaled <- filter_and_impute(wide_data_rawscaled, c('PD', 'CO', 'CM', 'CY'))
+imputed_pd_c_y_rawscaled <- imputed_pd_c_rawscaled[[1]]
+#Group AD, PD into D (for diseased)
+imputed_pd_c_labels_rawscaled <- imputed_pd_c_rawscaled[[2]] %>% 
+  fct_collapse(C = c('CO', 'CM', 'CY'))
+
+
+#note that we now set standardize to be true, since we aren't using pre-standardized data
+# but cv.glmnet takes us back to original scale after its done
+fit_pd_c_list_no_penalty_rawscaled <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y, imputed_pd_c_labels, alpha = x, measure = 'deviance', standardize = TRUE, penalize_age_gender = FALSE))
+
+pred_pd_c_list_no_penalty_rawscaled <- lapply(fit_pd_c_list_no_penalty_rawscaled, 
+                                    function(x) predict(x, newx = imputed_pd_c_y, 
+                                                        type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_pd_c_list_no_penalty_rawscaled <- lapply(fit_pd_c_list_no_penalty_rawscaled, function(x) importance(x))
+
+#roc for each of the alphas
+roc_pd_c_list_no_penalty_rawscaled <- lapply(pred_pd_c_list_no_penalty_rawscaled, function(x) fpr_tpr(x, imputed_pd_c_labels)) %>%
+  bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
+  mutate(alpha  = seq(0,1,.1) %>%
+           rep(each = length(imputed_pd_c_labels) + 1) %>%
+           as.factor)
+
+#plot for all alphas
+#note: tpr and fpr are switched because the roc curve was going the wrong way
+ggplot(roc_pd_c_list_no_penalty_rawscaled, mapping = aes(fpr, tpr, color = alpha))+ 
+  geom_line() + 
+  labs(title = 'ROC, PD vs {CO, CM, CY}',
+       subtitle = 'No Age, Gender Penalty')
+ggsave('roc_pd_c_no_penalty_rawscaled.png')
+
+#look at auc for each alpha.
+roc_pd_c_list_no_penalty_rawscaled %>% 
+  group_by(alpha) %>%
+  slice(1) %>%
+  select(alpha, auc)
+
+
+
+## same thing with raw
+
+wide_data_raw <- subject_data %>%     
+  filter(!(Type %in% c("Other"))) %>%
+  unite("Metabolite", c("Metabolite", "Mode")) %>% 
+  mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+  dplyr::select(-one_of("RawScaled", "Abundance", "Trend",
+                        "RunIndex", "Name","Data File")) %>%
+  spread(key=Metabolite, value=Raw)
+
+imputed_pd_c_raw <- filter_and_impute(wide_data_raw, c('PD', 'CO', 'CM', 'CY'))
+imputed_pd_c_y_raw <- imputed_pd_c_raw[[1]]
+#Group AD, PD into D (for diseased)
+imputed_pd_c_labels_raw <- imputed_pd_c_raw[[2]] %>% 
+  fct_collapse(C = c('CO', 'CM', 'CY'))
+
+
+#note that we now set standardize to be true, since we aren't using pre-standardized data
+# but cv.glmnet takes us back to original scale after its done
+fit_pd_c_list_no_penalty_raw <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y, imputed_pd_c_labels, alpha = x, measure = 'deviance', standardize = TRUE, penalize_age_gender = FALSE))
+
+pred_pd_c_list_no_penalty_raw <- lapply(fit_pd_c_list_no_penalty_raw, 
+                                              function(x) predict(x, newx = imputed_pd_c_y, 
+                                                                  type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_pd_c_list_no_penalty_raw <- lapply(fit_pd_c_list_no_penalty_raw, function(x) importance(x))
+
+#roc for each of the alphas
+roc_pd_c_list_no_penalty_raw <- lapply(pred_pd_c_list_no_penalty_raw, function(x) fpr_tpr(x, imputed_pd_c_labels)) %>%
+  bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
+  mutate(alpha  = seq(0,1,.1) %>%
+           rep(each = length(imputed_pd_c_labels) + 1) %>%
+           as.factor)
+
+#plot for all alphas
+#note: tpr and fpr are switched because the roc curve was going the wrong way
+ggplot(roc_pd_c_list_no_penalty_raw, mapping = aes(fpr, tpr, color = alpha))+ 
+  geom_line() + 
+  labs(title = 'ROC, PD vs {CO, CM, CY}',
+       subtitle = 'No Age, Gender Penalty')
+ggsave('roc_pd_c_no_penalty_raw.png')
+
+#look at auc for each alpha.
+roc_pd_c_list_no_penalty_raw %>% 
+  group_by(alpha) %>%
+  slice(1) %>%
+  select(alpha, auc)
 
 
 ### End PD vs {CO, CM, CY} analysis ###
