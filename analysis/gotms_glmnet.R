@@ -20,17 +20,18 @@ library(here)
 
 source(here("analysis/utility.R"))
 
-data_path <- '~/course/ND_Metabolomics/'
-processed_files <- dir(path = data_path, pattern="^preprocessed_gotms_data*")
-## Most recent file
-load(max(file.path(data_path, processed_files[grep("-20+", processed_files)])))
-load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
-
-# data_path <- file.path('E:', 'Projects', 'metabolomics', 'ND_Metabolomics')
-# processed_files <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_gotms_data*")
+set.seed(1)
+# data_path <- '~/course/ND_Metabolomics/'
+# processed_files <- dir(path = data_path, pattern="^preprocessed_gotms_data*")
 # ## Most recent file
-# load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])))
+# load(max(file.path(data_path, processed_files[grep("-20+", processed_files)])))
 # load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
+
+data_path <- file.path('E:', 'Projects', 'metabolomics', 'ND_Metabolomics')
+processed_files <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_gotms_data*")
+## Most recent file
+load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])))
+load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
 
 wide_data <- subject_data %>%     
   filter(!(Type %in% c("Other"))) %>%
@@ -92,15 +93,57 @@ filter_and_impute <- function(data, types){
 }
 
 #does loocv for logistic regression, using deviance loss by default (check?), eval at different elastic net alphas
-fit_glmnet <- function(features, labels, alpha, measure = 'deviance'){
+#if penalize_age_gender is false, set penalty coeff to 0
+fit_glmnet <- function(features, labels, alpha, measure = 'deviance', penalize_age_gender = TRUE){
   set.seed(1)
   #set foldid so that same folds every time (it's loocv so it's just an ordering)
   foldid <- sample(nrow(features))
   
+  #set penalty factors. (1 for each is default)
+  p_factors <- rep(1, ncol(features))
+  #set age/gender pfactors to 0 if penalize_age_gender flag is true. (assumes age/gender is very important)
+  if(penalize_age_gender == FALSE){
+    age_gender_index <- which(colnames(features) %in% c('Age', 'GenderM'))
+    p_factors[age_gender_index] <- 0
+  }
+  
   fit <- cv.glmnet(features, labels, family = 'binomial', 
                    type.measure = measure, nfolds = nrow(features),
-                   foldid = foldid, alpha = alpha, grouped = FALSE, standardize = FALSE)
+                   foldid = foldid, alpha = alpha, grouped = FALSE, standardize = FALSE, penalty.factor = p_factors)
+  
   return(fit)
+}
+
+# function to fit glmnet on n-1 observations and predict on 1, and do n times.
+# lambda can be min lambda from fit_glmnet
+# index is the one observation to remove
+# only pass in binomial or gaussian
+#https://stats.stackexchange.com/questions/304440/building-final-model-in-glmnet-after-cross-validation
+loo_pred_glmnet <- function(lambda, index, features, labels, alpha, penalize_age_gender = TRUE, family = 'binomial'){
+  #features and label, leaving out one observation for training
+  loo_features <- features[-index,]
+  loo_labels <- labels[-index]
+  
+  #features and labels on the held out observation
+  
+  new_features <- features[index,] %>% matrix(nrow = 1, dimnames = list('', colnames(loo_features) ))
+  new_label <- labels[index]
+  
+  #set penalty factors. (1 for each is default)
+  p_factors <- rep(1, ncol(loo_features))
+  #set age/gender pfactors to 0 if penalize_age_gender flag is true. (assumes age/gender is very important)
+  if(penalize_age_gender == FALSE){
+    age_gender_index <- which(colnames(loo_features) %in% c('Age', 'GenderM'))
+    p_factors[age_gender_index] <- 0
+  }
+  
+  #documentation says we should avoid passing in single value of lambda. how else to do?
+  #fit on n-1
+  fit <- glmnet(loo_features, loo_labels, family = family, lambda = lambda, alpha = alpha, standardize = FALSE, penalty.factor = p_factors)
+  
+  #predict on 1
+  pred <- predict(fit, newx = new_features, type = 'response', s = lambda)
+  return(pred)
 }
 
 
@@ -169,6 +212,7 @@ imputed_pd_co_labels <- imputed_pd_co[[2]]
 #   write_csv(path = 'gotms_imputed_pd_co.csv')
 
 ## START sample analysis with a few extreme alphas ##
+
 # fit
 fit_pd_co_lasso <- fit_glmnet(imputed_pd_co_y, imputed_pd_co_labels, alpha = 1, measure = 'class')
 fit_pd_co_ridge <- fit_glmnet(imputed_pd_co_y, imputed_pd_co_labels, alpha = 0, measure = 'class')
@@ -207,7 +251,9 @@ ggsave(filename = 'gotms_roc_pdco.png')
 
 ## END sample analysis with a few extreme alphas##
 
+
 ## START try 10 alphas between 0 and 1
+
 fit_pd_co_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_co_y, imputed_pd_co_labels, alpha = x, measure = 'deviance'))
 
 #fit models with each of the alphas
@@ -244,6 +290,13 @@ roc_pd_co_list %>%
   group_by(alpha) %>%
   slice(1) %>%
   select(alpha, auc)
+
+
+
+
+
+
+
 
 ### END PD vs CO analysis ###
 
@@ -384,6 +437,8 @@ imputed_pd_c_labels <- imputed_pd_c[[2]] %>%
 #   write_csv(path = 'gotms_imputed_adpd_co.csv')
 
 
+## First try with age/gender penalty
+
 #fit models with each of the alphas
 fit_pd_c_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y, imputed_pd_c_labels, alpha = x, measure = 'deviance'))
 
@@ -404,7 +459,10 @@ roc_pd_c_list <- lapply(pred_pd_c_list, function(x) fpr_tpr(x, imputed_pd_c_labe
 #note: tpr and fpr are switched because the roc curve was going the wrong way
 ggplot(roc_pd_c_list, mapping = aes(fpr, tpr, color = alpha))+ 
   geom_line() + 
-  labs(title = 'ROC, PD vs {CO, CM, CY}')
+  labs(title = 'ROC, PD vs {CO, CM, CY}',
+       subtitle = 'With Age, Gender Penalty')
+ggsave('roc_pd_c_with_penalty.png')
+
 
 #look at auc for each alpha.
 roc_pd_c_list %>% 
@@ -413,9 +471,72 @@ roc_pd_c_list %>%
   select(alpha, auc)
 
 
+## try same analysis, but without penalizing age/gender
+
+#fit models with each of the alphas
+fit_pd_c_list_no_penalty <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y, imputed_pd_c_labels, alpha = x, measure = 'deviance', penalize_age_gender = FALSE))
+
+pred_pd_c_list_no_penalty <- lapply(fit_pd_c_list_no_penalty, 
+                         function(x) predict(x, newx = imputed_pd_c_y, 
+                                             type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_pd_c_list_no_penalty <- lapply(fit_pd_c_list_no_penalty, function(x) importance(x))
+
+#roc for each of the alphas
+roc_pd_c_list_no_penalty <- lapply(pred_pd_c_list_no_penalty, function(x) fpr_tpr(x, imputed_pd_c_labels)) %>%
+  bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
+  mutate(alpha  = seq(0,1,.1) %>%
+           rep(each = length(imputed_pd_c_labels) + 1) %>%
+           as.factor)
+
+#plot for all alphas
+#note: tpr and fpr are switched because the roc curve was going the wrong way
+ggplot(roc_pd_c_list_no_penalty, mapping = aes(fpr, tpr, color = alpha))+ 
+  geom_line() + 
+  labs(title = 'ROC, PD vs {CO, CM, CY}',
+       subtitle = 'No Age, Gender Penalty')
+ggsave('roc_pd_c_no_penalty.png')
+
+#look at auc for each alpha.
+roc_pd_c_list_no_penalty %>% 
+  group_by(alpha) %>%
+  slice(1) %>%
+  select(alpha, auc)
+
+
+
+
+## Do same analysis, but fitting n models on n-1 observations
+
+#let's test on the alpha = .5
+min_lambda_5 <- fit_pd_c_list_no_penalty[[6]]$lambda.min
+id <- sample(nrow(imputed_pd_c_y))
+
+loo_pred <- sapply(id, function(x) (loo_pred_glmnet(lambda = min_lambda_5, index = x, features = imputed_pd_c_y, labels = imputed_pd_c_labels, alpha = 0.5, penalize_age_gender = FALSE)))
+
+roc_loo_pd_c_half <- fpr_tpr(loo_pred, imputed_pd_c_labels)
+ggplot(roc_loo_pd_c_half) + 
+  geom_line(mapping = aes(fpr, tpr)) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+  theme_minimal() + 
+  labs(title = "ROC: PD vs C",
+       subtitle = TeX('Metabolites,$\\alpha = 0.5$, loo'),
+       x = 'False Positive Rate',
+       y = 'True Positive Rate') + 
+  geom_text(x = 0.9, y = 0,label = paste0('AUC:', roc_loo_pd_c_half$auc[1])) #auc is the same for every row in the df
+ggsave('roc_pd_c_loo.png')
+
+
+
+# to try the list, can do below. need to figure out how to get each of the respective lambdas into the result though.
+# loo_pred_list <- lapply(seq(0,1,.1), function(y)
+#   sapply(id, function(x) (loo_pred_glmnet(lambda = min_lambda_5, index = x, features = imputed_pd_c_y, labels = imputed_pd_c_labels, alpha = y, penalize_age_gender = FALSE))))
+
+
+
+
 
 ### End PD vs {CO, CM, CY} analysis ###
-
 
 
 

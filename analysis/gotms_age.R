@@ -39,6 +39,39 @@ pred_age_list <- lapply(fit_age_list,
 #some measure of variable importance
 importance_age_list <- lapply(fit_age_list, function(x) importance(x))
 
+mse_age_list <- lapply(pred_age_list, function(x) mean((x - imputed_all_age)^2))
+
+#which has lowest mse?
+  #it's lasso, which is not what we want.
+which.min(mse_age_list)
+
+residuals_age_list <- lapply(pred_age_list, function(x) x - imputed_all_age)
+
+
+#shapiro-wilkes test tests H0: data is normal
+sw_age_list <- lapply(residuals_age_list, function(x) (shapiro.test(x))$p.value)
+
+#performance is similar across the alphas, so let's just pick one pretty arb
+#all plots look pretty normal!
+resid_9 <- residuals_age_list[[9]]
+
+plot(resid_9)
+abline(h = 0)
+
+hist(resid_9)
+
+qqnorm(resid_9)
+qqline(resid_9)
+
+
+
+
+## try with loo method to generate standard error. try with the 9th again (alpha = 0.8)
+loo_pred_8 <- sapply(foldid, function(x) loo_pred_glmnet(lambda = fit_age_list[[9]]$lambda.min, index = x, features =imputed_all_features_age, labels = imputed_all_age, alpha = 0.8, penalize_age_gender = FALSE, family= 'gaussian'))
+
+#see (standard error of esimate) = sqrt(SS residuals / df), where df = n - number of coefficients in the model (including intercept)
+  #how to do standard error if df > n? i do rmse instead 
+rmse_loo_pred_8 <- (sum((loo_pred_8 - imputed_all_age)^2) / length(imputed_all_age)) %>% sqrt
 
 ### End AGE analysis ###
 
