@@ -21,17 +21,17 @@ library(here)
 source(here("analysis/utility.R"))
 
 set.seed(1)
-# data_path <- '~/course/ND_Metabolomics/'
-# processed_files <- dir(path = data_path, pattern="^preprocessed_gotms_data*")
-# ## Most recent file
-# load(max(file.path(data_path, processed_files[grep("-20+", processed_files)])))
-# load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
-
-data_path <- file.path('E:', 'Projects', 'metabolomics', 'ND_Metabolomics')
-processed_files <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_gotms_data*")
+data_path <- '~/course/ND_Metabolomics/'
+processed_files <- dir(path = data_path, pattern="^preprocessed_gotms_data*")
 ## Most recent file
-load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])))
+load(max(file.path(data_path, processed_files[grep("-20+", processed_files)])))
 load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
+
+# data_path <- file.path('E:', 'Projects', 'metabolomics', 'ND_Metabolomics')
+# processed_files <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_gotms_data*")
+# ## Most recent file
+# load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])))
+# load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
 
 wide_data <- subject_data %>%     
   filter(!(Type %in% c("Other"))) %>%
@@ -94,7 +94,7 @@ filter_and_impute <- function(data, types){
 
 #does loocv for logistic regression, using deviance loss by default (check?), eval at different elastic net alphas
 #if penalize_age_gender is false, set penalty coeff to 0
-fit_glmnet <- function(features, labels, alpha, measure = 'deviance', penalize_age_gender = TRUE, standardize = FALSE){
+fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, family= 'binomial'){
   set.seed(1)
   #set foldid so that same folds every time (it's loocv so it's just an ordering)
   foldid <- sample(nrow(features))
@@ -107,9 +107,18 @@ fit_glmnet <- function(features, labels, alpha, measure = 'deviance', penalize_a
     p_factors[age_gender_index] <- 0
   }
   
-  fit <- cv.glmnet(features, labels, family = 'binomial', 
-                   type.measure = measure, nfolds = nrow(features),
-                   foldid = foldid, alpha = alpha, grouped = FALSE, standardize = standardize, penalty.factor = p_factors)
+  if(family == 'binomial'){
+    fit <- cv.glmnet(features, labels, family = 'binomial', 
+                     type.measure = 'deviance', nfolds = nrow(features),
+                     foldid = foldid, alpha = alpha, grouped = FALSE, standardize = TRUE, penalty.factor = p_factors)
+  }
+  else if(family == 'gaussian'){
+    fit <- cv.glmnet(features, labels, family = 'gaussian', 
+                     type.measure = 'mse', nfolds = nrow(features),
+                     foldid = foldid, alpha = alpha, standardize = TRUE, grouped = FALSE, penalty.factor = p_factors)
+    
+  }
+  
   
   return(fit)
 }
@@ -139,12 +148,35 @@ loo_pred_glmnet <- function(lambda, index, features, labels, alpha, penalize_age
   
   #documentation says we should avoid passing in single value of lambda. how else to do?
   #fit on n-1
-  fit <- glmnet(loo_features, loo_labels, family = family, lambda = lambda, alpha = alpha, standardize = FALSE, penalty.factor = p_factors)
+  fit <- glmnet(loo_features, loo_labels, family = family, lambda = lambda, alpha = alpha, standardize = TRUE, penalty.factor = p_factors)
   
   #predict on 1
   pred <- predict(fit, newx = new_features, type = 'response', s = lambda)
   return(pred)
 }
+
+# does loocv cross validation on each fit (With n-1 obs) and returns the fit. 
+  #leads to n different lambda.mins. idea is to compare fits to see how similar they are
+loo_cvfit_glmnet <- function(index, features, labels, alpha, penalize_age_gender = TRUE, family = 'binomial'){
+  #features and label, leaving out one observation for training
+  loo_features <- features[-index,]
+  loo_labels <- labels[-index]
+  
+  #features and labels on the held out observation
+  
+  new_features <- features[index,] %>% matrix(nrow = 1, dimnames = list('', colnames(loo_features) ))
+  new_label <- labels[index]
+  
+  
+  #fit on n-1
+  #note that this does cv, so we will have n lambda.mins
+  fit <- fit_glmnet(loo_features, loo_labels, family = family, alpha = alpha, penalize_age_gender = penalize_age_gender)
+  
+  #predict on 1
+  pred <- predict(fit, newx = new_features, type = 'response', s = 'lambda.min')
+  return(list(fit, pred))
+}
+
 
 
 #function to return fpr, tpr given prediction and true label
@@ -214,9 +246,9 @@ imputed_pd_co_labels <- imputed_pd_co[[2]]
 ## START sample analysis with a few extreme alphas ##
 
 # fit
-fit_pd_co_lasso <- fit_glmnet(imputed_pd_co_y, imputed_pd_co_labels, alpha = 1, measure = 'class')
-fit_pd_co_ridge <- fit_glmnet(imputed_pd_co_y, imputed_pd_co_labels, alpha = 0, measure = 'class')
-fit_pd_co_half <- fit_glmnet(imputed_pd_co_y, imputed_pd_co_labels, alpha = 0.5, measure = 'class')
+fit_pd_co_lasso <- fit_glmnet(imputed_pd_co_y, imputed_pd_co_labels, alpha = 1)
+fit_pd_co_ridge <- fit_glmnet(imputed_pd_co_y, imputed_pd_co_labels, alpha = 0)
+fit_pd_co_half <- fit_glmnet(imputed_pd_co_y, imputed_pd_co_labels, alpha = 0.5)
 
 # predict using response (for prob) or class (.5 threshold) using min lambda (complexity determined by cv)
 pred_pd_co_lasso <- predict(fit_pd_co_lasso, newx = imputed_pd_co_y, type = 'response', s = 'lambda.min')
@@ -254,7 +286,7 @@ ggsave(filename = 'gotms_roc_pdco.png')
 
 ## START try 10 alphas between 0 and 1
 
-fit_pd_co_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_co_y, imputed_pd_co_labels, alpha = x, measure = 'deviance'))
+fit_pd_co_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_co_y, imputed_pd_co_labels, alpha = x))
 
 #fit models with each of the alphas
 pred_pd_co_list <- lapply(fit_pd_co_list, 
@@ -320,7 +352,7 @@ imputed_adpd_co_labels <- imputed_adpd_co[[2]] %>%
 
 
 #fit models with each of the alphas
-fit_adpd_co_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_adpd_co_y, imputed_adpd_co_labels, alpha = x, measure = 'deviance'))
+fit_adpd_co_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_adpd_co_y, imputed_adpd_co_labels, alpha = x))
 
 pred_adpd_co_list <- lapply(fit_adpd_co_list, 
                           function(x) predict(x, newx = imputed_adpd_co_y, 
@@ -352,7 +384,7 @@ roc_adpd_co_list %>%
 
 
 ## look at the ridge regression in particular, since it gave weird results.
-fit_adpd_co_ridge <- fit_glmnet(imputed_adpd_co_y, imputed_adpd_co_labels, alpha = 0, measure = 'class')
+fit_adpd_co_ridge <- fit_glmnet(imputed_adpd_co_y, imputed_adpd_co_labels, alpha = 0)
 pred_adpd_co_ridge <- predict(fit_adpd_co_ridge, newx = imputed_adpd_co_y, s = 'lambda.min', type = 'response')
 rocpred_adpd_co_ridge <- ROCR::prediction(pred_adpd_co_ridge, imputed_adpd_co_labels)
 rocperf_adpd_co_ridge <- ROCR::performance(rocpred_adpd_co_ridge, measure = 'tpr', x.measure = 'fpr')
@@ -378,7 +410,7 @@ foldid <- sample(nrow(imputed_ad_pd_co_y))
 
 fit_ad_pd_co_ridge <- cv.glmnet(imputed_ad_pd_co_y, imputed_ad_pd_co_labels, family = 'multinomial', 
                  type.measure = 'deviance', nfolds = nrow(imputed_ad_pd_co_y),
-                 foldid = foldid, alpha = 0, grouped = FALSE, standardize = FALSE)
+                 foldid = foldid, alpha = 0, grouped = FALSE, standardize = TRUE)
 pred_ad_pd_co_ridge <- predict(fit_ad_pd_co_ridge, newx = imputed_ad_pd_co_y, 'lambda.min', 'class')
 
 accuracy_ad_pd_co_ridge <- (data.frame(predicted = pred_ad_pd_co_ridge, truth = imputed_ad_pd_co_labels) %>%
@@ -399,7 +431,7 @@ importance_ad_pd_co_ridge <- importance(fit_ad_pd_co_ridge)
 #now do the list with multiple alphas
 fit_ad_pd_co_list <- lapply(seq(0, 1, .1), function(x) cv.glmnet(imputed_ad_pd_co_y, imputed_ad_pd_co_labels, family = 'multinomial', 
                                                                  type.measure = 'deviance', nfolds = nrow(imputed_ad_pd_co_y),
-                                                                 foldid = foldid, alpha = x, grouped = FALSE, standardize = FALSE))
+                                                                 foldid = foldid, alpha = x, grouped = FALSE, standardize = TRUE))
 pred_ad_pd_co_list <- lapply(fit_ad_pd_co_list, 
                             function(x) predict(x, newx = imputed_ad_pd_co_y, 
                                                 type = 'class', s = 'lambda.min'))
@@ -440,7 +472,7 @@ imputed_pd_c_labels <- imputed_pd_c[[2]] %>%
 ## First try with age/gender penalty
 
 #fit models with each of the alphas
-fit_pd_c_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y, imputed_pd_c_labels, alpha = x, measure = 'deviance'))
+fit_pd_c_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y, imputed_pd_c_labels, alpha = x))
 
 pred_pd_c_list <- lapply(fit_pd_c_list, 
                             function(x) predict(x, newx = imputed_pd_c_y, 
@@ -474,7 +506,7 @@ roc_pd_c_list %>%
 ## try same analysis, but without penalizing age/gender
 
 #fit models with each of the alphas
-fit_pd_c_list_no_penalty <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y, imputed_pd_c_labels, alpha = x, measure = 'deviance', penalize_age_gender = FALSE))
+fit_pd_c_list_no_penalty <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y, imputed_pd_c_labels, alpha = x, penalize_age_gender = FALSE))
 
 pred_pd_c_list_no_penalty <- lapply(fit_pd_c_list_no_penalty, 
                          function(x) predict(x, newx = imputed_pd_c_y, 
@@ -534,6 +566,10 @@ ggsave('roc_pd_c_loo.png')
 
 
 
+## do cv on each loo fit
+  #try alpha = 0.5
+loo_fitcv <- lapply(id, function(x) loo_cvfit_glmnet(index = x, features = imputed_pd_c_y, labels = imputed_pd_c_labels, alpha = 0.5, penalize_age_gender = FALSE, family = 'binomial'))
+
 
 
 ## Now try the analysis with raw scaled instead of abundances
@@ -554,7 +590,7 @@ imputed_pd_c_labels_rawscaled <- imputed_pd_c_rawscaled[[2]] %>%
 
 #note that we now set standardize to be true, since we aren't using pre-standardized data
 # but cv.glmnet takes us back to original scale after its done
-fit_pd_c_list_no_penalty_rawscaled <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y, imputed_pd_c_labels, alpha = x, measure = 'deviance', standardize = TRUE, penalize_age_gender = FALSE))
+fit_pd_c_list_no_penalty_rawscaled <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y, imputed_pd_c_labels, alpha = x, standardize = TRUE, penalize_age_gender = FALSE))
 
 pred_pd_c_list_no_penalty_rawscaled <- lapply(fit_pd_c_list_no_penalty_rawscaled, 
                                     function(x) predict(x, newx = imputed_pd_c_y, 
@@ -602,9 +638,7 @@ imputed_pd_c_labels_raw <- imputed_pd_c_raw[[2]] %>%
   fct_collapse(C = c('CO', 'CM', 'CY'))
 
 
-#note that we now set standardize to be true, since we aren't using pre-standardized data
-# but cv.glmnet takes us back to original scale after its done
-fit_pd_c_list_no_penalty_raw <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y, imputed_pd_c_labels, alpha = x, measure = 'deviance', standardize = TRUE, penalize_age_gender = FALSE))
+fit_pd_c_list_no_penalty_raw <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y, imputed_pd_c_labels, alpha = x, standardize = TRUE, penalize_age_gender = FALSE))
 
 pred_pd_c_list_no_penalty_raw <- lapply(fit_pd_c_list_no_penalty_raw, 
                                               function(x) predict(x, newx = imputed_pd_c_y, 

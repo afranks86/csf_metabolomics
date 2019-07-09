@@ -36,7 +36,7 @@ foldid <- sample(nrow(imputed_pd_co_y_lipids))
 
 ## START sample analysis with a few extreme alphas ##
 # fit
-fit_pd_co_half_lipids <- fit_glmnet(imputed_pd_co_y_lipids, imputed_pd_co_labels_lipids, alpha = 0.5, measure = 'deviance')
+fit_pd_co_half_lipids <- fit_glmnet(imputed_pd_co_y_lipids, imputed_pd_co_labels_lipids, alpha = 0.5)
 
 # predict using response (for prob) or class (.5 threshold) using min lambda (complexity determined by cv)
 pred_pd_co_half_lipids <- predict(fit_pd_co_half_lipids, newx = imputed_pd_co_y_lipids, type = 'response', s = 'lambda.min')
@@ -66,7 +66,7 @@ ggsave(filename = 'gotms_roc_pdco.png')
 
 
 #try the list
-fit_pd_co_list_lipids <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_co_y_lipids, imputed_pd_co_labels_lipids, alpha = x, measure = 'deviance'))
+fit_pd_co_list_lipids <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_co_y_lipids, imputed_pd_co_labels_lipids, alpha = x))
 
 #fit models with each of the alphas
 pred_pd_co_list_lipids <- lapply(fit_pd_co_list_lipids, 
@@ -131,7 +131,7 @@ imputed_pd_gba <- imputed_pd[[3]] %>%
   fct_collapse(Carrier = c('E326K Carrier', 'Pathogenic Carrier'))
 
 
-fit_carrier_pd_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_features, imputed_pd_gba, alpha = x, measure = 'deviance'))
+fit_carrier_pd_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_features, imputed_pd_gba, alpha = x))
 
 pred_carrier_pd_list <- lapply(fit_carrier_pd_list, 
                             function(x) predict(x, newx = imputed_pd_features, 
