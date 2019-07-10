@@ -17,7 +17,7 @@ imputed_all_features_age <- imputed_all_features_age_tmp[,-1]
 foldid <- sample(nrow(imputed_all_features_age))
 fit_age_ridge <- cv.glmnet(imputed_all_features_age, imputed_all_age, family = 'gaussian', 
                            type.measure = 'mse', nfolds = nrow(imputed_all_features_age),
-                           foldid = foldid, alpha = 0, standardize = TRUE, grouped = FALSE)
+                           foldid = foldid, alpha = 0, standardize = TRUE)
 
 pred_age_ridge <- predict(fit_age_ridge, newx = imputed_all_features_age, s= 'lambda.min')
 
@@ -32,7 +32,7 @@ importance_age_ridge <- importance(fit_age_ridge)
 #now try with list of multiple alphas
 fit_age_list <- lapply(seq(0,1,.1), function(x) cv.glmnet(imputed_all_features_age, imputed_all_age, family = 'gaussian', 
                                                           type.measure = 'mse', nfolds = nrow(imputed_all_features_age),
-                                                          foldid = foldid, alpha = x, standardize = TRUE, grouped = FALSE))
+                                                          foldid = foldid, alpha = x, standardize = TRUE))
 pred_age_list <- lapply(fit_age_list, 
                         function(x) predict(x, newx = imputed_all_features_age, 
                                             type = 'response', s = 'lambda.min'))
