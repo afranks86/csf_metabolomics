@@ -21,17 +21,17 @@ library(here)
 source(here("analysis/utility.R"))
 
 set.seed(1)
-data_path <- '~/course/ND_Metabolomics/'
-processed_files <- dir(path = data_path, pattern="^preprocessed_gotms_data*")
-## Most recent file
-load(max(file.path(data_path, processed_files[grep("-20+", processed_files)])))
-load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
-
-# data_path <- file.path('E:', 'Projects', 'metabolomics', 'ND_Metabolomics')
-# processed_files <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_gotms_data*")
+# data_path <- '~/course/ND_Metabolomics/'
+# processed_files <- dir(path = data_path, pattern="^preprocessed_gotms_data*")
 # ## Most recent file
-# load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])))
+# load(max(file.path(data_path, processed_files[grep("-20+", processed_files)])))
 # load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
+
+data_path <- file.path('E:', 'Projects', 'metabolomics', 'ND_Metabolomics')
+processed_files <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_gotms_data*")
+## Most recent file
+load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])))
+load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
 
 wide_data <- subject_data %>%     
   filter(!(Type %in% c("Other"))) %>%
@@ -44,7 +44,7 @@ dim(wide_data)
 
 #create foldid so we can test different alphas on same sets
 set.seed(1)
-foldid <- sample(nrow(imputed_pd_co_y))
+#foldid <- sample(nrow(imputed_pd_co_y))
 
 
 #' filter type and impute using amelia
@@ -61,8 +61,11 @@ filter_and_impute <- function(data, types){
     droplevels
   
   #keep gba for potential gba analysis
-  gba <- filtered$GBAStatus %>%
-    as.factor
+  gba <- filtered %>%
+    mutate(GBAStatus = as.factor(case_when(GBA_T369M == 'CT' ~ 'CT', 
+                                           TRUE ~ GBAStatus))) %>%
+    select(GBAStatus) %>%
+    deframe
     
   
   
@@ -110,12 +113,12 @@ fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, fami
   if(family == 'binomial'){
     fit <- cv.glmnet(features, labels, family = 'binomial', 
                      type.measure = 'deviance', nfolds = nrow(features),
-                     foldid = foldid, alpha = alpha, grouped = FALSE, standardize = TRUE, penalty.factor = p_factors)
+                     foldid = foldid, alpha = alpha, standardize = TRUE, penalty.factor = p_factors)
   }
   else if(family == 'gaussian'){
     fit <- cv.glmnet(features, labels, family = 'gaussian', 
                      type.measure = 'mse', nfolds = nrow(features),
-                     foldid = foldid, alpha = alpha, standardize = TRUE, grouped = FALSE, penalty.factor = p_factors)
+                     foldid = foldid, alpha = alpha, standardize = TRUE, penalty.factor = p_factors)
     
   }
   
@@ -371,7 +374,7 @@ roc_adpd_co_list <- lapply(pred_adpd_co_list, function(x) fpr_tpr(x, imputed_adp
   
 #plot for all alphas
   #note: tpr and fpr are switched because the roc curve was going the wrong way
-ggplot(roc_adpd_co_list, mapping = aes(tpr, fpr, color = alpha))+ 
+ggplot(roc_adpd_co_list, mapping = aes(fpr, tpr, color = alpha))+ 
   geom_line() + 
   labs(title = 'ROC, {AD,PD} vs CO')
 
@@ -410,7 +413,7 @@ foldid <- sample(nrow(imputed_ad_pd_co_y))
 
 fit_ad_pd_co_ridge <- cv.glmnet(imputed_ad_pd_co_y, imputed_ad_pd_co_labels, family = 'multinomial', 
                  type.measure = 'deviance', nfolds = nrow(imputed_ad_pd_co_y),
-                 foldid = foldid, alpha = 0, grouped = FALSE, standardize = TRUE)
+                 foldid = foldid, alpha = 0,  standardize = TRUE)
 pred_ad_pd_co_ridge <- predict(fit_ad_pd_co_ridge, newx = imputed_ad_pd_co_y, 'lambda.min', 'class')
 
 accuracy_ad_pd_co_ridge <- (data.frame(predicted = pred_ad_pd_co_ridge, truth = imputed_ad_pd_co_labels) %>%
@@ -431,7 +434,7 @@ importance_ad_pd_co_ridge <- importance(fit_ad_pd_co_ridge)
 #now do the list with multiple alphas
 fit_ad_pd_co_list <- lapply(seq(0, 1, .1), function(x) cv.glmnet(imputed_ad_pd_co_y, imputed_ad_pd_co_labels, family = 'multinomial', 
                                                                  type.measure = 'deviance', nfolds = nrow(imputed_ad_pd_co_y),
-                                                                 foldid = foldid, alpha = x, grouped = FALSE, standardize = TRUE))
+                                                                 foldid = foldid, alpha = x, standardize = TRUE))
 pred_ad_pd_co_list <- lapply(fit_ad_pd_co_list, 
                             function(x) predict(x, newx = imputed_ad_pd_co_y, 
                                                 type = 'class', s = 'lambda.min'))

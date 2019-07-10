@@ -3,13 +3,13 @@ source('analysis/gotms_glmnet.R')
 
 #### START LIPIDS ONLY ANALYSIS ####
 
-processed_files_lipids <- dir(path = data_path, pattern="^preprocessed_lipid_data*")
-load(max(file.path(data_path, processed_files_lipids[grep("-20+", processed_files_lipids)])))
+# processed_files_lipids <- dir(path = data_path, pattern="^preprocessed_lipid_data*")
+# load(max(file.path(data_path, processed_files_lipids[grep("-20+", processed_files_lipids)])))
 
 
-# processed_files_lipids <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_lipid_data*")
-# ## Most recent file
-# load(max(file.path(data_path, 'analysis', processed_files_lipids[grep("-20+", processed_files_lipids)])))
+processed_files_lipids <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_lipid_data*")
+## Most recent file
+load(max(file.path(data_path, 'analysis', processed_files_lipids[grep("-20+", processed_files_lipids)])))
 
 
 
@@ -128,10 +128,10 @@ ggsave(filename = 'lipids_roc_pdco.png')
 imputed_pd <- filter_and_impute(wide_data_lipids,c('PD'))
 imputed_pd_features <- imputed_pd[[1]]
 imputed_pd_gba <- imputed_pd[[3]] %>%
-  fct_collapse(Carrier = c('E326K Carrier', 'Pathogenic Carrier'))
+  fct_collapse(Carrier = c('E326K Carrier', 'Pathogenic Carrier', 'CT'))
 
 
-fit_carrier_pd_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_features, imputed_pd_gba, alpha = x))
+fit_carrier_pd_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_features, imputed_pd_gba, penalize_age_gender = FALSE, alpha = x))
 
 pred_carrier_pd_list <- lapply(fit_carrier_pd_list, 
                             function(x) predict(x, newx = imputed_pd_features, 
