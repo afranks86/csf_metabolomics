@@ -183,8 +183,9 @@ loo_cvfit_glmnet <- function(index, features, labels, alpha, penalize_age_gender
 
 
 #function to return fpr, tpr given prediction and true label
-fpr_tpr <- function(pred, label){
-  rocpred <- ROCR::prediction(pred, label)
+  #label ordering goes c(negative class, positive class)
+fpr_tpr <- function(pred, label, label_ordering = NULL){
+  rocpred <- ROCR::prediction(pred, label, label.ordering = label_ordering)
   rocfpr_tpr <- ROCR::performance(rocpred, measure = 'tpr', x.measure = 'fpr')
   rocauc <- ROCR::performance(rocpred, measure = 'auc')
   return(tibble(fpr = deframe(rocfpr_tpr@x.values), 
@@ -364,9 +365,8 @@ pred_adpd_co_list <- lapply(fit_adpd_co_list,
 importance_adpd_co_list <- lapply(fit_adpd_co_list, function(x) importance(x))
 
 #roc for each of the alphas
-#note: both alpha = 0 and alpha = 1 give constant prediction probability for all observations
-  #something is probably wrong with the code, need to look at it.
-roc_adpd_co_list <- lapply(pred_adpd_co_list, function(x) fpr_tpr(x, imputed_adpd_co_labels)) %>%
+#TODO: look into why we have flipped positive and negative classes here.
+roc_adpd_co_list <- lapply(pred_adpd_co_list, function(x) fpr_tpr(x, imputed_adpd_co_labels, label_ordering = c('D', 'CO'))) %>%
   bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
   mutate(alpha  = seq(0,1,.1) %>%
            rep(each = length(imputed_adpd_co_labels) + 1) %>%

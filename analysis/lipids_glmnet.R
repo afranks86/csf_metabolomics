@@ -97,7 +97,8 @@ roc_pd_co_list_lipids <- lapply(pred_pd_co_list_lipids, function(x) fpr_tpr(x, i
 ggplot(roc_pd_co_list_lipids, mapping = aes(fpr, tpr, color = alpha))+ 
   geom_line() + 
   theme_minimal() + 
-  labs(title = 'ROC: PD vs CO')
+  labs(title = 'ROC: PD vs CO',
+       subtitle = 'Lipids')
 
 
 
@@ -130,7 +131,6 @@ imputed_pd_features <- imputed_pd[[1]]
 imputed_pd_gba <- imputed_pd[[3]] %>%
   fct_collapse(Carrier = c('E326K Carrier', 'Pathogenic Carrier', 'CT'))
 
-
 fit_carrier_pd_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_features, imputed_pd_gba, penalize_age_gender = FALSE, alpha = x))
 
 pred_carrier_pd_list <- lapply(fit_carrier_pd_list, 
@@ -144,15 +144,15 @@ importance_carrier_pd_list <- lapply(fit_carrier_pd_list, function(x) importance
 #something is probably wrong with the code, need to look at it.
 roc_carrier_pd_list <- lapply(pred_carrier_pd_list, function(x) fpr_tpr(x, imputed_pd_gba)) %>%
   bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
-  mutate(alpha  = seq(0,1,.1) %>%
-           rep(each = length(imputed_pd_gba) + 1) %>%
-           as.factor)
+  mutate(alpha  = as.factor((as.numeric(alpha) - 1)*.1))
+
 
 #plot for all alphas
 #note: tpr and fpr are switched because the roc curve was going the wrong way
 ggplot(roc_carrier_pd_list, mapping = aes(fpr, tpr, color = alpha))+ 
   geom_line() + 
-  labs(title = 'ROC, {E326K, Pathogenic Carrier} vs Non-Carrier')
+  labs(title = 'ROC, {T369M_CT, E326K, Pathogenic Carrier} vs Non-Carrier',
+       subtitle = 'lipids')
 ggsave(filename = 'lipids_roc_gba.png')
 
 #look at auc for each alpha. need to do (1- auc) to show the flip
