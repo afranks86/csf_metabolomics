@@ -21,17 +21,17 @@ library(here)
 source(here("analysis/utility.R"))
 
 set.seed(1)
-data_path <- '~/course/ND_Metabolomics/'
-processed_files <- dir(path = data_path, pattern="^preprocessed_gotms_data*")
-## Most recent file
-load(max(file.path(data_path, processed_files[grep("-20+", processed_files)])))
-load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
-# 
-# data_path <- file.path('E:', 'Projects', 'metabolomics', 'ND_Metabolomics')
-# processed_files <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_gotms_data*")
+# data_path <- '~/course/ND_Metabolomics/'
+# processed_files <- dir(path = data_path, pattern="^preprocessed_gotms_data*")
 # ## Most recent file
-# load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])))
+# load(max(file.path(data_path, processed_files[grep("-20+", processed_files)])))
 # load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
+
+data_path <- file.path('E:', 'Projects', 'metabolomics', 'ND_Metabolomics')
+processed_files <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_gotms_data*")
+## Most recent file
+load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])))
+load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
 
 wide_data <- subject_data %>%     
   filter(!(Type %in% c("Other"))) %>%
@@ -158,6 +158,7 @@ loo_pred_glmnet <- function(lambda, index, features, labels, alpha, penalize_age
   return(pred)
 }
 
+# alternative to loo_pred_glmnet
 # does loocv cross validation on each fit (With n-1 obs) and returns the fit. 
   #leads to n different lambda.mins. idea is to compare fits to see how similar they are
 loo_cvfit_glmnet <- function(index, features, labels, alpha, penalize_age_gender = TRUE, family = 'binomial'){
@@ -540,7 +541,6 @@ roc_pd_c_list_no_penalty %>%
 
 
 
-
 ## Do same analysis, but fitting n models on n-1 observations
 
 #let's test on the alpha = .5
@@ -571,7 +571,86 @@ ggsave('roc_pd_c_loo.png')
 
 ## do cv on each loo fit
   #try alpha = 0.5
-loo_fitcv <- lapply(id, function(x) loo_cvfit_glmnet(index = x, features = imputed_pd_c_y, labels = imputed_pd_c_labels, alpha = 0.5, penalize_age_gender = FALSE, family = 'binomial'))
+id <- sample(nrow(imputed_pd_c_y))
+
+loo_fitcv_half <- lapply(id, function(x) loo_cvfit_glmnet(index = x, features = imputed_pd_c_y, labels = imputed_pd_c_labels, alpha = 0.5, penalize_age_gender = FALSE, family = 'binomial'))
+
+loo_predcv_half <- lapply(loo_fitcv_half, function(x) x[[2]]) %>%
+  unlist
+
+roc_loocv_pd_c_half <- fpr_tpr(loo_predcv_half, imputed_pd_c_labels)
+ggplot(roc_loocv_pd_c_half) + 
+  geom_line(mapping = aes(fpr, tpr)) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+  theme_minimal() + 
+  labs(title = "ROC: PD vs C",
+       subtitle = TeX('Metabolites,$\\alpha = 0.5$, loo'),
+       x = 'False Positive Rate',
+       y = 'True Positive Rate') + 
+  geom_text(x = 0.9, y = 0,label = paste0('AUC:', roc_loocv_pd_c_half$auc[1])) #auc is the same for every row in the df
+ggsave('roc_pd_c_loo.png')
+
+
+
+
+
+
+
+
+## the results of the loo are messed up, so let's try a simple 80/20 train/test
+set.seed(1)
+random_index <- sample(nrow(imputed_pd_c_y), size = floor(nrow(imputed_pd_c_y)*.8))
+pd_c_y_train <- imputed_pd_c_y[random_index,]
+pd_c_label_train <- imputed_pd_c_labels[random_index]
+pd_c_y_test <- imputed_pd_c_y[-random_index,]
+pd_c_label_test <- imputed_pd_c_labels[-random_index]
+
+fit_pd_c_list_no_penalty_split <- lapply(seq(0, 1, .1), function(x) fit_glmnet(pd_c_y_train, pd_c_label_train, alpha = x, penalize_age_gender = FALSE))
+
+#go straight to test set
+pred_pd_c_list_no_penalty_split <- lapply(fit_pd_c_list_no_penalty_split, 
+                                    function(x) predict(x, newx = pd_c_y_test, 
+                                                        type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_pd_c_list_no_penalty_split <- lapply(fit_pd_c_list_no_penalty_split, function(x) importance(x))
+
+#roc for each of the alphas
+roc_pd_c_list_no_penalty_split <- lapply(pred_pd_c_list_no_penalty_split, function(x) fpr_tpr(x, pd_c_label_test)) %>%
+  bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
+  mutate(alpha  = as.factor((as.numeric(alpha) - 1)*.1))
+
+#plot for all alphas
+#note: tpr and fpr are switched because the roc curve was going the wrong way
+ggplot(roc_pd_c_list_no_penalty_split, mapping = aes(fpr, tpr, color = alpha))+ 
+  geom_line() + 
+  labs(title = 'ROC, PD vs {CO, CM, CY}',
+       subtitle = 'No Age, Gender Penalty')
+ggsave('roc_pd_c_no_penalty_split.png')
+
+#look at auc for each alpha.
+roc_pd_c_list_no_penalty_split %>% 
+  group_by(alpha) %>%
+  slice(1) %>%
+  select(alpha, auc)
+
+#(results are still good.)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
