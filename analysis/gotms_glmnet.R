@@ -21,17 +21,17 @@ library(here)
 source(here("analysis/utility.R"))
 
 set.seed(1)
-# data_path <- '~/course/ND_Metabolomics/'
-# processed_files <- dir(path = data_path, pattern="^preprocessed_gotms_data*")
-# ## Most recent file
-# load(max(file.path(data_path, processed_files[grep("-20+", processed_files)])))
-# load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
-
-data_path <- file.path('E:', 'Projects', 'metabolomics', 'ND_Metabolomics')
-processed_files <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_gotms_data*")
+data_path <- '~/course/ND_Metabolomics/'
+processed_files <- dir(path = data_path, pattern="^preprocessed_gotms_data*")
 ## Most recent file
-load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])))
+load(max(file.path(data_path, processed_files[grep("-20+", processed_files)])))
 load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
+# 
+# data_path <- file.path('E:', 'Projects', 'metabolomics', 'ND_Metabolomics')
+# processed_files <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_gotms_data*")
+# ## Most recent file
+# load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])))
+# load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
 
 wide_data <- subject_data %>%     
   filter(!(Type %in% c("Other"))) %>%

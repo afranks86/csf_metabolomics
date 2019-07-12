@@ -124,7 +124,7 @@ ggplot(roc_pd_co_list_lipids %>% filter(alpha == 0.7), mapping = aes(fpr, tpr))+
 ggsave(filename = 'lipids_roc_pdco.png')
 
 
-### start predict GBA vs metabolites for pd ###
+### start predict GBA vs lipids for pd ###
 
 imputed_pd <- filter_and_impute(wide_data_lipids,c('PD'))
 imputed_pd_features <- imputed_pd[[1]]
@@ -172,3 +172,54 @@ data.frame(pred = ifelse(pred_carrier_pd_list[[5]] > .5, 'Non-Carrier', 'Carrier
 
 
 #### END LIPIDS ONLY ANALYSIS ####
+
+
+#### start GBA vs {got, lipids} ####
+wide_data_combined <- wide_data %>%
+  #remove duplicate columns
+  select(-c(Age, Type, Gender, Batch, Index, GBAStatus, GBA_T369M, cognitive_status, APOE, Type2)) %>%
+  left_join(wide_data_lipids, by = 'Id') 
+
+
+imputed_pd_comb <- filter_and_impute(wide_data_combined,c('PD'))
+imputed_pd_comb_features <- imputed_pd_comb[[1]]
+imputed_pd_comb_gba <- imputed_pd_comb[[3]] %>%
+  fct_collapse(Carrier = c('E326K Carrier', 'Pathogenic Carrier', 'CT'))
+
+fit_carrier_pd_comb_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_comb_features, imputed_pd_comb_gba, penalize_age_gender = FALSE, alpha = x))
+
+pred_carrier_pd_comb_list <- lapply(fit_carrier_pd_comb_list, 
+                               function(x) predict(x, newx = imputed_pd_comb_features, 
+                                                   type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_carrier_pd_comb_list <- lapply(fit_carrier_pd_comb_list, function(x) importance(x, metabolites = FALSE))
+
+#roc for each of the alphas
+#note: both alpha = 0 and alpha = 1 give constant prediction probability for all observations
+#something is probably wrong with the code, need to look at it.
+roc_carrier_pd_comb_list <- lapply(pred_carrier_pd_comb_list, function(x) fpr_tpr(x, imputed_pd_comb_gba)) %>%
+  bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
+  mutate(alpha  = as.factor((as.numeric(alpha) - 1)*.1))
+
+
+#plot for all alphas
+#note: tpr and fpr are switched because the roc curve was going the wrong way
+ggplot(roc_carrier_pd_comb_list, mapping = aes(fpr, tpr, color = alpha))+ 
+  geom_line() + 
+  labs(title = 'ROC, {T369M_CT, E326K, Pathogenic Carrier} vs Non-Carrier',
+       subtitle = 'lipids and got')
+ggsave(filename = 'lipids_and_got_roc_gba.png')
+
+#look at auc for each alpha. need to do (1- auc) to show the flip
+roc_carrier_pd_comb_list %>% 
+  group_by(alpha) %>%
+  slice(1) %>%
+  select(alpha, auc)
+
+
+#confusion matrix for one of them
+data.frame(pred = ifelse(pred_carrier_pd_comb_list[[5]] > .5, 'Non-Carrier', 'Carrier'), 
+           truth = imputed_pd_comb_gba) %>% 
+  table
+
+
