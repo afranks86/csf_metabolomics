@@ -20,6 +20,11 @@ library(here)
 
 source(here("analysis/utility.R"))
 
+############################
+
+### Reading in Data ###
+
+############################
 set.seed(1)
 # data_path <- '~/course/ND_Metabolomics/'
 # processed_files <- dir(path = data_path, pattern="^preprocessed_gotms_data*")
@@ -45,6 +50,13 @@ dim(wide_data)
 #create foldid so we can test different alphas on same sets
 set.seed(1)
 #foldid <- sample(nrow(imputed_pd_co_y))
+
+
+############################
+
+### Helper Functions ###
+
+############################
 
 
 #' filter type and impute using amelia
@@ -127,7 +139,7 @@ fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, fami
 }
 
 # function to fit glmnet on n-1 observations and predict on 1, and do n times.
-# lambda can be min lambda from fit_glmnet
+# to use when you have a single lambda value you want to use (ie min lambda on full dataset)
 # index is the one observation to remove
 # only pass in binomial or gaussian
 #https://stats.stackexchange.com/questions/304440/building-final-model-in-glmnet-after-cross-validation
@@ -228,14 +240,19 @@ all_types <- wide_data$Type %>%
   unique %>%
   as.character
 
-#impute all types using amelia for an example
-  #Y holds features (keeping with prior notation), labels holds type
-imputed_all <- filter_and_impute(wide_data,all_types)
-imputed_all_Y <- imputed_all[[1]]
-imputed_all_labels <- imputed_all[[2]] 
+# #impute all types using amelia for an example
+#   #Y holds features (keeping with prior notation), labels holds type
+# imputed_all <- filter_and_impute(wide_data,all_types)
+# imputed_all_Y <- imputed_all[[1]]
+# imputed_all_labels <- imputed_all[[2]] 
 
 
-### START PD vs CO analysis ###
+############################
+
+### PD vs CO ###
+
+############################
+
 
 #filter dataset to only include PD, CO
 imputed_pd_co <- filter_and_impute(wide_data,c('PD', 'CO'))
@@ -247,6 +264,9 @@ imputed_pd_co_labels <- imputed_pd_co[[2]]
 #   as.data.frame() %>%
 #   mutate(Type = imputed_pd_co_labels) %>%
 #   write_csv(path = 'gotms_imputed_pd_co.csv')
+
+
+
 
 ## START sample analysis with a few extreme alphas ##
 
@@ -287,6 +307,11 @@ ggplot(roc_pd_co_half) +
 ggsave(filename = 'gotms_roc_pdco.png')
 
 ## END sample analysis with a few extreme alphas##
+
+
+
+
+
 
 
 ## START try 10 alphas between 0 and 1
@@ -332,14 +357,11 @@ roc_pd_co_list %>%
 
 
 
+############################
 
+### {AD, PD} vs CO ###
 
-
-### END PD vs CO analysis ###
-
-
-
-### START {AD,PD} vs CO analysis ###
+############################
 
 #imputation
 imputed_adpd_co <- filter_and_impute(wide_data,c('AD', 'PD', 'CO'))
@@ -399,10 +421,13 @@ abline(a = 0, b = 1, lty= 2)
 
 
 
-### End {AD,PD} vs CO analysis ###
 
+############################
 
-### Start AD vs PD vs CO analysis ###
+### AD vs PD vs CO ###
+
+############################
+
 
 #start with same imputation as the {ad,pd} vs CO analysis, just without grouping ad and pd
 imputed_ad_pd_co_y <- imputed_adpd_co[[1]]
@@ -453,12 +478,15 @@ confusion_ad_pd_co_list <- lapply(pred_ad_pd_co_list, function(x) data.frame(pre
                                                                      table)
 
 
-### End AD vs PD vs CO analysis ###
 
 
 
+############################
 
-### Start PD vs {CO, CM, CY} analysis ###
+### PD vs {CO, CM, CY} ###
+
+############################
+
 
 imputed_pd_c <- filter_and_impute(wide_data, c('PD', 'CO', 'CM', 'CY'))
 imputed_pd_c_y <- imputed_pd_c[[1]]
@@ -507,7 +535,18 @@ roc_pd_c_list %>%
   select(alpha, auc)
 
 
-## try same analysis, but without penalizing age/gender
+
+
+
+
+
+############################
+
+### PD vs {CO, CM, CY} ###
+ ## No Gender/Age Penalty ##
+
+############################
+
 
 #fit models with each of the alphas
 fit_pd_c_list_no_penalty <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y, imputed_pd_c_labels, alpha = x, penalize_age_gender = FALSE))
@@ -540,8 +579,17 @@ roc_pd_c_list_no_penalty %>%
   select(alpha, auc)
 
 
+############################
 
-## Do same analysis, but fitting n models on n-1 observations
+### PD vs {CO, CM, CY} ###
+## No Gender/Age Penalty ##
+## using loocv models to predict 1 observation at a time (fit on n to get lambda, fit on n-1 using that lambda, predict on 1, repeat n times) ## 
+
+
+############################
+
+
+## Do same analysis, but fitting n models on n-1 observations, using the min lambda from fitting on full data ## 
 
 #let's test on the alpha = .5
 min_lambda_5 <- fit_pd_c_list_no_penalty[[6]]$lambda.min
@@ -569,7 +617,17 @@ ggsave('roc_pd_c_loo.png')
 
 
 
-## do cv on each loo fit
+
+
+############################
+
+### PD vs {CO, CM, CY} ###
+## No Gender/Age Penalty ##
+## using loocv models to predict 1 observation at a time (fit on n-1 with different lamda, predict on 1, repeat n times) ## 
+
+############################
+
+
   #try alpha = 0.5
 id <- sample(nrow(imputed_pd_c_y))
 
@@ -596,8 +654,15 @@ ggsave('roc_pd_c_loo.png')
 
 
 
+############################
 
-## the results of the loo are messed up, so let's try a simple 80/20 train/test
+### PD vs {CO, CM, CY} ###
+## No Gender/Age Penalty ##
+## the results of the loo are messed up, so let's try a simple 80/20 train/test ##
+
+############################
+
+
 set.seed(1)
 random_index <- sample(nrow(imputed_pd_c_y), size = floor(nrow(imputed_pd_c_y)*.8))
 pd_c_y_train <- imputed_pd_c_y[random_index,]
@@ -640,21 +705,15 @@ roc_pd_c_list_no_penalty_split %>%
 
 
 
+############################
+
+### PD vs {CO, CM, CY} ###
+## No Gender/Age Penalty ##
+## With raw scaled instead of abundances ##
+
+############################
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-## Now try the analysis with raw scaled instead of abundances
 wide_data_rawscaled <- subject_data %>%     
   filter(!(Type %in% c("Other"))) %>%
   unite("Metabolite", c("Metabolite", "Mode")) %>% 
@@ -672,19 +731,19 @@ imputed_pd_c_labels_rawscaled <- imputed_pd_c_rawscaled[[2]] %>%
 
 #note that we now set standardize to be true, since we aren't using pre-standardized data
 # but cv.glmnet takes us back to original scale after its done
-fit_pd_c_list_no_penalty_rawscaled <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y, imputed_pd_c_labels, alpha = x, standardize = TRUE, penalize_age_gender = FALSE))
+fit_pd_c_list_no_penalty_rawscaled <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y_rawscaled, imputed_pd_c_labels_rawscaled, alpha = x, penalize_age_gender = FALSE))
 
 pred_pd_c_list_no_penalty_rawscaled <- lapply(fit_pd_c_list_no_penalty_rawscaled, 
-                                    function(x) predict(x, newx = imputed_pd_c_y, 
+                                    function(x) predict(x, newx = imputed_pd_c_y_rawscaled, 
                                                         type = 'response', s = 'lambda.min'))
 #some measure of variable importance
 importance_pd_c_list_no_penalty_rawscaled <- lapply(fit_pd_c_list_no_penalty_rawscaled, function(x) importance(x))
 
 #roc for each of the alphas
-roc_pd_c_list_no_penalty_rawscaled <- lapply(pred_pd_c_list_no_penalty_rawscaled, function(x) fpr_tpr(x, imputed_pd_c_labels)) %>%
+roc_pd_c_list_no_penalty_rawscaled <- lapply(pred_pd_c_list_no_penalty_rawscaled, function(x) fpr_tpr(x, imputed_pd_c_labels_rawscaled)) %>%
   bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
   mutate(alpha  = seq(0,1,.1) %>%
-           rep(each = length(imputed_pd_c_labels) + 1) %>%
+           rep(each = length(imputed_pd_c_labels_rawscaled) + 1) %>%
            as.factor)
 
 #plot for all alphas
@@ -692,7 +751,7 @@ roc_pd_c_list_no_penalty_rawscaled <- lapply(pred_pd_c_list_no_penalty_rawscaled
 ggplot(roc_pd_c_list_no_penalty_rawscaled, mapping = aes(fpr, tpr, color = alpha))+ 
   geom_line() + 
   labs(title = 'ROC, PD vs {CO, CM, CY}',
-       subtitle = 'No Age, Gender Penalty')
+       subtitle = 'GOT, rawScaled')
 ggsave('roc_pd_c_no_penalty_rawscaled.png')
 
 #look at auc for each alpha.
@@ -703,7 +762,13 @@ roc_pd_c_list_no_penalty_rawscaled %>%
 
 
 
-## same thing with raw
+############################
+
+### PD vs {CO, CM, CY} ###
+## No Gender/Age Penalty ##
+## With raw instead of abundances ##
+
+############################
 
 wide_data_raw <- subject_data %>%     
   filter(!(Type %in% c("Other"))) %>%
@@ -750,7 +815,6 @@ roc_pd_c_list_no_penalty_raw %>%
   select(alpha, auc)
 
 
-### End PD vs {CO, CM, CY} analysis ###
 
 
 
