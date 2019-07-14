@@ -807,7 +807,7 @@ imputed_pd_c_labels_raw <- imputed_pd_c_raw[[2]] %>%
   fct_collapse(C = c('CO', 'CM', 'CY'))
 
 
-fit_pd_c_list_no_penalty_raw <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y, imputed_pd_c_labels, alpha = x, standardize = TRUE, penalize_age_gender = FALSE))
+fit_pd_c_list_no_penalty_raw <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y, imputed_pd_c_labels, alpha = x, penalize_age_gender = FALSE))
 
 pred_pd_c_list_no_penalty_raw <- lapply(fit_pd_c_list_no_penalty_raw, 
                                               function(x) predict(x, newx = imputed_pd_c_y, 
@@ -827,7 +827,7 @@ roc_pd_c_list_no_penalty_raw <- lapply(pred_pd_c_list_no_penalty_raw, function(x
 ggplot(roc_pd_c_list_no_penalty_raw, mapping = aes(fpr, tpr, color = alpha))+ 
   geom_line() + 
   labs(title = 'ROC, PD vs {CO, CM, CY}',
-       subtitle = 'No Age, Gender Penalty')
+       subtitle = 'No Age, Gender Penalty, Raw')
 ggsave('roc_pd_c_no_penalty_raw.png')
 
 #look at auc for each alpha.
