@@ -454,7 +454,7 @@ confusion_ad_pd_co_ridge <- (data.frame(predicted = pred_ad_pd_co_ridge, truth =
                               sum)/length(pred)
 
 
-importance_ad_pd_co_ridge <- importance(fit_ad_pd_co_ridge)
+
 
 
 #now do the list with multiple alphas
@@ -464,8 +464,30 @@ fit_ad_pd_co_list <- lapply(seq(0, 1, .1), function(x) cv.glmnet(imputed_ad_pd_c
 pred_ad_pd_co_list <- lapply(fit_ad_pd_co_list, 
                             function(x) predict(x, newx = imputed_ad_pd_co_y, 
                                                 type = 'class', s = 'lambda.min'))
-#some measure of variable importance
-importance_ad_pd_co_list <- lapply(fit_ad_pd_co_list, function(x) importance(x))
+
+# Need to do extra work to get coefficients for the multinomial case, since each class has its own set of coefficients
+multinomial_importance <- function(fit, metabolites = FALSE){
+  coefficients <- coef(fit, s = 'lambda.min') %>% 
+    lapply(as.matrix)
+  
+  #order the coefficients for weak measure of importance, and remove coefs with 0 coeff
+  #coefficients_sorted <- coefficients[order(abs(coefficients), decreasing = TRUE) & abs(coefficients) > 0,]
+  coefficients_sorted_with_zeroes <- lapply(coefficients, function(x) x[order(abs(x), decreasing = TRUE),])
+  coefficients_sorted <- lapply(coefficients_sorted_with_zeroes, function(x) x[x != 0])
+  if(metabolites == TRUE){
+    #map metabolites to their names. keep the names of gender and age, since they aren't metabolites
+    coefficients_sorted <- lapply(coefficients_sorted, function(x) setNames(x, if_else(names(x) %in% c('Age', 'GenderM', 'TypeCM', 'TypeCO', 'TypeCY', 'TypePD'),
+                                                                names(x), 
+                                                                str_replace_all(names(x), ' Result.*', "") %>%
+                                                                  str_replace_all('`', '') %>%
+                                                                  str_replace_all('\\\\', '') %>%
+                                                                  sapply(function(y) all_matches[match(y, all_matches$Name), 'Metabolite'] %>% deframe))))
+    
+  }
+  return(coefficients_sorted)
+}
+importance_ad_pd_co_list <- lapply(fit_ad_pd_co_list, function(x) multinomial_importance(x, metabolites = TRUE))
+
 
 
 accuracy_ad_pd_co_list <- lapply(pred_ad_pd_co_list, function(x) (data.frame(predicted = x, truth = imputed_ad_pd_co_labels) %>%
