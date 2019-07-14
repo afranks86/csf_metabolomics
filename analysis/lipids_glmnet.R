@@ -20,9 +20,11 @@ wide_data_lipids <- subject_data %>%
   spread(key=Lipid, value=Abundance)
 
 
-### Start lipids PD vs CO ###
+############################
 
+### PD vs CO ###
 
+############################
 
 set.seed(1)
 
@@ -65,7 +67,10 @@ ggplot(roc_pd_co_half_lipids) +
 ggsave(filename = 'gotms_roc_pdco.png')
 
 
-#try the list
+
+## Fitting on the list of 0 -> 1 ##
+
+
 fit_pd_co_list_lipids <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_co_y_lipids, imputed_pd_co_labels_lipids, alpha = x))
 
 #fit models with each of the alphas
@@ -111,7 +116,7 @@ auc_lipids <- roc_pd_co_list_lipids %>%
 auc_lipids
 
 
-#example plot for just alpha = 0.7
+## Example plot for just alpha = 0.7
 ggplot(roc_pd_co_list_lipids %>% filter(alpha == 0.7), mapping = aes(fpr, tpr))+ 
   geom_line() + 
   theme_minimal() + 
@@ -124,7 +129,13 @@ ggplot(roc_pd_co_list_lipids %>% filter(alpha == 0.7), mapping = aes(fpr, tpr))+
 ggsave(filename = 'lipids_roc_pdco.png')
 
 
-### start predict GBA vs lipids for pd ###
+
+############################
+
+### GBA vs lipids ###
+
+############################
+
 
 imputed_pd <- filter_and_impute(wide_data_lipids,c('PD'))
 imputed_pd_features <- imputed_pd[[1]]
@@ -167,14 +178,16 @@ data.frame(pred = ifelse(pred_carrier_pd_list[[5]] > .5, 'Non-Carrier', 'Carrier
            truth = imputed_pd_gba) %>% 
   table
 
-### end predict GBA vs metabolites for pd ###
 
 
 
-#### END LIPIDS ONLY ANALYSIS ####
 
+############################
 
-#### start GBA vs {got, lipids} ####
+### GBA vs {Lipids, GOT} ###
+
+############################
+
 wide_data_combined <- wide_data %>%
   #remove duplicate columns
   select(-c(Age, Type, Gender, Batch, Index, GBAStatus, GBA_T369M, cognitive_status, APOE, Type2)) %>%
