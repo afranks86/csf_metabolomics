@@ -146,6 +146,10 @@ processed_files_lipids <- dir(path = file.path(data_path, 'analysis'), pattern="
 load(max(file.path(data_path, 'analysis', processed_files_lipids[grep("-20+", processed_files_lipids)])))
 
 
+# processed_files_lipids <- dir(path = data_path, pattern="^preprocessed_lipid_data*")
+# load(max(file.path(data_path, processed_files_lipids[grep("-20+", processed_files_lipids)])))
+
+
 
 wide_data_lipids <- subject_data %>%     
     filter(!(Type %in% c("Other"))) %>%

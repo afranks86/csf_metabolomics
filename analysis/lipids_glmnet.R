@@ -3,8 +3,6 @@ source('analysis/starter.R')
 
 #### START LIPIDS ONLY ANALYSIS ####
 
-# processed_files_lipids <- dir(path = data_path, pattern="^preprocessed_lipid_data*")
-# load(max(file.path(data_path, processed_files_lipids[grep("-20+", processed_files_lipids)])))
 
 
 
