@@ -1,250 +1,4 @@
-library(tidyverse)
-library(ggExtra)
-library(magrittr)
-library(microbenchmark)
-#library(mvtnorm)
-#library(mvnfast)
-#library(rstiefel)
-#library(mgCov)
-library(Amelia)
-library(modelr)
-#library(robust)
-library(ggridges)
-library(Matrix)
-#library(car)
-#library(patchwork)
-library(glmnet)
-library(ROCR)
-library(latex2exp)
-library(here)
-
-source(here("analysis/utility.R"))
-
-############################
-
-### Reading in Data ###
-
-############################
-set.seed(1)
-# data_path <- '~/course/ND_Metabolomics/'
-# processed_files <- dir(path = data_path, pattern="^preprocessed_gotms_data*")
-# ## Most recent file
-# load(max(file.path(data_path, processed_files[grep("-20+", processed_files)])))
-# load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
-
-data_path <- file.path('E:', 'Projects', 'metabolomics', 'ND_Metabolomics')
-processed_files <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_gotms_data*")
-## Most recent file
-load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])))
-load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
-
-wide_data <- subject_data %>%     
-  filter(!(Type %in% c("Other"))) %>%
-  unite("Metabolite", c("Metabolite", "Mode")) %>% 
-  mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
-  dplyr::select(-one_of("Raw", "RawScaled", "Trend",
-                        "RunIndex", "Name","Data File")) %>%
-  spread(key=Metabolite, value=Abundance)
-dim(wide_data)
-
-#create foldid so we can test different alphas on same sets
-set.seed(1)
-#foldid <- sample(nrow(imputed_pd_co_y))
-
-
-############################
-
-### Helper Functions ###
-
-############################
-
-
-#' filter type and impute using amelia
-#' col is a vector of strings, one of the levels of type
-filter_and_impute <- function(data, types){
-  ## Impute missing values
-  filtered <- data %>%
-    filter(Type %in% types) %>%
-    #remove columns that are ALL NA
-    select_if(function(x) any(!is.na(x)))
-  
-  #drop unused levels
-  type <- filtered$Type %>%
-    droplevels
-  
-  #keep gba for potential gba analysis
-  gba <- filtered %>%
-    mutate(GBAStatus = as.factor(case_when(GBA_T369M == 'CT' ~ 'CT', 
-                                           TRUE ~ GBAStatus))) %>%
-    select(GBAStatus) %>%
-    deframe
-    
-  
-  
-  Y <- filtered %>% 
-    dplyr::select(-one_of("Type", "Type2", "Gender", "Age", "APOE", "Batch",
-                        #"Data File",  (not found in dataset, so removed)
-                        "Index", "GBAStatus", "Id",
-                        "GBA_T369M", "cognitive_status")) %>%
-    as.matrix()
-  Y[Y==0] <- NA
-  
-  #do imputation
-  Yt <- amelia(t(Y), m = 1, empri = 100)$imputations$imp1
-  #our functions take matrices, and we add age/gender (1 = F, 2 = M)
-  Y_tmp <- t(Yt) %>% 
-    as_tibble %>%
-    mutate(Age = filtered$Age,
-           Gender = filtered$Gender)
-  #convert gender to a dummy var (1 if male, 0 if female)
-  Y_tmp <- model.matrix(~., Y_tmp)
-  #remove intercept column created by model.matrix
-  Y <- Y_tmp[,-1]
-    
-    
-  
-  
-  return(list(Y, type, gba))
-}
-
-#does loocv for logistic regression, using deviance loss by default (check?), eval at different elastic net alphas
-#if penalize_age_gender is false, set penalty coeff to 0
-fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, family= 'binomial'){
-  set.seed(1)
-  #set foldid so that same folds every time (it's loocv so it's just an ordering)
-  foldid <- sample(nrow(features))
-  
-  #set penalty factors. (1 for each is default)
-  p_factors <- rep(1, ncol(features))
-  #set age/gender pfactors to 0 if penalize_age_gender flag is true. (assumes age/gender is very important)
-  if(penalize_age_gender == FALSE){
-    age_gender_index <- which(colnames(features) %in% c('Age', 'GenderM'))
-    p_factors[age_gender_index] <- 0
-  }
-  
-  if(family == 'binomial'){
-    fit <- cv.glmnet(features, labels, family = 'binomial', 
-                     type.measure = 'deviance', nfolds = nrow(features),
-                     foldid = foldid, alpha = alpha, standardize = TRUE, penalty.factor = p_factors)
-  }
-  else if(family == 'gaussian'){
-    fit <- cv.glmnet(features, labels, family = 'gaussian', 
-                     type.measure = 'mse', nfolds = nrow(features),
-                     foldid = foldid, alpha = alpha, standardize = TRUE, penalty.factor = p_factors)
-    
-  }
-  
-  
-  return(fit)
-}
-
-# function to fit glmnet on n-1 observations and predict on 1, and do n times.
-# to use when you have a single lambda value you want to use (ie min lambda on full dataset)
-# index is the one observation to remove
-# only pass in binomial or gaussian
-#https://stats.stackexchange.com/questions/304440/building-final-model-in-glmnet-after-cross-validation
-loo_pred_glmnet <- function(lambda, index, features, labels, alpha, penalize_age_gender = TRUE, family = 'binomial'){
-  #features and label, leaving out one observation for training
-  loo_features <- features[-index,]
-  loo_labels <- labels[-index]
-  
-  #features and labels on the held out observation
-  
-  new_features <- features[index,] %>% matrix(nrow = 1, dimnames = list('', colnames(loo_features) ))
-  new_label <- labels[index]
-  
-  #set penalty factors. (1 for each is default)
-  p_factors <- rep(1, ncol(loo_features))
-  #set age/gender pfactors to 0 if penalize_age_gender flag is true. (assumes age/gender is very important)
-  if(penalize_age_gender == FALSE){
-    age_gender_index <- which(colnames(loo_features) %in% c('Age', 'GenderM'))
-    p_factors[age_gender_index] <- 0
-  }
-  
-  #documentation says we should avoid passing in single value of lambda. how else to do?
-  #fit on n-1
-  fit <- glmnet(loo_features, loo_labels, family = family, lambda = lambda, alpha = alpha, standardize = TRUE, penalty.factor = p_factors)
-  
-  #predict on 1
-  pred <- predict(fit, newx = new_features, type = 'response', s = lambda)
-  return(pred)
-}
-
-# alternative to loo_pred_glmnet
-# does loocv cross validation on each fit (With n-1 obs) and returns the fit. 
-  #leads to n different lambda.mins. idea is to compare fits to see how similar they are
-loo_cvfit_glmnet <- function(index, features, labels, alpha, penalize_age_gender = TRUE, family = 'binomial'){
-  #features and label, leaving out one observation for training
-  loo_features <- features[-index,]
-  loo_labels <- labels[-index]
-  
-  #features and labels on the held out observation
-  
-  new_features <- features[index,] %>% matrix(nrow = 1, dimnames = list('', colnames(loo_features) ))
-  new_label <- labels[index]
-  
-  
-  #fit on n-1
-  #note that this does cv, so we will have n lambda.mins
-  fit <- fit_glmnet(loo_features, loo_labels, family = family, alpha = alpha, penalize_age_gender = penalize_age_gender)
-  
-  #predict on 1
-  pred <- predict(fit, newx = new_features, type = 'response', s = 'lambda.min')
-  return(list(fit, pred))
-}
-
-
-
-#function to return fpr, tpr given prediction and true label
-  #label ordering goes c(negative class, positive class)
-fpr_tpr <- function(pred, label, label_ordering = NULL){
-  rocpred <- ROCR::prediction(pred, label, label.ordering = label_ordering)
-  rocfpr_tpr <- ROCR::performance(rocpred, measure = 'tpr', x.measure = 'fpr')
-  rocauc <- ROCR::performance(rocpred, measure = 'auc')
-  return(tibble(fpr = deframe(rocfpr_tpr@x.values), 
-                tpr = deframe(rocfpr_tpr@y.values),
-                auc = as.numeric(rocauc@y.values)))
-}
-
-## get idea of variable importance. note that this relies on our variables being standardized before 
-# also glmnet doesn't give us a good idea of standard error because it fits using coord descent (algorithmic, not statistical)
-# to fix, maybe refit model in glm?
-# numbers are not on any kind of scale, but give some idea of relative importance\
-#metabolites is a flag for determining whether we need to map names to their metabolite name.
-importance <- function(fit, metabolites = TRUE){
-  coefficients <- coef(fit, s = 'lambda.min') %>% 
-    as.matrix
-  #order the coefficients for weak measure of importance, and remove coefs with 0 coeff
-  #coefficients_sorted <- coefficients[order(abs(coefficients), decreasing = TRUE) & abs(coefficients) > 0,]
-  coefficients_sorted_with_zeroes <- coefficients[order(abs(coefficients), decreasing = TRUE),]
-  coefficients_sorted <- coefficients_sorted_with_zeroes[coefficients_sorted_with_zeroes != 0]
-  
-  
-  if(metabolites == TRUE){
-    #map metabolites to their names. keep the names of gender and age, since they aren't metabolites
-    names(coefficients_sorted) <- if_else(names(coefficients_sorted) %in% c('Age', 'GenderM', 'TypeCM', 'TypeCO', 'TypeCY', 'TypePD'),
-                                          names(coefficients_sorted), 
-                                          str_replace_all(names(coefficients_sorted), ' Result.*', "") %>%
-                                            str_replace_all('`', '') %>%
-                                            str_replace_all('\\\\', '') %>%
-                                            sapply(function(x) all_matches[match(x, all_matches$Name), 'Metabolite'] %>% deframe))
-  }
-  
-  return(coefficients_sorted)
-  
-}
-
-
-#get the types in our dataset (ie AD, PD, CO, ..)
-all_types <- wide_data$Type %>% 
-  unique %>%
-  as.character
-
-# #impute all types using amelia for an example
-#   #Y holds features (keeping with prior notation), labels holds type
-# imputed_all <- filter_and_impute(wide_data,all_types)
-# imputed_all_Y <- imputed_all[[1]]
-# imputed_all_labels <- imputed_all[[2]] 
+source('analysis/starter.R')
 
 
 ############################
@@ -330,7 +84,7 @@ importance_pd_co_list <- lapply(fit_pd_co_list, function(x) importance(x))
 #write one to csv
 #choice of 6th element (ie alpha = .5) is mostly arbitrary.
   #normally, between 30-50 predictors are significant, this one has 40.
-importance_pd_co_list[[6]] %>% 
+importance_pd_co_list[[8]] %>% 
   enframe(name = 'metabolite', value= 'coefficient') %>% 
   filter(!is.na(metabolite)) %T>%  #na metabolite is the intercept 
   write_csv(path = 'gotms_glmnet.5_predictors.csv')
@@ -345,7 +99,8 @@ roc_pd_co_list <- lapply(pred_pd_co_list, function(x) fpr_tpr(x, imputed_pd_co_l
 #plot for all alphas
 ggplot(roc_pd_co_list, mapping = aes(fpr, tpr, color = alpha))+ 
   geom_line() + 
-  labs(title = 'ROC: PD vs CO')
+  labs(title = 'ROC: PD vs CO',
+       subtitle = 'GOT')
 
 #look at auc's for each alpha
 roc_pd_co_list %>% 
@@ -360,6 +115,7 @@ roc_pd_co_list %>%
 ############################
 
 ### {AD, PD} vs CO ###
+## With Age/Gender Penalty ##
 
 ############################
 
@@ -387,6 +143,11 @@ pred_adpd_co_list <- lapply(fit_adpd_co_list,
 #some measure of variable importance
 importance_adpd_co_list <- lapply(fit_adpd_co_list, function(x) importance(x))
 
+importance_adpd_co_list[[7]] %>% 
+  enframe(name = 'metabolite', value= 'coefficient') %>% 
+  filter(!is.na(metabolite))  #na metabolite is the intercept 
+  
+
 #roc for each of the alphas
 #TODO: look into why we have flipped positive and negative classes here.
 roc_adpd_co_list <- lapply(pred_adpd_co_list, function(x) fpr_tpr(x, imputed_adpd_co_labels, label_ordering = c('D', 'CO'))) %>%
@@ -399,11 +160,12 @@ roc_adpd_co_list <- lapply(pred_adpd_co_list, function(x) fpr_tpr(x, imputed_adp
   #note: tpr and fpr are switched because the roc curve was going the wrong way
 ggplot(roc_adpd_co_list, mapping = aes(fpr, tpr, color = alpha))+ 
   geom_line() + 
-  labs(title = 'ROC, {AD,PD} vs CO')
+  labs(title = 'ROC, {AD,PD} vs CO',
+       subtitle = 'GOT, with age/gender penalty')
 
 #look at auc for each alpha. need to do (1- auc) to show the flip
 roc_adpd_co_list %>% 
-  mutate(auc = 1 - auc) %>%
+  #mutate(auc = 1 - auc) %>%
   group_by(alpha) %>%
   slice(1) %>%
   select(alpha, auc)
@@ -418,6 +180,162 @@ rocperf_adpd_co_ridge <- ROCR::performance(rocpred_adpd_co_ridge, measure = 'tpr
 # todo: look into https://www.ggplot2-exts.org/plotROC.html
 plot(rocperf_adpd_co_ridge)
 abline(a = 0, b = 1, lty= 2)
+
+
+
+
+############################
+
+### {AD, PD} vs CO ###
+## no Age/Gender Penalty ##
+
+############################
+
+#fit models with each of the alphas
+fit_adpd_co_no_penalty_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_adpd_co_y, imputed_adpd_co_labels, alpha = x, penalize_age_gender = FALSE))
+
+pred_adpd_co_no_penalty_list <- lapply(fit_adpd_co_no_penalty_list, 
+                            function(x) predict(x, newx = imputed_adpd_co_y, 
+                                                type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_adpd_co_no_penalty_list <- lapply(fit_adpd_co_no_penalty_list, function(x) importance(x))
+
+importance_adpd_co_no_penalty_list[[8]] %>% 
+  enframe(name = 'metabolite', value= 'coefficient') %>% 
+  filter(!is.na(metabolite))  #na metabolite is the intercept 
+
+
+#roc for each of the alphas
+#TODO: look into why we have flipped positive and negative classes here.
+roc_adpd_co_no_penalty_list <- lapply(pred_adpd_co_no_penalty_list, function(x) fpr_tpr(x, imputed_adpd_co_labels, label_ordering = c('D', 'CO'))) %>%
+  bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
+  mutate(alpha  = seq(0,1,.1) %>%
+           rep(each = length(imputed_adpd_co_labels) + 1) %>%
+           as.factor)
+
+#plot for all alphas
+#note: tpr and fpr are switched because the roc curve was going the wrong way
+ggplot(roc_adpd_co_no_penalty_list, mapping = aes(fpr, tpr, color = alpha))+ 
+  geom_line() + 
+  labs(title = 'ROC, {AD,PD} vs CO',
+       subtitle = 'GOT, without age/gender penalty')
+
+#look at auc for each alpha. need to do (1- auc) to show the flip
+roc_adpd_co_no_penalty_list %>% 
+  #mutate(auc = 1 - auc) %>%
+  group_by(alpha) %>%
+  slice(1) %>%
+  select(alpha, auc)
+
+
+
+############################
+
+### {AD, PD} vs CO ###
+## no Age/Gender Penalty, rawScaled ##
+
+############################
+
+#imputation
+imputed_adpd_co_rawScaled <- filter_and_impute(wide_data_rawscaled,c('AD', 'PD', 'CO'))
+#features
+imputed_adpd_co_rawScaled_y <- imputed_adpd_co_rawScaled[[1]]
+#Group AD, PD into D (for diseased)
+imputed_adpd_co_rawScaled_labels <- imputed_adpd_co_rawScaled[[2]] %>% 
+  fct_collapse(D = c('AD', 'PD'))
+
+
+#fit models with each of the alphas
+fit_adpd_co_no_penalty_rawScaled_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_adpd_co_rawScaled_y, imputed_adpd_co_rawScaled_labels, alpha = x, penalize_age_gender = FALSE))
+
+pred_adpd_co_no_penalty_rawScaled_list <- lapply(fit_adpd_co_no_penalty_rawScaled_list, 
+                                       function(x) predict(x, newx = imputed_adpd_co_rawScaled_y, 
+                                                           type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_adpd_co_no_penalty_rawScaled_list <- lapply(fit_adpd_co_no_penalty_rawScaled_list, function(x) importance(x))
+
+importance_adpd_co_no_penalty_rawScaled_list[[5]] %>% 
+  enframe(name = 'metabolite', value= 'coefficient') %>% 
+  filter(!is.na(metabolite))  #na metabolite is the intercept 
+
+
+#roc for each of the alphas
+#TODO: look into why we have flipped positive and negative classes here.
+roc_adpd_co_no_penalty_rawScaled_list <- lapply(pred_adpd_co_no_penalty_rawScaled_list, function(x) fpr_tpr(x, imputed_adpd_co_rawScaled_labels, label_ordering = c('D', 'CO'))) %>%
+  bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
+  mutate(alpha  = seq(0,1,.1) %>%
+           rep(each = length(imputed_adpd_co_rawScaled_labels) + 1) %>%
+           as.factor)
+
+#plot for all alphas
+#note: tpr and fpr are switched because the roc curve was going the wrong way
+ggplot(roc_adpd_co_no_penalty_rawScaled_list, mapping = aes(fpr, tpr, color = alpha))+ 
+  geom_line() + 
+  labs(title = 'ROC, {AD,PD} vs CO',
+       subtitle = 'GOT, without age/gender penalty, rawScaled')
+
+#look at auc for each alpha. need to do (1- auc) to show the flip
+roc_adpd_co_no_penalty_rawScaled_list %>% 
+  #mutate(auc = 1 - auc) %>%
+  group_by(alpha) %>%
+  slice(1) %>%
+  select(alpha, auc)
+
+
+
+
+############################
+
+### {AD, PD} vs CO ###
+## no Age/Gender Penalty, Raw ##
+
+############################
+
+#imputation
+imputed_adpd_co_raw <- filter_and_impute(wide_data_raw,c('AD', 'PD', 'CO'))
+#features
+imputed_adpd_co_raw_y <- imputed_adpd_co_raw[[1]]
+#Group AD, PD into D (for diseased)
+imputed_adpd_co_raw_labels <- imputed_adpd_co_raw[[2]] %>% 
+  fct_collapse(D = c('AD', 'PD'))
+
+
+#fit models with each of the alphas
+fit_adpd_co_no_penalty_raw_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_adpd_co_raw_y, imputed_adpd_co_raw_labels, alpha = x, penalize_age_gender = FALSE))
+
+pred_adpd_co_no_penalty_raw_list <- lapply(fit_adpd_co_no_penalty_raw_list, 
+                                                 function(x) predict(x, newx = imputed_adpd_co_raw_y, 
+                                                                     type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_adpd_co_no_penalty_raw_list <- lapply(fit_adpd_co_no_penalty_raw_list, function(x) importance(x))
+
+importance_adpd_co_no_penalty_raw_list[[5]] %>% 
+  enframe(name = 'metabolite', value= 'coefficient') %>% 
+  filter(!is.na(metabolite))  #na metabolite is the intercept 
+
+
+#roc for each of the alphas
+#TODO: look into why we have flipped positive and negative classes here.
+roc_adpd_co_no_penalty_raw_list <- lapply(pred_adpd_co_no_penalty_raw_list, function(x) fpr_tpr(x, imputed_adpd_co_raw_labels, label_ordering = c('D', 'CO'))) %>%
+  bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
+  mutate(alpha  = seq(0,1,.1) %>%
+           rep(each = length(imputed_adpd_co_raw_labels) + 1) %>%
+           as.factor)
+
+#plot for all alphas
+#note: tpr and fpr are switched because the roc curve was going the wrong way
+ggplot(roc_adpd_co_no_penalty_raw_list, mapping = aes(fpr, tpr, color = alpha))+ 
+  geom_line() + 
+  labs(title = 'ROC, {AD,PD} vs CO',
+       subtitle = 'GOT, without age/gender penalty, raw')
+
+#look at auc for each alpha. need to do (1- auc) to show the flip
+roc_adpd_co_no_penalty_raw_list %>% 
+  #mutate(auc = 1 - auc) %>%
+  group_by(alpha) %>%
+  slice(1) %>%
+  select(alpha, auc)
+
 
 
 
@@ -534,6 +452,11 @@ pred_pd_c_list <- lapply(fit_pd_c_list,
 #some measure of variable importance
 importance_pd_c_list <- lapply(fit_pd_c_list, function(x) importance(x))
 
+importance_pd_c_list[[8]] %>% 
+  enframe(name = 'metabolite', value= 'coefficient') %>% 
+  filter(!is.na(metabolite))  #na metabolite is the intercept 
+
+
 #roc for each of the alphas
 roc_pd_c_list <- lapply(pred_pd_c_list, function(x) fpr_tpr(x, imputed_pd_c_labels)) %>%
   bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
@@ -546,7 +469,7 @@ roc_pd_c_list <- lapply(pred_pd_c_list, function(x) fpr_tpr(x, imputed_pd_c_labe
 ggplot(roc_pd_c_list, mapping = aes(fpr, tpr, color = alpha))+ 
   geom_line() + 
   labs(title = 'ROC, PD vs {CO, CM, CY}',
-       subtitle = 'With Age, Gender Penalty')
+       subtitle = 'GOT, With Age, Gender Penalty')
 ggsave('roc_pd_c_with_penalty.png')
 
 
@@ -578,6 +501,12 @@ pred_pd_c_list_no_penalty <- lapply(fit_pd_c_list_no_penalty,
                                              type = 'response', s = 'lambda.min'))
 #some measure of variable importance
 importance_pd_c_list_no_penalty <- lapply(fit_pd_c_list_no_penalty, function(x) importance(x))
+
+
+importance_pd_c_list_no_penalty[[7]] %>% 
+  enframe(name = 'metabolite', value= 'coefficient') %>% 
+  filter(!is.na(metabolite))  #na metabolite is the intercept 
+
 
 #roc for each of the alphas
 roc_pd_c_list_no_penalty <- lapply(pred_pd_c_list_no_penalty, function(x) fpr_tpr(x, imputed_pd_c_labels)) %>%
@@ -625,7 +554,7 @@ ggplot(roc_loo_pd_c_half) +
   geom_abline(intercept = 0, slope = 1, linetype = 2) + 
   theme_minimal() + 
   labs(title = "ROC: PD vs C",
-       subtitle = TeX('Metabolites,$\\alpha = 0.5$, loo'),
+       subtitle = TeX('GOT,$\\alpha = 0.5$, loo, using min lambda'),
        x = 'False Positive Rate',
        y = 'True Positive Rate') + 
   geom_text(x = 0.9, y = 0,label = paste0('AUC:', roc_loo_pd_c_half$auc[1])) #auc is the same for every row in the df
@@ -664,11 +593,11 @@ ggplot(roc_loocv_pd_c_half) +
   geom_abline(intercept = 0, slope = 1, linetype = 2) + 
   theme_minimal() + 
   labs(title = "ROC: PD vs C",
-       subtitle = TeX('Metabolites,$\\alpha = 0.5$, loo'),
+       subtitle = TeX('GOT,$\\alpha = 0.5$, loo fits'),
        x = 'False Positive Rate',
        y = 'True Positive Rate') + 
   geom_text(x = 0.9, y = 0,label = paste0('AUC:', roc_loocv_pd_c_half$auc[1])) #auc is the same for every row in the df
-ggsave('roc_pd_c_loo.png')
+ggsave('roc_pd_c_loo_fits.png')
 
 
 
@@ -711,7 +640,7 @@ roc_pd_c_list_no_penalty_split <- lapply(pred_pd_c_list_no_penalty_split, functi
 ggplot(roc_pd_c_list_no_penalty_split, mapping = aes(fpr, tpr, color = alpha))+ 
   geom_line() + 
   labs(title = 'ROC, PD vs {CO, CM, CY}',
-       subtitle = 'No Age, Gender Penalty')
+       subtitle = 'GOT, No Age, Gender Penalty, 80/20 train/test')
 ggsave('roc_pd_c_no_penalty_split.png')
 
 #look at auc for each alpha.
@@ -735,15 +664,6 @@ roc_pd_c_list_no_penalty_split %>%
 
 ############################
 
-
-wide_data_rawscaled <- subject_data %>%     
-  filter(!(Type %in% c("Other"))) %>%
-  unite("Metabolite", c("Metabolite", "Mode")) %>% 
-  mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
-  dplyr::select(-one_of("Raw", "Abundance", "Trend",
-                        "RunIndex", "Name","Data File")) %>%
-  spread(key=Metabolite, value=RawScaled)
-
 imputed_pd_c_rawscaled <- filter_and_impute(wide_data_rawscaled, c('PD', 'CO', 'CM', 'CY'))
 imputed_pd_c_y_rawscaled <- imputed_pd_c_rawscaled[[1]]
 #Group AD, PD into D (for diseased)
@@ -760,6 +680,11 @@ pred_pd_c_list_no_penalty_rawscaled <- lapply(fit_pd_c_list_no_penalty_rawscaled
                                                         type = 'response', s = 'lambda.min'))
 #some measure of variable importance
 importance_pd_c_list_no_penalty_rawscaled <- lapply(fit_pd_c_list_no_penalty_rawscaled, function(x) importance(x))
+
+importance_pd_c_list_no_penalty_rawscaled[[8]] %>% 
+  enframe(name = 'metabolite', value= 'coefficient') %>% 
+  filter(!is.na(metabolite))  #na metabolite is the intercept 
+
 
 #roc for each of the alphas
 roc_pd_c_list_no_penalty_rawscaled <- lapply(pred_pd_c_list_no_penalty_rawscaled, function(x) fpr_tpr(x, imputed_pd_c_labels_rawscaled)) %>%
@@ -792,13 +717,6 @@ roc_pd_c_list_no_penalty_rawscaled %>%
 
 ############################
 
-wide_data_raw <- subject_data %>%     
-  filter(!(Type %in% c("Other"))) %>%
-  unite("Metabolite", c("Metabolite", "Mode")) %>% 
-  mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
-  dplyr::select(-one_of("RawScaled", "Abundance", "Trend",
-                        "RunIndex", "Name","Data File")) %>%
-  spread(key=Metabolite, value=Raw)
 
 imputed_pd_c_raw <- filter_and_impute(wide_data_raw, c('PD', 'CO', 'CM', 'CY'))
 imputed_pd_c_y_raw <- imputed_pd_c_raw[[1]]
@@ -815,6 +733,11 @@ pred_pd_c_list_no_penalty_raw <- lapply(fit_pd_c_list_no_penalty_raw,
 #some measure of variable importance
 importance_pd_c_list_no_penalty_raw <- lapply(fit_pd_c_list_no_penalty_raw, function(x) importance(x))
 
+importance_pd_c_list_no_penalty_rawscaled[[8]] %>% 
+  enframe(name = 'metabolite', value= 'coefficient') %>% 
+  filter(!is.na(metabolite))  #na metabolite is the intercept 
+
+ 
 #roc for each of the alphas
 roc_pd_c_list_no_penalty_raw <- lapply(pred_pd_c_list_no_penalty_raw, function(x) fpr_tpr(x, imputed_pd_c_labels)) %>%
   bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
@@ -827,7 +750,7 @@ roc_pd_c_list_no_penalty_raw <- lapply(pred_pd_c_list_no_penalty_raw, function(x
 ggplot(roc_pd_c_list_no_penalty_raw, mapping = aes(fpr, tpr, color = alpha))+ 
   geom_line() + 
   labs(title = 'ROC, PD vs {CO, CM, CY}',
-       subtitle = 'No Age, Gender Penalty, Raw')
+       subtitle = 'GOT, No Age, Gender Penalty, Raw')
 ggsave('roc_pd_c_no_penalty_raw.png')
 
 #look at auc for each alpha.

@@ -1,4 +1,4 @@
-source('analysis/gotms_glmnet.R')
+source('analysis/starter.R')
 
 
 #### START LIPIDS ONLY ANALYSIS ####
@@ -7,17 +7,6 @@ source('analysis/gotms_glmnet.R')
 # load(max(file.path(data_path, processed_files_lipids[grep("-20+", processed_files_lipids)])))
 
 
-processed_files_lipids <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_lipid_data*")
-## Most recent file
-load(max(file.path(data_path, 'analysis', processed_files_lipids[grep("-20+", processed_files_lipids)])))
-
-
-
-wide_data_lipids <- subject_data %>%     
-  filter(!(Type %in% c("Other"))) %>%
-  mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
-  dplyr::select(-one_of("Raw", "RawScaled", "Trend", "Name", "Mode", "RunIndex")) %>%
-  spread(key=Lipid, value=Abundance)
 
 
 ############################
@@ -61,7 +50,7 @@ ggplot(roc_pd_co_half_lipids) +
   geom_abline(intercept = 0, slope = 1, linetype = 2) + 
   theme_minimal() + 
   labs(title = "ROC: PD vs CO",
-       subtitle = TeX('$\\alpha = 0.5$'),
+       subtitle = TeX('Lipids, $\\alpha = 0.5$'),
        x = 'False Positive Rate',
        y = 'True Positive Rate')
 ggsave(filename = 'gotms_roc_pdco.png')
@@ -85,7 +74,7 @@ importance_pd_co_list_lipids <- lapply(fit_pd_co_list_lipids, function(x) import
 #write one to csv
 #choice of 8th element (ie alpha = .7) is mostly arbitrary.
 #normally, between 15-30 predictors are significant.
-importance_pd_co_list_lipids[[8]] %>% 
+importance_pd_co_list_lipids[[6]] %>% 
   enframe(name = 'lipid', value= 'coefficient') %>% 
   filter(lipid != '(Intercept)') %T>%
   #arrange(desc(coefficient)) %T>% 
@@ -149,6 +138,9 @@ pred_carrier_pd_list <- lapply(fit_carrier_pd_list,
                                                 type = 'response', s = 'lambda.min'))
 #some measure of variable importance
 importance_carrier_pd_list <- lapply(fit_carrier_pd_list, function(x) importance(x, metabolites = FALSE))
+importance_carrier_pd_list[[7]] %>% 
+  enframe(name = 'lipid', value= 'coefficient') %>% 
+  filter(lipid != '(Intercept)')
 
 #roc for each of the alphas
 #note: both alpha = 0 and alpha = 1 give constant prediction probability for all observations
@@ -207,6 +199,11 @@ pred_carrier_pd_comb_list <- lapply(fit_carrier_pd_comb_list,
 #some measure of variable importance
 importance_carrier_pd_comb_list <- lapply(fit_carrier_pd_comb_list, function(x) importance(x, metabolites = FALSE))
 
+importance_carrier_pd_comb_list[[5]] %>% 
+  enframe(name = 'lipid', value= 'coefficient') %>% 
+  filter(lipid != '(Intercept)')
+
+
 #roc for each of the alphas
 #note: both alpha = 0 and alpha = 1 give constant prediction probability for all observations
 #something is probably wrong with the code, need to look at it.
@@ -234,5 +231,68 @@ roc_carrier_pd_comb_list %>%
 data.frame(pred = ifelse(pred_carrier_pd_comb_list[[5]] > .5, 'Non-Carrier', 'Carrier'), 
            truth = imputed_pd_comb_gba) %>% 
   table
+
+
+
+
+############################
+
+### PD vs C ###
+## {Lipids, GOT} ##
+
+############################
+
+imputed_pd_c_comb <- filter_and_impute(wide_data_combined, c('PD', 'CO', 'CM', 'CY'))
+imputed_pd_c_comb_y <- imputed_pd_c_comb[[1]]
+#Group AD, PD into D (for diseased)
+imputed_pd_c_comb_labels <- imputed_pd_c_comb[[2]] %>% 
+  fct_collapse(C = c('CO', 'CM', 'CY'))
+
+# #write the dataset used to csv if imputation takes a long time
+# imputed_adpd_co_y %>% 
+#   as.data.frame() %>%
+#   mutate(Type = imputed_adpd_co_labels) %>%
+#   write_csv(path = 'gotms_imputed_adpd_co.csv')
+
+
+## First try with age/gender penalty
+
+#fit models with each of the alphas
+fit_pd_c_comb_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_comb_y, imputed_pd_c_comb_labels, alpha = x, penalize_age_gender = FALSE))
+
+pred_pd_c_comb_list <- lapply(fit_pd_c_comb_list, 
+                         function(x) predict(x, newx = imputed_pd_c_comb_y, 
+                                             type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_pd_c_comb_list <- lapply(fit_pd_c_comb_list, function(x) importance(x))
+
+importance_pd_c_comb_list[[7]] %>% 
+  enframe(name = 'metabolite', value= 'coefficient') %>% 
+  filter(!is.na(metabolite))  #na metabolite is the intercept 
+
+
+#roc for each of the alphas
+roc_pd_c_comb_list <- lapply(pred_pd_c_comb_list, function(x) fpr_tpr(x, imputed_pd_c_comb_labels)) %>%
+  bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
+  mutate(alpha  = seq(0,1,.1) %>%
+           rep(each = length(imputed_pd_c_comb_labels) + 1) %>%
+           as.factor)
+
+#plot for all alphas
+#note: tpr and fpr are switched because the roc curve was going the wrong way
+ggplot(roc_pd_c_comb_list, mapping = aes(fpr, tpr, color = alpha))+ 
+  geom_line() + 
+  labs(title = 'ROC, PD vs {CO, CM, CY}',
+       subtitle = 'GOT + Lipids, no Age, Gender Penalty')
+ggsave('roc_pd_c_comb.png')
+
+
+#look at auc for each alpha.
+roc_pd_c_comb_list %>% 
+  group_by(alpha) %>%
+  slice(1) %>%
+  select(alpha, auc)
+
+
 
 

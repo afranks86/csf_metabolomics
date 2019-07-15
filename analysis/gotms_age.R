@@ -1,7 +1,15 @@
-source('analysis/gotms_glmnet.R')
+source('analysis/starter.R')
 
 ### Start AGE analysis ###
 ## use previously created imputation for total dataset
+#impute all types using amelia for an example
+  #Y holds features (keeping with prior notation), labels holds type
+imputed_all <- filter_and_impute(wide_data,all_types)
+imputed_all_Y <- imputed_all[[1]]
+imputed_all_labels <- imputed_all[[2]]
+
+
+
 imputed_all_age <- imputed_all_Y[,'Age']
 # readd type as a feature in this analysis
 imputed_all_features_age_tmp <- imputed_all_Y %>% 
@@ -30,14 +38,22 @@ importance_age_ridge <- importance(fit_age_ridge)
 
 
 #now try with list of multiple alphas
-fit_age_list <- lapply(seq(0,1,.1), function(x) cv.glmnet(imputed_all_features_age, imputed_all_age, family = 'gaussian', 
-                                                          type.measure = 'mse', nfolds = nrow(imputed_all_features_age),
-                                                          foldid = foldid, alpha = x, standardize = TRUE))
+fit_age_list <- lapply(seq(0,1,.1), function(x) fit_glmnet(imputed_all_features_age, imputed_all_age, family = 'gaussian', alpha = x, penalize_age_gender = FALSE))
+# fit_age_list <- lapply(seq(0,1,.1), function(x) cv.glmnet(imputed_all_features_age, imputed_all_age, family = 'gaussian', 
+#                                                           type.measure = 'mse', nfolds = nrow(imputed_all_features_age),
+#                                                           foldid = foldid, alpha = x, standardize = TRUE))
 pred_age_list <- lapply(fit_age_list, 
                         function(x) predict(x, newx = imputed_all_features_age, 
                                             type = 'response', s = 'lambda.min'))
 #some measure of variable importance
 importance_age_list <- lapply(fit_age_list, function(x) importance(x))
+
+
+importance_adpd_co_list[[6]] %>% 
+  enframe(name = 'metabolite', value= 'coefficient') %>% 
+  filter(!is.na(metabolite))  #na metabolite is the intercept 
+
+
 
 mse_age_list <- lapply(pred_age_list, function(x) mean((x - imputed_all_age)^2))
 
@@ -73,5 +89,26 @@ loo_pred_8 <- sapply(foldid, function(x) loo_pred_glmnet(lambda = fit_age_list[[
   #how to do standard error if df > n? i do rmse instead 
 rmse_loo_pred_8 <- (sum((loo_pred_8 - imputed_all_age)^2) / length(imputed_all_age)) %>% sqrt
 
+
+
+
+
+
+
+
+#effective degrees
+
+
+
+
+
+
+
+
 ### End AGE analysis ###
+
+
+
+
+
 
