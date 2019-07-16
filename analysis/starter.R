@@ -359,3 +359,36 @@ importance <- function(fit, metabolites = TRUE){
 all_types <- wide_data$Type %>% 
     unique %>%
     as.character
+
+
+
+#######################################
+
+### Creating matched PD CO dataset ###
+
+#######################################
+
+
+wide_data_pd <- wide_data %>% 
+    filter(Type == 'PD')
+
+wide_data_control <- wide_data %>%
+    filter(Type %in% c('CO', 'CY', 'CM'))
+
+test_row <- wide_data_pd[1,]
+
+
+
+wide_data_control %>%
+    filter(Gender == test_row$Gender) %>%
+    filter(abs(Age - test_row$Age) == min(abs(Age - test_row$Age))) %>%
+    filter(abs(Batch - test_row$Batch) == max(abs(Batch - test_row$Batch)))
+
+
+
+
+wide_data_pd %>% 
+    rowwise() %>%
+    sapply(function(x) wide_data_control[Gender = x[Gender],]
+
+
