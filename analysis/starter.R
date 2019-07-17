@@ -184,28 +184,25 @@ set.seed(1)
 filter_and_impute <- function(data, types){
     ## Impute missing values
     filtered <- data %>%
-        filter(Type %in% types) %>%
-        #remove columns that are ALL NA
-        select_if(function(x) any(!is.na(x)))
+        filter(Type %in% types)
     
     #drop unused levels
     type <- filtered$Type %>%
         droplevels
     
-    #keep gba for potential gba analysis
-    gba <- filtered %>%
-        mutate(GBAStatus = as.factor(case_when(GBA_T369M == 'CT' ~ 'CT', 
-                                               TRUE ~ GBAStatus))) %>%
-        select(GBAStatus) %>%
-        deframe
+    apoe <- filtered$APOE %>%
+        droplevels
     
-    
-    
-    Y <- filtered %>% 
-        dplyr::select(-one_of("Type", "Type2", "Gender", "Age", "APOE", "Batch",
+    filtered_features <- filtered %>%
+        dplyr::select(-one_of("Type2", "Type", "Gender", "Age", "APOE", "Batch",
                               #"Data File",  (not found in dataset, so removed)
                               "Index", "GBAStatus", "Id",
-                              "GBA_T369M", "cognitive_status")) %>%
+                              "GBA_T369M", "cognitive_status"))
+        
+
+    Y <- filtered_features %>% 
+        #remove columns that are ALL NA
+        select_if(function(x) any(!is.na(x))) %>%
         as.matrix()
     Y[Y==0] <- NA
     
@@ -222,9 +219,19 @@ filter_and_impute <- function(data, types){
     Y <- Y_tmp[,-1]
     
     
+    #keep gba for potential gba analysis. GBA is only non-NA for PD
+    if('PD' %in% types){
+        gba <- filtered %>%
+            mutate(GBAStatus = as.factor(case_when(GBA_T369M == 'CT' ~ 'CT', 
+                                                   TRUE ~ GBAStatus))) %>%
+            select(GBAStatus) %>%
+            deframe
+        
+        return(list(Y, type, apoe,gba))
+    }
+    return(list(Y, type, apoe))
     
     
-    return(list(Y, type, gba))
 }
 
 #does loocv for logistic regression, using deviance loss by default (check?), eval at different elastic net alphas
@@ -387,8 +394,8 @@ wide_data_control %>%
 
 
 
-wide_data_pd %>% 
-    rowwise() %>%
-    sapply(function(x) wide_data_control[Gender = x[Gender],]
+# wide_data_pd %>% 
+#     rowwise() %>%
+#     sapply(function(x) wide_data_control[Gender = x[Gender],]
 
 

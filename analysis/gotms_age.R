@@ -4,9 +4,10 @@ source('analysis/starter.R')
 ## use previously created imputation for total dataset
 #impute all types using amelia for an example
   #Y holds features (keeping with prior notation), labels holds type
-imputed_all <- filter_and_impute(wide_data,all_types)
+imputed_all <- filter_and_impute(wide_data,c('CO', 'CY', 'CM'))
 imputed_all_Y <- imputed_all[[1]]
 imputed_all_labels <- imputed_all[[2]]
+imputed_all_apoe <- imputed_all[[3]]
 
 
 
@@ -14,7 +15,7 @@ imputed_all_age <- imputed_all_Y[,'Age']
 # readd type as a feature in this analysis
 imputed_all_features_age_tmp <- imputed_all_Y %>% 
   as_tibble %>%
-  mutate(Type = imputed_all_labels) %>%
+  #mutate(Type = imputed_all_labels) %>%
   select(-Age)
 
 #turn type into a dummy var (multiple columns. AD is the redundant column (chosen))
@@ -58,7 +59,7 @@ importance_adpd_co_list[[6]] %>%
 mse_age_list <- lapply(pred_age_list, function(x) mean((x - imputed_all_age)^2))
 
 #which has lowest mse?
-  #it's lasso, which is not what we want.
+  #it's alpha = 0.8, but same for .7, .6
 which.min(mse_age_list)
 
 residuals_age_list <- lapply(pred_age_list, function(x) x - imputed_all_age)
@@ -78,6 +79,33 @@ hist(resid_9)
 
 qqnorm(resid_9)
 qqline(resid_9)
+
+
+
+
+### look at alpha = 0.3
+age_table_3 <- tibble(truth = imputed_all_age, 
+                               pred = as.numeric(pred_age_list[[4]]),
+                               resid = truth - pred,
+                               apoe = imputed_all_apoe,
+                               type = imputed_all_labels
+)
+
+ggplot(age_table_3) + 
+  geom_point(aes(truth, resid, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: Age vs Residuals',
+       subtitle = 'GOT, Residuals = Truth - Pred, alpha = 0.7',
+       x = 'True Age',
+       y = 'Predicted Age') #+ 
+#stat_ellipse(data = filter(age_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
+#stat_ellipse(data = filter(age_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
+
+
+
+
+
+res_7 <- residuals_age_list[[8]]
 
 
 
@@ -112,3 +140,108 @@ rmse_loo_pred_8 <- (sum((loo_pred_8 - imputed_all_age)^2) / length(imputed_all_a
 
 
 
+
+
+
+
+
+
+
+
+
+
+### Combined analysis
+set.seed(1)
+imputed_all_combined <- filter_and_impute(wide_data_combined,c('CO', 'CM', 'CY'))
+imputed_all_combined_Y <- imputed_all_combined[[1]]
+imputed_all_combined_labels <- imputed_all_combined[[2]]
+imputed_all_combined_apoe <- imputed_all_combined[[3]]
+
+
+
+imputed_all_combined_age <- imputed_all_combined_Y[,'Age']
+# readd type as a feature in this analysis
+imputed_all_features_combined_age_tmp <- imputed_all_combined_Y %>% 
+  as_tibble %>%
+  #mutate(Type = imputed_all_combined_labels) %>%
+  select(-Age)
+
+#turn type into a dummy var (multiple columns. AD is the redundant column (chosen))
+imputed_all_features_combined_age_tmp<- model.matrix(~., imputed_all_features_combined_age_tmp)
+#remove intercept column created by model.matrix
+imputed_all_features_combined_age <- imputed_all_features_combined_age_tmp[,-1]
+
+foldid <- sample(nrow(imputed_all_features_combined_age))
+
+#now try with list of multiple alphas
+fit_combined_age_list <- lapply(seq(0,1,.1), function(x) fit_glmnet(imputed_all_features_combined_age, imputed_all_combined_age, 
+                                                                    family = 'gaussian', alpha = x, penalize_age_gender = TRUE))
+# fit_age_list <- lapply(seq(0,1,.1), function(x) cv.glmnet(imputed_all_features_age, imputed_all_age, family = 'gaussian', 
+#                                                           type.measure = 'mse', nfolds = nrow(imputed_all_features_age),
+#                                                           foldid = foldid, alpha = x, standardize = TRUE))
+pred_combined_age_list <- lapply(fit_combined_age_list, 
+                        function(x) predict(x, newx = imputed_all_features_combined_age, 
+                                            type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_combined_age_list <- lapply(fit_combined_age_list, function(x) importance(x))
+
+
+
+
+mse_combined_age_list <- lapply(pred_combined_age_list, function(x) mean((x - imputed_all_combined_age)^2))
+
+#which has lowest mse?
+#it's alpha = 0.8, but same for .7, .6
+which.min(mse_combined_age_list)
+
+residuals_combined_age_list <- lapply(pred_combined_age_list, function(x) x - imputed_all_combined_age)
+
+
+#shapiro-wilkes test tests H0: data is normal
+sw_combined_age_list <- lapply(residuals_combined_age_list, function(x) (shapiro.test(x))$p.value)
+
+#performance is similar across the alphas, so let's just pick one pretty arb
+#all plots look pretty normal!
+resid_combined_3 <- residuals_combined_age_list[[4]]
+
+qplot(resid_combined_3, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.3')
+ggsave('got_lipids_age_control_resid_hist.png')
+
+
+abline(h = 0)
+
+hist(resid_combined_3)
+
+qqnorm(resid_combined_3)
+qqline(resid_combined_3)
+
+
+
+
+
+### look at alpha = 0.4
+age_combined_table_3 <- tibble(truth = imputed_all_combined_age, 
+                               pred = as.numeric(pred_combined_age_list[[4]]),
+                               resid = truth - pred,
+                               apoe = imputed_all_combined_apoe,
+                               type = imputed_all_combined_labels
+                               )
+
+ggplot(age_combined_table_3) + 
+  geom_point(aes(truth, resid, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: Age vs Residuals',
+       subtitle = 'Combined GOT and Lipid, Residuals = Truth - Pred, alpha = 0.3',
+       x = 'True Age',
+       y = 'Predicted Age') #+ 
+  #stat_ellipse(data = filter(age_combined_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
+  #stat_ellipse(data = filter(age_combined_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
+
+ggsave('got_lipids_age_control_resid.png')
+
+
+
+age_combined_table_3 %>% 
+  mutate(type = fct_relevel(type, c('CY', 'CM', 'CO'))) %>%
+  select(apoe, type) %>%
+  table %>% View

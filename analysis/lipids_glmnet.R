@@ -126,7 +126,7 @@ ggsave(filename = 'lipids_roc_pdco.png')
 
 imputed_pd <- filter_and_impute(wide_data_lipids,c('PD'))
 imputed_pd_features <- imputed_pd[[1]]
-imputed_pd_gba <- imputed_pd[[3]] %>%
+imputed_pd_gba <- imputed_pd[[4]] %>%
   fct_collapse(Carrier = c('E326K Carrier', 'Pathogenic Carrier', 'CT'))
 
 fit_carrier_pd_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_features, imputed_pd_gba, penalize_age_gender = FALSE, alpha = x))
@@ -186,7 +186,7 @@ wide_data_combined <- wide_data %>%
 
 imputed_pd_comb <- filter_and_impute(wide_data_combined,c('PD'))
 imputed_pd_comb_features <- imputed_pd_comb[[1]]
-imputed_pd_comb_gba <- imputed_pd_comb[[3]] %>%
+imputed_pd_comb_gba <- imputed_pd_comb[[4]] %>%
   fct_collapse(Carrier = c('E326K Carrier', 'Pathogenic Carrier', 'CT'))
 
 fit_carrier_pd_comb_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_comb_features, imputed_pd_comb_gba, penalize_age_gender = FALSE, alpha = x))
