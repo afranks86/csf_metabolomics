@@ -163,7 +163,7 @@ imputed_all_combined_age <- imputed_all_combined_Y[,'Age']
 # readd type as a feature in this analysis
 imputed_all_features_combined_age_tmp <- imputed_all_combined_Y %>% 
   as_tibble %>%
-  #mutate(Type = imputed_all_combined_labels) %>%
+  mutate(APOE = imputed_all_combined_apoe) %>%
   select(-Age)
 
 #turn type into a dummy var (multiple columns. AD is the redundant column (chosen))
