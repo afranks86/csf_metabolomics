@@ -285,10 +285,11 @@ age_combined_table_3 %>%
   table %>% View
 
 
-fit <- lm(pred~apoe, data = age_combined_table_3)
+fit <- lm(pred~apoe+ truth, data = age_combined_table_3)
 summary(fit)
 
-
+fit2 <- lm(pred ~ apoe, data = age_combined_table_3)
+summary(fit2)
 
 
 
@@ -441,15 +442,83 @@ set.seed(1)
 age_random_test_index <- sample(nrow(imputed_all_features_combined_age), size = floor(nrow(imputed_all_features_combined_age)*.2))
 age_y_train <- imputed_all_features_combined_age[-age_random_test_index,]
 age_label_train <- imputed_all_combined_age[-age_random_test_index]
+age_apoe_train <- imputed_all_combined_apoe[-age_random_test_index]
+
+
 age_y_test <- imputed_all_features_combined_age[age_random_test_index,]
 age_label_test <- imputed_all_combined_age[age_random_test_index]
+age_apoe_test <- imputed_all_combined_apoe[age_random_test_index]
 
-testfit <- fit_glmnet(age_y_train, age_label_train, family = 'gaussian', alpha = 0.5, penalize_age_gender = FALSE)
-pred_train <- predict(testfit, newx = age_y_train,s = 'lambda.min', type = 'response')
-pred_test <- predict(testfit, newx = age_y_test, s = 'lambda.min', type = 'response')
 
-mse_train <- mean((pred_train - age_label_train)^2)
-mse_test <- mean((pred_test - age_label_test)^2)
+fit_list_8020  <- lapply(seq(0,1,.1), function(x) fit_glmnet(age_y_train, age_label_train, family = 'gaussian', alpha = x, penalize_age_gender = FALSE))
+pred_list_80 <- lapply(fit_list_8020, 
+                                 function(x) predict(x, newx = age_y_train, 
+                                                     type = 'response', s = 'lambda.min'))
+pred_list_20 <- lapply(fit_list_8020, 
+                       function(x) predict(x, newx = age_y_test, 
+                                           type = 'response', s = 'lambda.min'))
+
+importance_list_8020 <- lapply(fit_list_8020, function(x) importance(x))
+mse_list_80 <- lapply(pred_list_80, function(x) mean((x - age_label_train)^2))
+mse_list_20 <- lapply(pred_list_20, function(x) mean((x - age_label_test)^2))
+
+#which has lowest mse?
+#it's alpha = 0.8, but same for .7, .6
+which.min(mse_list_80)
+
+residuals_list_80 <- lapply(pred_list_80, function(x) x - age_label_train)
+residuals_list_20 <- lapply(pred_list_20, function(x) x - age_label_test)
+
+#shapiro-wilkes test tests H0: data is normal
+sw_list_80 <- lapply(residuals_list_80, function(x) (shapiro.test(x))$p.value)
+sw_list_20 <- lapply(residuals_list_20, function(x) (shapiro.test(x))$p.value)
+
+#performance is similar across the alphas, so let's just pick one pretty arb
+#all plots look pretty normal!
+resid_3_80 <- residuals_list_80[[4]]
+qplot(resid_3_80, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.3')
+qqnorm(resid_3_80)
+qqline(resid_3_80)
+
+
+
+
+
+### look at alpha = 0.3
+age_table_3_80 <- tibble(truth = age_label_train, 
+                               pred = as.numeric(pred_list_80[[4]]),
+                               resid = truth - pred,
+                               apoe = age_apoe_train#,
+                               #type = imputed_all_combined_labels
+)
+
+age_table_3_20 <- tibble(truth = age_label_test,
+                         pred = as.numeric(pred_list_20[[4]]),
+                         resid = truth - pred,
+                         apoe = age_apoe_test)
+
+#Truth vs rsiduals
+ggplot(age_table_3_80) + 
+  geom_point(aes(truth, resid, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: Age vs Residuals',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.3',
+       x = 'True Age',
+       y = 'Residuals (Truth - Pred)') #+ 
+#stat_ellipse(data = filter(age_combined_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
+#stat_ellipse(data = filter(age_combined_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
+
+age_apoe_plot(age_table_3_80, 'pred', 'resid')
+age_apoe_plot(age_table_3_20, 'pred', 'resid')
+
+age_apoe_plot(age_table_3_80, 'truth', 'pred') + 
+  geom_abline(intercept = 0, slope = 1)
+age_apoe_plot(age_table_3_20, 'truth', 'pred') + 
+  geom_abline(intercept = 0, slope = 1)
+
+
+
+
 
 
 
