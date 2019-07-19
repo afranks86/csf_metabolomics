@@ -176,6 +176,8 @@ foldid <- sample(nrow(imputed_all_features_combined_age))
 #now try with list of multiple alphas
 fit_combined_age_list <- lapply(seq(0,1,.1), function(x) fit_glmnet(imputed_all_features_combined_age, imputed_all_combined_age, 
                                                                     family = 'gaussian', alpha = x, penalize_age_gender = TRUE))
+
+fit_combined_age_list
 # fit_age_list <- lapply(seq(0,1,.1), function(x) cv.glmnet(imputed_all_features_age, imputed_all_age, family = 'gaussian', 
 #                                                           type.measure = 'mse', nfolds = nrow(imputed_all_features_age),
 #                                                           foldid = foldid, alpha = x, standardize = TRUE))
@@ -227,18 +229,40 @@ age_combined_table_3 <- tibble(truth = imputed_all_combined_age,
                                type = imputed_all_combined_labels
                                )
 
+#Truth vs rsiduals
 ggplot(age_combined_table_3) + 
   geom_point(aes(truth, resid, color = apoe)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: Age vs Residuals',
-       subtitle = 'Combined GOT and Lipid, Residuals = Truth - Pred, alpha = 0.3',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.3',
        x = 'True Age',
-       y = 'Predicted Age') #+ 
+       y = 'Residuals (Truth - Pred)') #+ 
   #stat_ellipse(data = filter(age_combined_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
   #stat_ellipse(data = filter(age_combined_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
 
 ggsave('got_lipids_age_control_resid.png')
 
+
+
+#pred vs resid
+ggplot(age_combined_table_3) + 
+  geom_point(aes(pred, resid, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: Predicted Age vs Residuals',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.3',
+       x = 'Predicted Age',
+       y = 'Residuals (Truth - Pred)')
+ggsave('pred_age_residuals_control_3.png')
+
+
+ggplot(age_combined_table_3) + 
+  geom_point(aes(truth, pred, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: True vs Predicted Age',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.3',
+       x = 'True Age',
+       y = 'Predicted Age')
+ggsave('age_true_pred_controls.png')
 
 
 age_combined_table_3 %>% 
