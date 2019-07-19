@@ -305,9 +305,9 @@ loo_cvfit_glmnet <- function(index, features, labels, alpha, penalize_age_gender
     loo_features <- features[-index,]
     loo_labels <- labels[-index]
     
-    #features and labels on the held out observation
-    
-    new_features <- features[index,] %>% matrix(nrow = 1, dimnames = list('', colnames(loo_features) ))
+    #features and labels on the held out observation (converting it to the right type and giving names)
+        #ie when doing loo, length(labels) = 1
+    new_features <- features[index,] %>% matrix(nrow = length(index), dimnames = list(1:length(index), colnames(loo_features) ))
     new_label <- labels[index]
     
     

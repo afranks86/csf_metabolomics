@@ -1,6 +1,20 @@
 source('analysis/starter.R')
 
 ### Start AGE analysis ###
+
+#' helper function for scatterplot
+age_apoe_plot <- function(data, x, y){
+  ggplot(data) + 
+    geom_point(aes(!!sym(x), !!sym(y), color = apoe)) + 
+    scale_color_brewer(type = 'qual', palette = 'Set1') +
+    labs(title = paste0('Control: ', x, ' vs ', y),
+         x = x,
+         y = y)
+}
+
+
+
+
 ## use previously created imputation for total dataset
 #impute all types using amelia for an example
   #Y holds features (keeping with prior notation), labels holds type
@@ -175,7 +189,7 @@ foldid <- sample(nrow(imputed_all_features_combined_age))
 
 #now try with list of multiple alphas
 fit_combined_age_list <- lapply(seq(0,1,.1), function(x) fit_glmnet(imputed_all_features_combined_age, imputed_all_combined_age, 
-                                                                    family = 'gaussian', alpha = x, penalize_age_gender = TRUE))
+                                                                    family = 'gaussian', alpha = x, penalize_age_gender = FALSE))
 
 fit_combined_age_list
 # fit_age_list <- lapply(seq(0,1,.1), function(x) cv.glmnet(imputed_all_features_age, imputed_all_age, family = 'gaussian', 
@@ -269,3 +283,239 @@ age_combined_table_3 %>%
   mutate(type = fct_relevel(type, c('CY', 'CM', 'CO'))) %>%
   select(apoe, type) %>%
   table %>% View
+
+
+fit <- lm(pred~apoe, data = age_combined_table_3)
+summary(fit)
+
+
+
+
+
+
+
+
+
+#### Try leave one out #####
+imputed_all_combined <- filter_and_impute(wide_data_combined,c('CO', 'CM', 'CY'))
+imputed_all_combined_Y <- imputed_all_combined[[1]]
+imputed_all_combined_labels <- imputed_all_combined[[2]]
+imputed_all_combined_apoe <- imputed_all_combined[[3]]
+
+
+
+imputed_all_combined_age <- imputed_all_combined_Y[,'Age']
+# readd type as a feature in this analysis
+imputed_all_features_combined_age_tmp <- imputed_all_combined_Y %>% 
+  as_tibble %>%
+  mutate(APOE = imputed_all_combined_apoe) %>%
+  select(-Age)
+
+#turn type into a dummy var (multiple columns. AD is the redundant column (chosen))
+imputed_all_features_combined_age_tmp<- model.matrix(~., imputed_all_features_combined_age_tmp)
+#remove intercept column created by model.matrix
+imputed_all_features_combined_age <- imputed_all_features_combined_age_tmp[,-1]
+
+foldid <- sample(nrow(imputed_all_features_combined_age))
+
+#now try with alpha = 0.5
+fitpred_loo_age <- lapply(foldid, function(x) loo_cvfit_glmnet(x, imputed_all_features_combined_age, imputed_all_combined_age, 
+                                                           alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
+
+fit_loo_age <- lapply(fit_loo_age, function(x) x[[1]])
+pred_loo_age <- lapply(fit_loo_age, function(x) x[[2]]) %>%
+  unlist
+
+
+
+#some measure of variable importance
+importance_combined_age_list <- lapply(fit_combined_age_list, function(x) importance(x))
+mse_loo_age <- mean((pred_loo_age - imputed_all_combined_age)^2)
+residuals_loo_age <- pred_loo_age - imputed_all_combined_age
+
+
+shapiro.test(residuals_loo_age)
+
+qplot(residuals_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.3')
+#ggsave('got_lipids_age_control_resid_hist.png')
+qqnorm(residuals_loo_age)
+qqline(residuals_loo_age)
+
+
+### look at alpha = 0.4
+loo_age_table <- tibble(truth = imputed_all_combined_age, 
+                               pred = pred_loo_age,
+                               resid = truth - pred,
+                               apoe = imputed_all_combined_apoe,
+                               type = imputed_all_combined_labels
+)
+
+#Truth vs rsiduals
+ggplot(loo_age_table) + 
+  geom_point(aes(pred, resid, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: Age vs Residuals',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5, loo',
+       x = 'Predicted Age',
+       y = 'Residuals (Truth - Pred)') #+ 
+#stat_ellipse(data = filter(age_combined_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
+#stat_ellipse(data = filter(age_combined_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
+
+
+ggplot(loo_age_table) + 
+  geom_point(aes(truth, pred, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: True vs Predicted Age',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5, loo',
+       x = 'True Age',
+       y = 'Predicted Age')
+
+#####
+
+
+
+
+
+
+##### Results are weird, so try loo with fixed lambda
+
+#take a min lambda from one of the fits using the whole data (alpha = .6)
+lambda <- fit_combined_age_list[[7]]$lambda.min
+pred_loo_age_onelambda <- lapply(foldid, function(x) loo_pred_glmnet(lambda, x, imputed_all_features_combined_age, imputed_all_combined_age, alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE)) %>%
+  unlist
+
+
+#some measure of variable importance
+mse_loo_age_onelambda <- mean((pred_loo_age_onelambda - imputed_all_combined_age)^2)
+residuals_loo_age_onelambda <- pred_loo_age_onelambda - imputed_all_combined_age
+
+
+shapiro.test(residuals_loo_age_onelambda)
+
+qplot(residuals_loo_age_onelambda, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.5')
+#ggsave('got_lipids_age_onelambda_control_resid_hist.png')
+qqnorm(residuals_loo_age_onelambda)
+qqline(residuals_loo_age_onelambda)
+
+
+### look at alpha = 0.4
+loo_age_onelambda_table <- tibble(truth = imputed_all_combined_age, 
+                        pred = pred_loo_age_onelambda,
+                        resid = truth - pred,
+                        apoe = imputed_all_combined_apoe,
+                        type = imputed_all_combined_labels
+)
+
+#Truth vs rsiduals
+ggplot(loo_age_onelambda_table) + 
+  geom_point(aes(pred, resid, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: Age vs Residuals',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5, loo, lambda = 2.4',
+       x = 'Predicted Age',
+       y = 'Residuals (Truth - Pred)') #+ 
+#stat_ellipse(data = filter(age_onelambda_combined_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
+#stat_ellipse(data = filter(age_onelambda_combined_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
+
+
+ggplot(loo_age_onelambda_table) + 
+  geom_point(aes(truth, pred, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: True vs Predicted Age',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5, loo',
+       x = 'True Age',
+       y = 'Predicted Age')
+
+
+
+
+
+
+
+
+
+
+
+#### results are still weird so try 80/20 
+set.seed(1)
+age_random_test_index <- sample(nrow(imputed_all_features_combined_age), size = floor(nrow(imputed_all_features_combined_age)*.2))
+age_y_train <- imputed_all_features_combined_age[-age_random_test_index,]
+age_label_train <- imputed_all_combined_age[-age_random_test_index]
+age_y_test <- imputed_all_features_combined_age[age_random_test_index,]
+age_label_test <- imputed_all_combined_age[age_random_test_index]
+
+testfit <- fit_glmnet(age_y_train, age_label_train, family = 'gaussian', alpha = 0.5, penalize_age_gender = FALSE)
+pred_train <- predict(testfit, newx = age_y_train,s = 'lambda.min', type = 'response')
+pred_test <- predict(testfit, newx = age_y_test, s = 'lambda.min', type = 'response')
+
+mse_train <- mean((pred_train - age_label_train)^2)
+mse_test <- mean((pred_test - age_label_test)^2)
+
+
+
+
+#predict on 1
+pred <- predict(fit, newx = new_features, type = 'response', s = 'lambda.min')
+return(list(fit, pred))
+
+
+#with the function
+fitpred_age_8020 <- loo_cvfit_glmnet(age_random_test_index, imputed_all_features_combined_age, imputed_all_combined_age, 
+                                     alpha = 0.5, penalize_age_gender = FALSE, family = 'gaussian')
+fit_8020_age <- fitpred_age_8020[[1]]
+#this is out of sample prediction
+pred_8020_age <- fitpred_age_8020[[2]]
+
+
+
+mse_8020_age <- mean((pred_8020_age- age_label_test)^2)
+residuals_8020_age <- pred_8020_age - imputed_all_combined_age
+
+
+shapiro.test(residuals_8020_age)
+
+qplot(residuals_8020_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.5')
+#ggsave('got_lipids_age_control_resid_hist.png')
+qqnorm(residuals_8020_age)
+qqline(residuals_8020_age)
+
+
+### 8020k at alpha = 0.4
+8020_age_table <- tibble(truth = imputed_all_combined_age, 
+                                  pred = pred_8020_age,
+                                  resid = truth - pred,
+                                  apoe = imputed_all_combined_apoe,
+                                  type = imputed_all_combined_labels
+)
+
+#Truth vs rsiduals
+ggplot(8020_age_table) + 
+  geom_point(aes(pred, resid, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: Age vs Residuals',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5, 8020, lambda = 2.4',
+       x = 'Predicted Age',
+       y = 'Residuals (Truth - Pred)') #+ 
+#stat_ellipse(data = filter(age_combined_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
+#stat_ellipse(data = filter(age_combined_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
+
+
+ggplot(8020_age_table) + 
+  geom_point(aes(truth, pred, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: True vs Predicted Age',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5, 8020',
+       x = 'True Age',
+       y = 'Predicted Age')
+
+
+
+
+
+
+
+
+
+
+
+pred_8020_age_test
