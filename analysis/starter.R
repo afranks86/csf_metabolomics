@@ -188,7 +188,9 @@ filter_and_impute <- function(data, types){
     
     #drop unused levels
     type <- filtered$Type %>%
-        droplevels
+        droplevels %>%
+        #relevel factors alphabetically so it's at least consistent
+        fct_relevel(sort(levels(.)))
     
     apoe <- filtered$APOE %>%
         droplevels

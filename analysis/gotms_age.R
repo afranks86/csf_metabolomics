@@ -317,22 +317,25 @@ imputed_all_features_combined_age_tmp<- model.matrix(~., imputed_all_features_co
 #remove intercept column created by model.matrix
 imputed_all_features_combined_age <- imputed_all_features_combined_age_tmp[,-1]
 
+#randomize rows
 foldid <- sample(nrow(imputed_all_features_combined_age))
+#reorder labels
+reordered_combined_age <- imputed_all_combined_age[foldid]
 
 #now try with alpha = 0.5
 fitpred_loo_age <- lapply(foldid, function(x) loo_cvfit_glmnet(x, imputed_all_features_combined_age, imputed_all_combined_age, 
                                                            alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
 
-fit_loo_age <- lapply(fit_loo_age, function(x) x[[1]])
-pred_loo_age <- lapply(fit_loo_age, function(x) x[[2]]) %>%
+fit_loo_age <- lapply(fitpred_loo_age, function(x) x[[1]])
+pred_loo_age <- lapply(fitpred_loo_age, function(x) x[[2]]) %>%
   unlist
 
 
 
 #some measure of variable importance
 importance_combined_age_list <- lapply(fit_combined_age_list, function(x) importance(x))
-mse_loo_age <- mean((pred_loo_age - imputed_all_combined_age)^2)
-residuals_loo_age <- pred_loo_age - imputed_all_combined_age
+mse_loo_age <- mean((pred_loo_age - reordered_combined_age)^2)
+residuals_loo_age <- pred_loo_age - reordered_combined_age
 
 
 shapiro.test(residuals_loo_age)
@@ -344,7 +347,7 @@ qqline(residuals_loo_age)
 
 
 ### look at alpha = 0.4
-loo_age_table <- tibble(truth = imputed_all_combined_age, 
+loo_age_table <- tibble(truth = reordered_combined_age, 
                                pred = pred_loo_age,
                                resid = truth - pred,
                                apoe = imputed_all_combined_apoe,

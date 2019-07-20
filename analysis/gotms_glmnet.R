@@ -587,7 +587,7 @@ loo_fitcv_half <- lapply(id, function(x) loo_cvfit_glmnet(index = x, features = 
 loo_predcv_half <- lapply(loo_fitcv_half, function(x) x[[2]]) %>%
   unlist
 
-roc_loocv_pd_c_half <- fpr_tpr(loo_predcv_half, imputed_pd_c_labels)
+roc_loocv_pd_c_half <- fpr_tpr(loo_predcv_half, imputed_pd_c_labels[id])
 ggplot(roc_loocv_pd_c_half) + 
   geom_line(mapping = aes(fpr, tpr)) + 
   geom_abline(intercept = 0, slope = 1, linetype = 2) + 
