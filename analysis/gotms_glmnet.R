@@ -84,10 +84,13 @@ importance_pd_co_list <- lapply(fit_pd_co_list, function(x) importance(x))
 #write one to csv
 #choice of 6th element (ie alpha = .5) is mostly arbitrary.
   #normally, between 30-50 predictors are significant, this one has 40.
-importance_pd_co_list[[8]] %>% 
+importance_pd_co_list[[6]] %>% 
   enframe(name = 'metabolite', value= 'coefficient') %>% 
   filter(!is.na(metabolite)) %T>%  #na metabolite is the intercept 
   write_csv(path = 'gotms_glmnet.5_predictors.csv')
+
+
+### in sample roc ###
 
 #roc for each of the alphas
 roc_pd_co_list <- lapply(pred_pd_co_list, function(x) fpr_tpr(x, imputed_pd_co_labels)) %>%
@@ -100,13 +103,39 @@ roc_pd_co_list <- lapply(pred_pd_co_list, function(x) fpr_tpr(x, imputed_pd_co_l
 ggplot(roc_pd_co_list, mapping = aes(fpr, tpr, color = alpha))+ 
   geom_line() + 
   labs(title = 'ROC: PD vs CO',
-       subtitle = 'GOT')
+       subtitle = 'GOT, in sample')
 
 #look at auc's for each alpha
 roc_pd_co_list %>% 
   group_by(alpha) %>%
   slice(1) %>%
   select(alpha, auc)
+
+
+### making predictions using the leave one out method for "out of sample" prediction ###
+
+fitpred_pd_co_loo <- lapply(1:nrow(imputed_pd_co_y), function(x) loo_cvfit_glmnet(x, imputed_pd_co_y, imputed_pd_co_labels, 
+                                                                              alpha=0.5, penalize_age_gender = FALSE, family = 'binomial'))
+fit_pd_co_loo <- lapply(fitpred_pd_co_loo, function(x) x[[1]])
+pred_pd_co_loo <- lapply(fitpred_pd_co_loo, function(x) x[[2]]) %>%
+  unlist
+
+roc_pd_co_loo <- fpr_tpr(pred_pd_co_loo, imputed_pd_co_labels) 
+
+
+ggplot(roc_pd_co_loo) + 
+  geom_line(mapping = aes(fpr, tpr)) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+  theme_minimal() + 
+  labs(title = "ROC: PD vs CO",
+       subtitle = TeX('GOT,$\\alpha = 0.5$, loo'),
+       x = 'False Positive Rate',
+       y = 'True Positive Rate') + 
+  geom_text(x = 0.9, y = 0,label = paste0('AUC:', roc_pd_co_loo$auc[1])) #auc is the same for every row in the df
+ggsave(filename = 'roc_got_pdco_loo_5.png')
+
+
+
 
 
 
@@ -226,6 +255,31 @@ roc_adpd_co_no_penalty_list %>%
   group_by(alpha) %>%
   slice(1) %>%
   select(alpha, auc)
+
+
+
+### making predictions using the leave one out method for "out of sample" prediction ###
+#use alpha = 0.6 (kinda arb, but one of the better performing models above)
+
+fitpred_adpd_co_loo <- lapply(1:nrow(imputed_adpd_co_y), function(x) loo_cvfit_glmnet(x, imputed_adpd_co_y, imputed_adpd_co_labels, 
+                                                                                      alpha=0.6, penalize_age_gender = FALSE, family = 'binomial'))
+fit_adpd_co_loo <- lapply(fitpred_adpd_co_loo, function(x) x[[1]])
+pred_adpd_co_loo <- lapply(fitpred_adpd_co_loo, function(x) x[[2]]) %>%
+  unlist
+
+roc_adpd_co_loo <- fpr_tpr(pred_adpd_co_loo, imputed_adpd_co_labels) 
+
+
+ggplot(roc_adpd_co_loo) + 
+  geom_line(mapping = aes(fpr, tpr)) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+  theme_minimal() + 
+  labs(title = "ROC: {AD, PD} vs CO",
+       subtitle = TeX('GOT,$\\alpha = 0.5$, loo'),
+       x = 'False Positive Rate',
+       y = 'True Positive Rate') + 
+  geom_text(x = 0.9, y = 0,label = paste0('AUC:', roc_adpd_co_loo$auc[1])) #auc is the same for every row in the df
+ggsave(filename = 'roc_got_adpd_co_loo_5.png')
 
 
 
@@ -530,6 +584,9 @@ roc_pd_c_list_no_penalty %>%
   select(alpha, auc)
 
 
+
+
+
 ############################
 
 ### PD vs {CO, CM, CY} ###
@@ -578,79 +635,22 @@ ggsave('roc_pd_c_loo.png')
 
 ############################
 
+fitpred_pd_c_loo <- lapply(1:nrow(imputed_pd_c_y), function(x) loo_cvfit_glmnet(index = x, features = imputed_pd_c_y, labels = imputed_pd_c_labels, 
+                                                                                alpha = 0.5, penalize_age_gender = FALSE, family = 'binomial'))
+fit_pd_c_loo <- lapply(fitpred_pd_c_loo, function(x) x[[1]])
+pred_pd_c_loo <- lapply(fitpred_pd_c_loo, function(x) x[[2]]) %>% unlist
 
-  #try alpha = 0.5
-id <- sample(nrow(imputed_pd_c_y))
-
-loo_fitcv_half <- lapply(id, function(x) loo_cvfit_glmnet(index = x, features = imputed_pd_c_y, labels = imputed_pd_c_labels, alpha = 0.5, penalize_age_gender = FALSE, family = 'binomial'))
-
-loo_predcv_half <- lapply(loo_fitcv_half, function(x) x[[2]]) %>%
-  unlist
-
-roc_loocv_pd_c_half <- fpr_tpr(loo_predcv_half, imputed_pd_c_labels[id])
-ggplot(roc_loocv_pd_c_half) + 
+roc_pd_c_loo <- fpr_tpr(pred_pd_c_loo, imputed_pd_c_labels)
+ggplot(roc_pd_c_loo) + 
   geom_line(mapping = aes(fpr, tpr)) + 
   geom_abline(intercept = 0, slope = 1, linetype = 2) + 
   theme_minimal() + 
   labs(title = "ROC: PD vs C",
-       subtitle = TeX('GOT,$\\alpha = 0.5$, loo fits'),
+       subtitle = TeX('GOT,$\\alpha = 0.5$, loo'),
        x = 'False Positive Rate',
        y = 'True Positive Rate') + 
-  geom_text(x = 0.9, y = 0,label = paste0('AUC:', roc_loocv_pd_c_half$auc[1])) #auc is the same for every row in the df
-ggsave('roc_pd_c_loo_fits.png')
-
-
-
-
-
-
-
-############################
-
-### PD vs {CO, CM, CY} ###
-## No Gender/Age Penalty ##
-## the results of the loo are messed up, so let's try a simple 80/20 train/test ##
-
-############################
-
-
-set.seed(1)
-random_index <- sample(nrow(imputed_pd_c_y), size = floor(nrow(imputed_pd_c_y)*.8))
-pd_c_y_train <- imputed_pd_c_y[random_index,]
-pd_c_label_train <- imputed_pd_c_labels[random_index]
-pd_c_y_test <- imputed_pd_c_y[-random_index,]
-pd_c_label_test <- imputed_pd_c_labels[-random_index]
-
-fit_pd_c_list_no_penalty_split <- lapply(seq(0, 1, .1), function(x) fit_glmnet(pd_c_y_train, pd_c_label_train, alpha = x, penalize_age_gender = FALSE))
-
-#go straight to test set
-pred_pd_c_list_no_penalty_split <- lapply(fit_pd_c_list_no_penalty_split, 
-                                    function(x) predict(x, newx = pd_c_y_test, 
-                                                        type = 'response', s = 'lambda.min'))
-#some measure of variable importance
-importance_pd_c_list_no_penalty_split <- lapply(fit_pd_c_list_no_penalty_split, function(x) importance(x))
-
-#roc for each of the alphas
-roc_pd_c_list_no_penalty_split <- lapply(pred_pd_c_list_no_penalty_split, function(x) fpr_tpr(x, pd_c_label_test)) %>%
-  bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
-  mutate(alpha  = as.factor((as.numeric(alpha) - 1)*.1))
-
-#plot for all alphas
-#note: tpr and fpr are switched because the roc curve was going the wrong way
-ggplot(roc_pd_c_list_no_penalty_split, mapping = aes(fpr, tpr, color = alpha))+ 
-  geom_line() + 
-  labs(title = 'ROC, PD vs {CO, CM, CY}',
-       subtitle = 'GOT, No Age, Gender Penalty, 80/20 train/test')
-ggsave('roc_pd_c_no_penalty_split.png')
-
-#look at auc for each alpha.
-roc_pd_c_list_no_penalty_split %>% 
-  group_by(alpha) %>%
-  slice(1) %>%
-  select(alpha, auc)
-
-#(results are still good.)
-
+  geom_text(x = 0.9, y = 0,label = paste0('AUC:', roc_pd_c_loo$auc[1])) #auc is the same for every row in the df
+ggsave(filename = 'roc_got_pd_c_loo_5.png')
 
 
 
