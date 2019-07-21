@@ -20,7 +20,6 @@ imputed_pd_co_lipids <- filter_and_impute(wide_data_lipids,c('PD', 'CO'))
 imputed_pd_co_y_lipids <- imputed_pd_co_lipids[[1]]
 imputed_pd_co_labels_lipids <- imputed_pd_co_lipids[[2]]
 
-foldid <- sample(nrow(imputed_pd_co_y_lipids))
 
 
 ## START sample analysis with a few extreme alphas ##
@@ -114,6 +113,31 @@ ggplot(roc_pd_co_list_lipids %>% filter(alpha == 0.7), mapping = aes(fpr, tpr))+
        y = 'True Positive Rate') + 
   geom_text(x = 0.9, y = 0,label = paste0('AUC:', (auc_lipids %>% filter(alpha == 0.7))$auc %>% round(digits = 3)))
 ggsave(filename = 'lipids_roc_pdco.png')
+
+
+
+
+## Fitting loo for better prediction ##
+
+
+fitpred_pd_co_loo_lipids <- lapply(1:nrow(imputed_pd_co_y_lipids), function(x) loo_cvfit_glmnet(index = x, features = imputed_pd_co_y_lipids, labels = imputed_pd_co_labels_lipids, 
+                                                                                alpha = 0.5, penalize_age_gender = FALSE, family = 'binomial'))
+fit_pd_co_loo_lipids <- lapply(fitpred_pd_co_loo_lipids, function(x) x[[1]])
+pred_pd_co_loo_lipids <- lapply(fitpred_pd_co_loo_lipids, function(x) x[[2]]) %>% unlist
+
+roc_pd_co_loo_lipids <- fpr_tpr(pred_pd_co_loo_lipids, imputed_pd_co_labels_lipids)
+ggplot(roc_pd_co_loo_lipids) + 
+  geom_line(mapping = aes(fpr, tpr)) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+  theme_minimal() + 
+  labs(title = "ROC: PD vs C",
+       subtitle = TeX('Lipids,$\\alpha = 0.5$, loo'),
+       x = 'False Positive Rate',
+       y = 'True Positive Rate') + 
+  geom_text(x = 0.9, y = 0,label = paste0('AUC:', roc_pd_co_loo_lipids$auc[1])) #auc is the same for every row in the df
+ggsave(filename = 'roc_lipids_pd_co_loo_5.png')
+
+
 
 
 
