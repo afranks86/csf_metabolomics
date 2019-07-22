@@ -388,7 +388,17 @@ wide_data_ad <- wide_data %>%
 wide_data_control <- wide_data %>%
     filter(Type %in% c('CO', 'CY', 'CM'))
 
+wide_data_pd_lipids <- wide_data_lipids %>%
+    filter(Type == 'PD')
 
+wide_data_ad_lipids <- wide_data_lipids %>%
+    filter(Type == 'AD')
+
+wide_data_control_lipids <- wide_data_lipids %>%
+    filter(Type %in% c('CO', 'CY', 'CM'))
+
+
+###
 #test on a single row (useful for checking to make sure it's working)
 test_row <- wide_data_pd[5,]
 #want same gender, closest age, closest batch
@@ -396,7 +406,7 @@ wide_data_control %>%
     filter(Gender == test_row$Gender) %>%
     filter(abs(Age - test_row$Age) == min(abs(Age - test_row$Age))) %>%
     filter(abs(Batch - test_row$Batch) == min(abs(Batch - test_row$Batch)))
-
+###
 
 #write above into a function
 find_control <- function(row_num, data){
@@ -421,6 +431,11 @@ wide_data_matched_pd_c <- lapply(1:nrow(wide_data_pd), function(x) find_control(
 wide_data_matched_ad_c <- lapply(1:nrow(wide_data_ad), function(x) find_control(x, data = wide_data_ad)) %>%
     bind_rows(wide_data_ad)
 
+### do the same for lipids
+wide_data_lipids_matched_pd_c <- lapply(1:nrow(wide_data_pd_lipids), function(x) find_control(x, wide_data_pd_lipids)) %>%
+    bind_rows(wide_data_pd_lipids)
+wide_data_lipids_matched_ad_c <- lapply(1:nrow(wide_data_ad_lipids), function(x) find_control(x, wide_data_ad_lipids)) %>%
+    bind_rows(wide_data_ad_lipids)
  
 
 
