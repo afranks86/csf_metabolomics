@@ -266,7 +266,6 @@ data.frame(pred = ifelse(pred_carrier_pd_comb_list[[5]] > .5, 'Non-Carrier', 'Ca
 
 imputed_pd_c_comb <- filter_and_impute(wide_data_combined, c('PD', 'CO', 'CM', 'CY'))
 imputed_pd_c_comb_y <- imputed_pd_c_comb[[1]]
-#Group AD, PD into D (for diseased)
 imputed_pd_c_comb_labels <- imputed_pd_c_comb[[2]] %>% 
   fct_collapse(C = c('CO', 'CM', 'CY'))
 
@@ -314,6 +313,155 @@ roc_pd_c_comb_list %>%
   group_by(alpha) %>%
   slice(1) %>%
   select(alpha, auc)
+
+
+
+
+############################
+
+### AD vs C ###
+## {Lipids, GOT} ##
+
+############################
+
+imputed_ad_c_comb <- filter_and_impute(wide_data_combined, c('AD', 'CO', 'CM', 'CY'))
+imputed_ad_c_comb_y <- imputed_ad_c_comb[[1]]
+imputed_ad_c_comb_labels <- imputed_ad_c_comb[[2]] %>% 
+  fct_collapse(C = c('CO', 'CM', 'CY'))
+
+#fit models with each of the alphas
+fit_ad_c_comb_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_ad_c_comb_y, imputed_ad_c_comb_labels, alpha = x, penalize_age_gender = FALSE))
+#in sample prediction
+pred_ad_c_comb_list <- lapply(fit_ad_c_comb_list, 
+                              function(x) predict(x, newx = imputed_ad_c_comb_y, 
+                                                  type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_ad_c_comb_list <- lapply(fit_ad_c_comb_list, function(x) importance(x))
+
+# importance_ad_c_comb_list[[7]] %>% 
+#   enframe(name = 'metabolite', value= 'coefficient') %>% 
+#   filter(!is.na(metabolite))  #na metabolite is the intercept 
+
+
+#roc for each of the alphas
+roc_ad_c_comb_list <- lapply(pred_ad_c_comb_list, function(x) fpr_tpr(x, imputed_ad_c_comb_labels)) %>%
+  bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
+  mutate(alpha  = as.factor((as.numeric(alpha) - 1)*.1))
+
+#plot for all alphas
+#note: tpr and fpr are switched because the roc curve was going the wrong way
+ggplot(roc_ad_c_comb_list, mapping = aes(fpr, tpr, color = alpha))+ 
+  geom_line() + 
+  labs(title = 'ROC, AD vs {CO, CM, CY}',
+       subtitle = 'GOT + Lipids, no Age, Gender Penalty')
+ggsave('roc_ad_c_comb.png')
+
+
+#look at auc for each alpha.
+roc_ad_c_comb_list %>% 
+  group_by(alpha) %>%
+  slice(1) %>%
+  select(alpha, auc)
+
+
+## out of sample prediction using the loo fits
+## alpha = 0.3 had best roc
+
+fitpred_ad_c_loo <- lapply(1:nrow(imputed_ad_c_comb_y), function(x) loo_cvfit_glmnet(index = x, features = imputed_ad_c_comb_y, labels = imputed_ad_c_comb_labels, 
+                                                                                                alpha = 0.3, penalize_age_gender = FALSE, family = 'binomial'))
+fit_ad_c_loo <- lapply(fitpred_ad_c_loo, function(x) x[[1]])
+pred_ad_c_loo <- lapply(fitpred_ad_c_loo, function(x) x[[2]]) %>% unlist
+
+roc_ad_c_loo <- fpr_tpr(pred_ad_c_loo, imputed_ad_c_comb_labels)
+ggplot(roc_ad_c_loo) + 
+  geom_line(mapping = aes(fpr, tpr)) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+  theme_minimal() + 
+  labs(title = "ROC: AD vs C",
+       subtitle = TeX('GOT + Lipids ,$\\alpha = 0.3$, loo'),
+       x = 'False Positive Rate',
+       y = 'True Positive Rate') + 
+  geom_text(x = 0.9, y = 0,label = paste0('AUC:', round(roc_ad_c_loo$auc[1], 3)))
+ggsave(filename = 'roc_comb_ad_c_loo_3.png')
+
+
+
+
+
+
+############################
+
+### PD vs C ###
+## Lipids, matched ##
+
+############################
+
+
+
+imputed_pd_c_lipids_matched <- filter_and_impute(wide_data_lipids_matched_pd_c, c('PD', 'CO', 'CM', 'CY'))
+imputed_pd_c_y_lipids_matched <- imputed_pd_c_lipids_matched[[1]]
+imputed_pd_c_labels_lipids_matched <- imputed_pd_c_lipids_matched[[2]] %>% 
+  fct_collapse(C = c('CO', 'CM', 'CY'))
+
+
+fit_pd_c_list_lipids_matched <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y_lipids_matched, imputed_pd_c_labels_lipids_matched, alpha = x, penalize_age_gender = FALSE))
+#in sample prediction
+pred_pd_c_list_lipids_matched <- lapply(fit_pd_c_list_lipids_matched, 
+                                 function(x) predict(x, newx = imputed_pd_c_y_lipids_matched, 
+                                                     type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_pd_c_list_lipids_matched <- lapply(fit_pd_c_list_lipids_matched, function(x) importance(x))
+
+# importance_pd_c_list_lipids_matchedscaled[[8]] %>% 
+#   enframe(name = 'metabolite', value= 'coefficient') %>% 
+#   filter(!is.na(metabolite))  #na metabolite is the intercept 
+
+
+#roc for each of the alphas
+roc_pd_c_list_lipids_matched <- lapply(pred_pd_c_list_lipids_matched, function(x) fpr_tpr(x, imputed_pd_c_labels_lipids_matched)) %>%
+  bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
+  mutate(alpha  = as.factor((as.numeric(alpha) - 1)*.1))
+
+
+#plot for all alphas
+#note: tpr and fpr are switched because the roc curve was going the wrong way
+ggplot(roc_pd_c_list_lipids_matched, mapping = aes(fpr, tpr, color = alpha))+ 
+  geom_line() + 
+  labs(title = 'ROC, PD vs {CO, CM, CY} (lipids_matched)',
+       subtitle = 'lipids, No Age, Gender Penalty, in sample')
+ggsave('roc_pd_c_lipids_matched.png')
+
+#look at auc for each alpha.
+roc_pd_c_list_lipids_matched %>% 
+  group_by(alpha) %>%
+  slice(1) %>%
+  select(alpha, auc)
+
+
+
+#out of sample prediction using the loo method
+#choice of alpha is kinda arb. using the number of nonzero coefficients as a kinda benchmark
+fitpred_pd_c_lipids_matched_loo <- lapply(1:nrow(imputed_pd_c_y_lipids_matched), function(x) loo_cvfit_glmnet(index = x, features = imputed_pd_c_y_lipids_matched, labels = imputed_pd_c_labels_lipids_matched, 
+                                                                                                alpha = 0.5, penalize_age_gender = FALSE, family = 'binomial'))
+fit_pd_c_lipids_matched_loo <- lapply(fitpred_pd_c_lipids_matched_loo, function(x) x[[1]])
+pred_pd_c_lipids_matched_loo <- lapply(fitpred_pd_c_lipids_matched_loo, function(x) x[[2]]) %>% unlist
+
+roc_pd_c_lipids_matched_loo <- fpr_tpr(pred_pd_c_lipids_matched_loo, imputed_pd_c_labels_lipids_matched)
+ggplot(roc_pd_c_lipids_matched_loo) + 
+  geom_line(mapping = aes(fpr, tpr)) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+  theme_minimal() + 
+  labs(title = "ROC: PD vs C (lipids_matched)",
+       subtitle = TeX('lipids,$\\alpha = 0.5$, loo'),
+       x = 'False Positive Rate',
+       y = 'True Positive Rate') + 
+  geom_text(x = 0.9, y = 0,label = paste0('AUC:', round(roc_pd_c_lipids_matched_loo$auc[1],3))) #auc is the same for every row in the df
+ggsave(filename = 'roc_lipids_pd_c_loo_matched5.png')
+
+
+
+
+
 
 
 
