@@ -762,5 +762,79 @@ roc_pd_c_list_no_penalty_raw %>%
 
 
 
+############################
+
+### PD vs Matched {CO, CM, CY} ###
+## No Gender/Age Penalty ##
+
+############################
+
+
+imputed_pd_c_matched <- filter_and_impute(wide_data_matched_pd_c, c('PD', 'CO', 'CM', 'CY'))
+imputed_pd_c_y_matched <- imputed_pd_c_matched[[1]]
+#Group AD, PD into D (for diseased)
+imputed_pd_c_labels_matched <- imputed_pd_c_matched[[2]] %>% 
+  fct_collapse(C = c('CO', 'CM', 'CY'))
+
+
+fit_pd_c_list_matched <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_pd_c_y_matched, imputed_pd_c_labels_matched, alpha = x, penalize_age_gender = FALSE))
+
+pred_pd_c_list_matched <- lapply(fit_pd_c_list_matched, 
+                                        function(x) predict(x, newx = imputed_pd_c_y_matched, 
+                                                            type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_pd_c_list_matched <- lapply(fit_pd_c_list_matched, function(x) importance(x))
+
+importance_pd_c_list_matchedscaled[[8]] %>% 
+  enframe(name = 'metabolite', value= 'coefficient') %>% 
+  filter(!is.na(metabolite))  #na metabolite is the intercept 
+
+
+#roc for each of the alphas
+roc_pd_c_list_matched <- lapply(pred_pd_c_list_matched, function(x) fpr_tpr(x, imputed_pd_c_labels_matched)) %>%
+  bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
+  mutate(alpha  = as.factor((as.numeric(alpha) - 1)*.1))
+
+
+#plot for all alphas
+#note: tpr and fpr are switched because the roc curve was going the wrong way
+ggplot(roc_pd_c_list_matched, mapping = aes(fpr, tpr, color = alpha))+ 
+  geom_line() + 
+  labs(title = 'ROC, PD vs {CO, CM, CY} (matched)',
+       subtitle = 'GOT, No Age, Gender Penalty, in sample')
+ggsave('roc_pd_c_matched.png')
+
+#look at auc for each alpha.
+roc_pd_c_list_matched %>% 
+  group_by(alpha) %>%
+  slice(1) %>%
+  select(alpha, auc)
+
+
+
+#out of sample prediction using the loo method
+  #choice of alpha is kinda arb. using the number of nonzero coefficients as a kinda benchmark
+fitpred_pd_c_matched_loo <- lapply(1:nrow(imputed_pd_c_y_matched), function(x) loo_cvfit_glmnet(index = x, features = imputed_pd_c_y_matched, labels = imputed_pd_c_labels_matched, 
+                                                                                alpha = 0.5, penalize_age_gender = FALSE, family = 'binomial'))
+fit_pd_c_matched_loo <- lapply(fitpred_pd_c_matched_loo, function(x) x[[1]])
+pred_pd_c_matched_loo <- lapply(fitpred_pd_c_matched_loo, function(x) x[[2]]) %>% unlist
+
+roc_pd_c_matched_loo <- fpr_tpr(pred_pd_c_matched_loo, imputed_pd_c_labels_matched)
+ggplot(roc_pd_c_matched_loo) + 
+  geom_line(mapping = aes(fpr, tpr)) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+  theme_minimal() + 
+  labs(title = "ROC: PD vs C (matched)",
+       subtitle = TeX('GOT,$\\alpha = 0.5$, loo'),
+       x = 'False Positive Rate',
+       y = 'True Positive Rate') + 
+  geom_text(x = 0.9, y = 0,label = paste0('AUC:', round(roc_pd_c_matched_loo$auc[1],3))) #auc is the same for every row in the df
+ggsave(filename = 'roc_got_pd_c_loo_matched5.png')
+
+
+
+
+
+
 
 
