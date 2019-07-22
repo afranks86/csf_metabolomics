@@ -250,16 +250,16 @@ fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, fami
         age_gender_index <- which(colnames(features) %in% c('Age', 'GenderM'))
         p_factors[age_gender_index] <- 0
     }
-    
+    #grouped = false is already enforced for small folds. I'm just writing it explicitly to avoid the warning.
     if(family == 'binomial'){
         fit <- cv.glmnet(features, labels, family = 'binomial', 
                          type.measure = 'deviance', nfolds = nrow(features),
-                         foldid = foldid, alpha = alpha, standardize = TRUE, penalty.factor = p_factors)
+                         foldid = foldid, alpha = alpha, standardize = TRUE, penalty.factor = p_factors, grouped = FALSE)
     }
     else if(family == 'gaussian'){
         fit <- cv.glmnet(features, labels, family = 'gaussian', 
                          type.measure = 'mse', nfolds = nrow(features),
-                         foldid = foldid, alpha = alpha, standardize = TRUE, penalty.factor = p_factors)
+                         foldid = foldid, alpha = alpha, standardize = TRUE, penalty.factor = p_factors, grouped = FALSE)
         
     }
     
@@ -292,7 +292,7 @@ loo_pred_glmnet <- function(lambda, index, features, labels, alpha, penalize_age
     
     #documentation says we should avoid passing in single value of lambda. how else to do?
     #fit on n-1
-    fit <- glmnet(loo_features, loo_labels, family = family, lambda = lambda, alpha = alpha, standardize = TRUE, penalty.factor = p_factors)
+    fit <- glmnet(loo_features, loo_labels, family = family, lambda = lambda, alpha = alpha, standardize = TRUE, penalty.factor = p_factors, gruoped = FALSE)
     
     #predict on 1
     pred <- predict(fit, newx = new_features, type = 'response', s = lambda)
@@ -373,7 +373,8 @@ all_types <- wide_data$Type %>%
 
 #######################################
 
-### Creating matched PD CO dataset ###
+### Creating matched PD/AD C dataset ###
+## Useful for controlling for outliers (eg a problem with doing PD vs CO is that there are some very young people with PD, messing with the importance of age)
 
 #######################################
 
@@ -381,23 +382,49 @@ all_types <- wide_data$Type %>%
 wide_data_pd <- wide_data %>% 
     filter(Type == 'PD')
 
+wide_data_ad <- wide_data %>%
+    filter(Type == 'AD')
+
 wide_data_control <- wide_data %>%
     filter(Type %in% c('CO', 'CY', 'CM'))
 
-test_row <- wide_data_pd[1,]
 
-
-
+#test on a single row (useful for checking to make sure it's working)
+test_row <- wide_data_pd[5,]
+#want same gender, closest age, closest batch
 wide_data_control %>%
     filter(Gender == test_row$Gender) %>%
     filter(abs(Age - test_row$Age) == min(abs(Age - test_row$Age))) %>%
-    filter(abs(Batch - test_row$Batch) == max(abs(Batch - test_row$Batch)))
+    filter(abs(Batch - test_row$Batch) == min(abs(Batch - test_row$Batch)))
+
+
+#write above into a function
+find_control <- function(row_num, data){
+    #select a row to match
+    subject <- data[row_num,]
+    # find a control that matches
+    wide_data_control %>%
+        filter(Gender == subject$Gender) %>%
+        filter(abs(Age - subject$Age) == min(abs(Age - subject$Age))) %>%
+        filter(abs(Batch - subject$Batch) == min(abs(Batch - subject$Batch))) %>%
+        slice(1) #if there are multiple matches for all three of these, then pick the first one (this should be random)
+}
+
+# apply function to get pd matched controls
+    #the lapply returns a list, where each element is a row, a control match
+    # bind_rows will join the 1 row list together into a df, and combine it with wide_data_pd
+wide_data_matched_pd_c <- lapply(1:nrow(wide_data_pd), function(x) find_control(x, data = wide_data_pd)) %>% 
+    bind_rows(wide_data_pd)
+
+
+## do the same for ad
+wide_data_matched_ad_c <- lapply(1:nrow(wide_data_ad), function(x) find_control(x, data = wide_data_ad)) %>%
+    bind_rows(wide_data_ad)
+
+ 
 
 
 
-
-# wide_data_pd %>% 
-#     rowwise() %>%
-#     sapply(function(x) wide_data_control[Gender = x[Gender],]
+                           
 
 
