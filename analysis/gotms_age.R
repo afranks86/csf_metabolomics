@@ -198,7 +198,7 @@ rmse_loo_pred_8 <- (sum((loo_pred_8 - imputed_all_age)^2) / length(imputed_all_a
 c_index <- which(imputed_comb_all[[2]] %in% c('CM', 'CY', 'CO'))
 imputed_c_combined_Y <- (imputed_comb_all[[1]])[c_index,]
 imputed_c_combined_labels <- (imputed_comb_all[[2]])[c_index]
-imputed_c_combind_apoe <- (imputed_comb_all[[3]])[c_index]
+imputed_c_combined_apoe <- (imputed_comb_all[[3]])[c_index]
 imputed_c_combined_age <- imputed_c_combined_Y[, 'Age']
 
 ## with apoe as a predictor ##
@@ -357,10 +357,11 @@ qqline(resid_combined_loo_age)
 
 ### look at alpha = 0.4
 loo_age_table <- tibble(truth = imputed_c_combined_age, 
-                               pred = pred_combined_loo_age,
-                               resid = truth - pred,
-                               apoe = imputed_c_combined_apoe,
-                               type = imputed_c_combined_labels
+                        pred = pred_combined_loo_age,
+                        resid = truth - pred,
+                        apoe = imputed_c_combined_apoe,
+                        type = imputed_c_combined_labels,
+                        apoe4 = apoe %>% fct_collapse('1' = c('24','34','44'), '0' = c('22', '23', '33'))
 )
 
 #### colored by APOE  ####
@@ -415,6 +416,13 @@ ggplot(loo_age_table) +
        y = 'Predicted Age')
 ggsave('pred_truth_control_loo_5.png')
 
+ggplot(loo_age_table) + 
+  geom_histogram(aes(resid, fill = apoe4), position = 'identity', alpha = 0.5, bins = 10) + 
+  labs(title = 'Residuals Histogram , split by APOE4',
+       subtitle = 'GOT + Lipids (limited to Controls), alpha = 0.5, loo',
+       x = 'Residuals (Truth - Pred)')
+ggsave('age_resid_c_apoe4_5.png')
+
 
 
 ### Predict on ad/pd #####
@@ -429,8 +437,9 @@ ggsave('pred_truth_control_loo_5.png')
 
 adpd_index <- which(imputed_comb_all[[2]] %in% c('AD', 'PD'))
 imputed_adpd_combined_Y <- (imputed_comb_all[[1]])[adpd_index,]
-imputed_adpd_combined_labels <- (imputed_comb_all[[2]])[adpd_index]
-imputed_adpd_combind_apoe <- (imputed_comb_all[[3]])[adpd_index]
+imputed_adpd_combined_labels <- (imputed_comb_all[[2]])[adpd_index] %>%
+  droplevels
+imputed_adpd_combined_apoe <- (imputed_comb_all[[3]])[adpd_index]
 imputed_adpd_combined_age <- imputed_adpd_combined_Y[, 'Age']
 
 # without apoe
@@ -446,8 +455,75 @@ imputed_adpd_features_combined_age <- imputed_adpd_features_combined_age_tmp[,-1
 
 
 
-predict(fit_combined_age_list[[5]], newx = imputed_adpd_features_combined_age, s = 'lambda.min')
-#################
+pred_age_adpd_4 <- predict(fit_combined_age_list[[5]], newx = imputed_adpd_features_combined_age, s = 'lambda.min')
+adpd_age_table_4 <- tibble(truth = imputed_adpd_combined_age, 
+                           pred = pred_age_adpd_4,
+                           resid = truth - pred,
+                           apoe = imputed_adpd_combined_apoe,
+                           type = imputed_adpd_combined_labels,
+                           apoe4 = apoe %>% fct_collapse('1' = c('24','34','44'), '0' = c('22', '23', '33'))
+                                  )
+
+
+#pred vs residuals
+ggplot(adpd_age_table_4) + 
+  geom_point(aes(pred, resid, color = type)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'AD/PD: Age vs Residuals (trained on Control)',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.4',
+       x = 'Predicted Age',
+       y = 'Residuals (Truth - Pred)') #+ 
+#stat_ellipse(data = filter(age_combined_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
+#stat_ellipse(data = filter(age_combined_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
+ggsave('pred_age_residuals_adpd_4.png')
+
+
+ggplot(adpd_age_table_4) + 
+  geom_point(aes(truth, pred, color = type)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: True vs Predicted Age (trained on control)',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.4',
+       x = 'True Age',
+       y = 'Predicted Age') + 
+  geom_abline(slope = 1, intercept = 0)
+ggsave('pred_age_truth_adpd_4.png')
+
+ggplot(adpd_age_table_4) + 
+  geom_point(aes(truth, pred, color = apoe4)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: True vs Predicted Age (trained on control)',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.4',
+       x = 'True Age',
+       y = 'Predicted Age')
+ggsave('pred_truth_adpd_apoe4_4.png')
+
+ggplot(adpd_age_table_4) + 
+  geom_point(aes(truth, pred, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: True vs Predicted Age (trained on control)',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.4',
+       x = 'True Age',
+       y = 'Predicted Age')
+ggsave('pred_truth_adpd_apoe_4.png')
+
+
+#side by side residuals hist
+residuals_comparison <- tibble(resid = adpd_age_table_4$resid,
+                               id = "adpd") %>%
+  bind_rows(tibble(resid = age_combined_table_4$resid,
+                   id = 'control')) %>%
+  mutate(id = as.factor(id))
+
+ggplot(residuals_comparison) +
+  geom_histogram(aes(resid, fill = id), position = 'identity', alpha = 0.5, bins = 10) + 
+  labs(title = 'Residuals Histogram, split by type',
+       subtitle = 'GOT + Lipids, alpha = 0.4',
+       x = 'Residuals (Truth - Pred)')
+ggsave('age_resid_type_4.png')
+
+
+
+3#################
 
 
 
