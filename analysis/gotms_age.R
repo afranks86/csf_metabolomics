@@ -29,7 +29,7 @@ imputed_all_age <- imputed_all_Y[,'Age']
 imputed_all_features_age_tmp <- imputed_all_Y %>% 
   as_tibble %>%
   #mutate(Type = imputed_all_labels) %>%
-  select(-c(Age, GenderM))
+  select(-Age)
 
 #turn type into a dummy var (multiple columns. AD is the redundant column (chosen))
 imputed_all_features_age_tmp<- model.matrix(~., imputed_all_features_age_tmp)
@@ -200,12 +200,14 @@ imputed_c_combined_Y <- (imputed_comb_all[[1]])[c_index,]
 imputed_c_combined_labels <- (imputed_comb_all[[2]])[c_index]
 imputed_c_combined_apoe <- (imputed_comb_all[[3]])[c_index]
 imputed_c_combined_age <- imputed_c_combined_Y[, 'Age']
+imputed_c_combined_gender <- imputed_c_combined_Y[,'GenderM'] %>% as.factor %>%
+  fct_recode(M = '1', F = '0')
 
 ## with apoe as a predictor ##
 imputed_c_features_combined_age_apoe_tmp <- imputed_c_combined_Y %>% 
   as_tibble %>%
   mutate(APOE = imputed_c_combined_apoe) %>%
-  select(-c(Age, GenderM))
+  select(-Age)
 
 #turn type into a dummy var (multiple columns. AD is the redundant column (chosen))
 imputed_c_features_combined_age_apoe_tmp<- model.matrix(~., imputed_c_features_combined_age_apoe_tmp)
@@ -216,7 +218,7 @@ imputed_c_features_combined_age_apoe <- imputed_c_features_combined_age_apoe_tmp
 ## without APOE as a predictor ##
 imputed_c_features_combined_age_tmp <- imputed_c_combined_Y %>% 
   as_tibble %>%
-  select(-c(Age, GenderM))
+  select(-c(Age))
 
 #turn type into a dummy var (multiple columns. AD is the redundant column (chosen))
 imputed_c_features_combined_age_tmp<- model.matrix(~., imputed_c_features_combined_age_tmp)
@@ -361,6 +363,7 @@ loo_age_table <- tibble(truth = imputed_c_combined_age,
                         resid = truth - pred,
                         apoe = imputed_c_combined_apoe,
                         type = imputed_c_combined_labels,
+                        gender = imputed_c_combined_gender,
                         apoe4 = apoe %>% fct_collapse('1' = c('24','34','44'), '0' = c('22', '23', '33'))
 )
 
@@ -407,6 +410,8 @@ ggplot(loo_age_table) +
 ggsave('pred_age_residuals_control_loo_5.png')
 
 
+
+
 ggplot(loo_age_table) + 
   geom_point(aes(truth, pred, color = type)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
@@ -422,6 +427,31 @@ ggplot(loo_age_table) +
        subtitle = 'GOT + Lipids (limited to Controls), alpha = 0.5, loo',
        x = 'Residuals (Truth - Pred)')
 ggsave('age_resid_c_apoe4_5.png')
+
+
+
+
+
+### colored by gender
+ggplot(loo_age_table) + 
+  geom_point(aes(pred, resid, color = gender)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: Age vs Residuals',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5, loo',
+       x = 'Predicted Age',
+       y = 'Residuals (Truth - Pred)') +
+  geom_hline(yintercept = 0)
+ggsave('pred_age_residuals_control_loo_gender5.png')
+
+ggplot(loo_age_table) + 
+  geom_point(aes(truth, pred, color = gender)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: True vs Predicted Age',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5, loo',
+       x = 'True Age',
+       y = 'Predicted Age') + 
+  geom_abline(intercept = 0, slope = 1)
+ggsave('pred_truth_control_loo_gender5.png')
 
 
 
@@ -446,7 +476,7 @@ imputed_adpd_combined_age <- imputed_adpd_combined_Y[, 'Age']
 imputed_adpd_features_combined_age_tmp <- imputed_adpd_combined_Y %>% 
   as_tibble %>%
   #mutate(APOE = imputed_c_combined_apoe) %>%
-  select(-c(Age, GenderM))
+  select(-Age)
 
 #turn factors into dummy vars.
 imputed_adpd_features_combined_age_tmp<- model.matrix(~., imputed_adpd_features_combined_age_tmp)
@@ -523,7 +553,7 @@ ggsave('age_resid_type_4.png')
 
 
 
-3#################
+#################
 
 
 
