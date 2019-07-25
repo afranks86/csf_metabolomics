@@ -217,7 +217,7 @@ imputed_c_features_combined_age_apoe <- imputed_c_features_combined_age_apoe_tmp
 
 ## without APOE as a predictor ##
 imputed_c_features_combined_age_tmp <- imputed_c_combined_Y %>% 
-  as_tibble %>%
+  as_tibble(.name_repair = 'universal') %>%
   select(-c(Age))
 
 #turn type into a dummy var (multiple columns. AD is the redundant column (chosen))
@@ -555,7 +555,15 @@ ggsave('age_resid_type_4.png')
 
 #################
 
+##########################
 
+### GOT and Lipids Age analysis for controls ###
+### Random Forest ###
+
+###########################
+library(randomForest)
+imputed_c_combined_df <- imputed_c_combined_Y %>% as_tibble(.name_repair = 'universal')
+age_fit_cvrf <- randomForest::rfcv(imputed_c_features_combined_age, imputed_c_combined_age, cv.fold = nrow(imputed_c_features_combined_age))
 
 ##########################
 
