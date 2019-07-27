@@ -563,7 +563,9 @@ ggsave('age_resid_type_4.png')
 ###########################
 library(randomForest)
 imputed_c_combined_df <- imputed_c_combined_Y %>% as_tibble(.name_repair = 'universal')
-age_fit_cvrf <- randomForest::rfcv(imputed_c_features_combined_age, imputed_c_combined_age, cv.fold = nrow(imputed_c_features_combined_age))
+#best performance with somewhere between 22 and 44 predictors (22 is better). lets say 30
+cvrf_age_c <- randomForest::rfcv(imputed_c_features_combined_age, imputed_c_combined_age, cv.fold = nrow(imputed_c_features_combined_age))
+fitrf_age_c <- randomForest::randomForest(imputed_c) 
 
 ##########################
 
