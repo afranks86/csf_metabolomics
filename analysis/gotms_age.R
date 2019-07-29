@@ -885,5 +885,184 @@ ggsave('pred_truth_all_loo_5.png')
 
 ###########################
 
+male_index <- which(imputed_c_combined_gender == 'M')
+imputed_c_male_combined_Y <- imputed_c_combined_Y[male_index,]
+imputed_c_male_combined_labels <- imputed_c_combined_labels[male_index]
+imputed_c_male_combined_apoe <- imputed_c_combined_apoe[male_index]
+imputed_c_male_combined_age <- imputed_c_combined_age[male_index]
+
+imputed_c_female_combined_Y <- imputed_c_combined_Y[-male_index,]
+imputed_c_female_combined_labels <- imputed_c_combined_labels[-male_index]
+imputed_c_female_combined_apoe <- imputed_c_combined_apoe[-male_index]
+imputed_c_female_combined_age <- imputed_c_combined_age[-male_index]
+
+
+### Male first
+
+## without APOE as a predictor ##
+imputed_c_male_features_combined_age_tmp <- imputed_c_male_combined_Y %>% 
+  as_tibble(.name_repair = 'universal') %>%
+  select(-c(Age))
+
+#turn type into a dummy var (multiple columns. AD is the redundant column (chosen))
+imputed_c_male_features_combined_age_tmp<- model.matrix(~., imputed_c_male_features_combined_age_tmp)
+#remove intercept column created by model.matrix
+imputed_c_male_features_combined_age <- imputed_c_male_features_combined_age_tmp[,-1]
+
+#now try with list of multiple alphas
+fit_c_male_combined_age_list <- lapply(seq(0,1,.1), function(x) fit_glmnet(imputed_c_male_features_combined_age, imputed_c_male_combined_age, 
+                                                                    family = 'gaussian', alpha = x, penalize_age_gender = FALSE))
+
+#in sample prediction
+pred_c_male_combined_age_list <- lapply(fit_c_male_combined_age_list, 
+                                 function(x) predict(x, newx = imputed_c_male_features_combined_age, 
+                                                     type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_c_male_combined_age_list <- lapply(fit_c_male_combined_age_list, function(x) importance(x, metabolites = FALSE))
+
+mse_c_male_combined_age_list <- lapply(pred_c_male_combined_age_list, function(x) mean((x - imputed_c_male_combined_age)^2))
+
+
+## leave one out (alpha = 0.7)
+fitpred_c_male_combined_loo_age <- lapply(1:nrow(imputed_c_male_features_combined_age), function(x) loo_cvfit_glmnet(x, imputed_c_male_features_combined_age, imputed_c_male_combined_age,
+                                                                                                                 alpha = 0.7, family = 'gaussian', penalize_age_gender = FALSE))
+
+fit_c_male_combined_loo_age <- lapply(fitpred_c_male_combined_loo_age, function(x) x[[1]])
+pred_c_male_combined_loo_age <- lapply(fitpred_c_male_combined_loo_age, function(x) x[[2]]) %>%
+  unlist
+
+#some measure of variable importance
+importance_c_male_combined_loo_age <- lapply(fit_c_male_combined_loo_age, function(x) importance(x))
+mse_c_male_combined_loo_age <- mean((pred_c_male_combined_loo_age - imputed_c_male_combined_age)^2)
+resid_c_male_combined_loo_age <- pred_c_male_combined_loo_age - imputed_c_male_combined_age
+
+
+shapiro.test(resid_c_male_combined_loo_age)
+
+qplot(resid_c_male_combined_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.4')
+#ggsave('got_lipids_age_control_resid_hist.png')
+qqnorm(resid_c_male_combined_loo_age)
+qqline(resid_c_male_combined_loo_age)
+
+
+### look at alpha = 0.4
+loo_c_male_age_table <- tibble(truth = imputed_c_male_combined_age,
+                            pred = pred_c_male_combined_loo_age,
+                            resid = truth - pred,
+                            apoe = imputed_c_male_combined_apoe,
+                            apoe4 = apoe %>% fct_collapse('1' = c('24','34','44'), '0' = c('22', '23', '33')),
+                            type = imputed_c_male_combined_labels
+)
+
+#### colored by APOE  ####
+#pred vs residuals
+ggplot(loo_c_male_age_table) +
+  geom_point(aes(pred, resid, color = apoe)) +
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Male Controls: Age vs Residuals',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.7, loo',
+       x = 'Predicted Age',
+       y = 'Residuals (Truth - Pred)') #+
+#stat_ellipse(data = filter(age_combined_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") +
+#stat_ellipse(data = filter(age_combined_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
+ggsave('pred_age_residuals_c_male_loo_7.png')
+
+
+ggplot(loo_c_male_age_table) +
+  geom_point(aes(truth, pred, color = apoe)) +
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Male Controls: True vs Predicted Age',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.7, loo',
+       x = 'True Age',
+       y = 'Predicted Age') +
+  geom_abline(intercept = 0, slope=1)
+ggsave('pred_truth_c_male_loo_7.png')
+
+
+
+
+
+### Females
+
+## without APOE as a predictor ##
+imputed_c_female_features_combined_age_tmp <- imputed_c_female_combined_Y %>% 
+  as_tibble(.name_repair = 'universal') %>%
+  select(-c(Age))
+
+#turn type into a dummy var (multiple columns. AD is the redundant column (chosen))
+imputed_c_female_features_combined_age_tmp<- model.matrix(~., imputed_c_female_features_combined_age_tmp)
+#remove intercept column created by model.matrix
+imputed_c_female_features_combined_age <- imputed_c_female_features_combined_age_tmp[,-1]
+
+#now try with list of multiple alphas
+fit_c_female_combined_age_list <- lapply(seq(0,1,.1), function(x) fit_glmnet(imputed_c_female_features_combined_age, imputed_c_female_combined_age, 
+                                                                           family = 'gaussian', alpha = x, penalize_age_gender = FALSE))
+
+#in sample prediction
+pred_c_female_combined_age_list <- lapply(fit_c_female_combined_age_list, 
+                                        function(x) predict(x, newx = imputed_c_female_features_combined_age, 
+                                                            type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_c_female_combined_age_list <- lapply(fit_c_female_combined_age_list, function(x) importance(x, metabolites = FALSE))
+
+mse_c_female_combined_age_list <- lapply(pred_c_female_combined_age_list, function(x) mean((x - imputed_c_female_combined_age)^2))
+
+
+## leave one out (alpha = 0.3)
+fitpred_c_female_combined_loo_age <- lapply(1:nrow(imputed_c_female_features_combined_age), function(x) loo_cvfit_glmnet(x, imputed_c_female_features_combined_age, imputed_c_female_combined_age,
+                                                                                                                     alpha = 0.3, family = 'gaussian', penalize_age_gender = FALSE))
+
+fit_c_female_combined_loo_age <- lapply(fitpred_c_female_combined_loo_age, function(x) x[[1]])
+pred_c_female_combined_loo_age <- lapply(fitpred_c_female_combined_loo_age, function(x) x[[2]]) %>%
+  unlist
+
+#some measure of variable importance
+importance_c_female_combined_loo_age <- lapply(fit_c_female_combined_loo_age, function(x) importance(x))
+mse_c_female_combined_loo_age <- mean((pred_c_female_combined_loo_age - imputed_c_female_combined_age)^2)
+resid_c_female_combined_loo_age <- pred_c_female_combined_loo_age - imputed_c_female_combined_age
+
+
+shapiro.test(resid_c_female_combined_loo_age)
+
+qplot(resid_c_female_combined_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.4')
+#ggsave('got_lipids_age_control_resid_hist.png')
+qqnorm(resid_c_female_combined_loo_age)
+qqline(resid_c_female_combined_loo_age)
+
+
+### look at alpha = 0.4
+loo_c_female_age_table <- tibble(truth = imputed_c_female_combined_age,
+                               pred = pred_c_female_combined_loo_age,
+                               resid = truth - pred,
+                               apoe = imputed_c_female_combined_apoe,
+                               apoe4 = apoe %>% fct_collapse('1' = c('24','34','44'), '0' = c('22', '23', '33')),
+                               type = imputed_c_female_combined_labels
+)
+
+#### colored by APOE  ####
+#pred vs residuals
+ggplot(loo_c_female_age_table) +
+  geom_point(aes(pred, resid, color = apoe)) +
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Female Controls: Age vs Residuals',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.3, loo',
+       x = 'Predicted Age',
+       y = 'Residuals (Truth - Pred)') #+
+#stat_ellipse(data = filter(age_combined_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") +
+#stat_ellipse(data = filter(age_combined_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
+ggsave('pred_age_residuals_c_female_loo_7.png')
+
+
+ggplot(loo_c_female_age_table) +
+  geom_point(aes(truth, pred, color = apoe)) +
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Female Controls: True vs Predicted Age',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.3, loo',
+       x = 'True Age',
+       y = 'Predicted Age') +
+  geom_abline(intercept = 0, slope=1)
+ggsave('pred_truth_c_female_loo_7.png')
+
+
 
 
