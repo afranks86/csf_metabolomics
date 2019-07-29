@@ -140,17 +140,87 @@ ggplot(age_table_3) +
 
 
 
-res_7 <- residuals_age_list[[8]]
+### leave one out using chosen alpha from above
+
+fitpred_got_loo_age <- lapply(1:nrow(imputed_c_got_features_age), function(x) loo_cvfit_glmnet(x, imputed_c_got_features_age, imputed_c_got_age, 
+                                                                                                     alpha = 0.4, family = 'gaussian', penalize_age_gender = FALSE))
+
+fit_got_loo_age <- lapply(fitpred_got_loo_age, function(x) x[[1]])
+pred_got_loo_age <- lapply(fitpred_got_loo_age, function(x) x[[2]]) %>%
+  unlist
+
+#some measure of variable importance
+importance_got_loo_age <- lapply(fit_got_loo_age, function(x) importance(x))
+mse_got_loo_age <- mean((pred_got_loo_age - imputed_c_got_age)^2)
+resid_got_loo_age <- pred_got_loo_age - imputed_c_got_age
+
+
+shapiro.test(resid_got_loo_age)
+
+qplot(resid_got_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.4')
+#ggsave('got_got_age_control_resid_hist.png')
+qqnorm(resid_got_loo_age)
+qqline(resid_got_loo_age)
+
+
+### look at alpha = 0.4
+got_loo_age_table <- tibble(truth = imputed_c_got_age, 
+                               pred = pred_got_loo_age,
+                               resid = truth - pred,
+                               apoe = imputed_c_got_apoe,
+                               type = imputed_c_got_labels,
+                               gender = imputed_c_got_gender,
+                               apoe4 = apoe %>% fct_collapse('1' = c('24','34','44'), '0' = c('22', '23', '33'))
+)
+
+
+#### colored by APOE  ####
+#pred vs residuals
+ggplot(got_loo_age_table) + 
+  geom_point(aes(pred, resid, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: Age vs Residuals',
+       subtitle = 'GOT, alpha = 0.4, loo',
+       x = 'Predicted Age',
+       y = 'Residuals (Truth - Pred)') #+ 
+#stat_ellipse(data = filter(age_got_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
+#stat_ellipse(data = filter(age_got_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
+ggsave('pred_age_residuals_control_got_loo_5.png')
+
+
+ggplot(got_loo_age_table) + 
+  geom_point(aes(truth, pred, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: True vs Predicted Age',
+       subtitle = 'GOT, alpha = 0.4, loo',
+       x = 'True Age',
+       y = 'Predicted Age') + 
+  geom_abline(intercept = 0, slope = 1)
+ggsave('pred_truth_control_got_loo_5.png')
 
 
 
 
-## try with loo method to generate standard error. try with the 9th again (alpha = 0.8)
-loo_pred_8 <- sapply(foldid, function(x) loo_pred_glmnet(lambda = fit_c_got_age_list[[9]]$lambda.min, index = x, features =imputed_c_got_features_age, labels = imputed_c_got_age, alpha = 0.8, penalize_age_gender = FALSE, family= 'gaussian'))
 
-#see (standard error of esimate) = sqrt(SS residuals / df), where df = n - number of coefficients in the model (including intercept)
-  #how to do standard error if df > n? i do rmse instead 
-rmse_loo_pred_8 <- (sum((loo_pred_8 - imputed_c_got_age)^2) / length(imputed_c_got_age)) %>% sqrt
+
+
+
+
+
+
+
+
+# res_7 <- residuals_age_list[[8]]
+# 
+# 
+# 
+# 
+# ## try with loo method to generate standard error. try with the 9th again (alpha = 0.8)
+# #loo_pred_8 <- sapply(foldid, function(x) loo_pred_glmnet(lambda = fit_c_got_age_list[[9]]$lambda.min, index = x, features =imputed_c_got_features_age, labels = imputed_c_got_age, alpha = 0.8, penalize_age_gender = FALSE, family= 'gaussian'))
+# 
+# #see (standard error of esimate) = sqrt(SS residuals / df), where df = n - number of coefficients in the model (including intercept)
+#   #how to do standard error if df > n? i do rmse instead 
+# rmse_loo_pred_8 <- (sum((loo_pred_8 - imputed_c_got_age)^2) / length(imputed_c_got_age)) %>% sqrt
 
 
 
@@ -574,6 +644,8 @@ imputed_adpd_combined_labels <- (imputed_comb_all[[2]])[adpd_index] %>%
   droplevels
 imputed_adpd_combined_apoe <- (imputed_comb_all[[3]])[adpd_index]
 imputed_adpd_combined_age <- imputed_adpd_combined_Y[, 'Age']
+imputed_adpd_combined_gender <- imputed_adpd_combined_Y[,'GenderM'] %>% as.factor %>%
+  fct_recode(M = '1', F = '0')
 
 # without apoe
 imputed_adpd_features_combined_age_tmp <- imputed_adpd_combined_Y %>% 
@@ -668,6 +740,7 @@ library(randomForest)
 set.seed(1)
 imputed_c_combined_df <- imputed_c_combined_Y %>% as_tibble(.name_repair = 'universal')
 imputed_adpd_combined_df <- imputed_adpd_combined_Y %>% as_tibble(.name_repair = 'universal')
+
 #best performance with somewhere between 22 and 44 predictors (22 is better). lets say 30
 cvrf_age_c <- randomForest::rfcv(imputed_c_features_combined_age, imputed_c_combined_age, cv.fold = nrow(imputed_c_features_combined_age))
 #look for best mtry
@@ -691,7 +764,7 @@ rf_age_c_table <- tibble(truth = imputed_c_combined_age,
 
 
 ggplot(rf_age_c_table) + 
-  geom_point(aes(truth, pred, color = apoe)) + 
+  geom_point(aes(truth, pred, color = gender)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: True vs Predicted Age (trained on control)',
        subtitle = 'Combined GOT and Lipid, Random Forest, oob',
@@ -705,14 +778,14 @@ rf_age_adpd_table <- tibble(truth = imputed_adpd_combined_age,
                          resid = truth - pred,
                          apoe = imputed_adpd_combined_apoe,
                          type = imputed_adpd_combined_labels,
-                         #gender = imputed_adpd_combined_gender,
+                         gender = imputed_adpd_combined_gender,
                          apoe4 = apoe %>% fct_collapse('1' = c('24','34','44'), '0' = c('22', '23', '33'))
 )
 
 ggplot(rf_age_adpd_table) + 
-  geom_point(aes(truth, pred, color = apoe)) + 
+  geom_point(aes(truth, pred, color = gender)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
-  labs(title = 'Control: True vs Predicted Age (trained on control)',
+  labs(title = 'AD/PD: True vs Predicted Age (trained on control)',
        subtitle = 'Combined GOT and Lipid, Random Forest',
        x = 'True Age',
        y = 'Predicted Age') + 
@@ -737,19 +810,19 @@ imputed_all_combined_apoe <- imputed_all_combined[[3]]
 imputed_all_combined_age <- imputed_all_combined_Y[,'Age']
 
 # we include apoe in this anlaysis
-imputed_c_got_features_combined_age_tmp <- imputed_all_combined_Y %>%
+imputed_all_features_combined_age_tmp <- imputed_all_combined_Y %>%
   as_tibble %>%
   mutate(APOE = imputed_all_combined_apoe) %>%
   select(-Age)
 
 #turn type into a dummy var (multiple columns. AD is the redundant column (chosen))
-imputed_c_got_features_combined_age_tmp<- model.matrix(~., imputed_c_got_features_combined_age_tmp)
+imputed_all_features_combined_age_tmp<- model.matrix(~., imputed_all_features_combined_age_tmp)
 #remove intercept column created by model.matrix
-imputed_c_got_features_combined_age <- imputed_c_got_features_combined_age_tmp[,-1]
+imputed_all_features_combined_age <- imputed_all_features_combined_age_tmp[,-1]
 
 
 #now try with list of multiple alphas
-fit_combined_all_age_list <- lapply(seq(0,1,.1), function(x) fit_glmnet(imputed_c_got_features_combined_age, imputed_all_combined_age,
+fit_combined_all_age_list <- lapply(seq(0,1,.1), function(x) fit_glmnet(imputed_all_features_combined_age, imputed_all_combined_age,
                                                                     family = 'gaussian', alpha = x, penalize_age_gender = FALSE))
 
 # fit_age_list <- lapply(seq(0,1,.1), function(x) cv.glmnet(imputed_c_got_features_age, imputed_all_age, family = 'gaussian',
@@ -813,7 +886,7 @@ ggsave('age_true_pred_all_insample_7.png', width = 7.26, height = 7.26, units = 
 
 ##########################
 
-### GOT and Lipids Age analysis for controls ###
+### GOT and Lipids Age analysis for all ###
 ### Leave one out ###
 
 ###########################
@@ -822,7 +895,7 @@ ggsave('age_true_pred_all_insample_7.png', width = 7.26, height = 7.26, units = 
 
 
 #now try with alpha = 0.4
-fitpred_combined_all_loo_age <- lapply(1:nrow(imputed_c_got_features_combined_age), function(x) loo_cvfit_glmnet(x, imputed_c_got_features_combined_age, imputed_all_combined_age,
+fitpred_combined_all_loo_age <- lapply(1:nrow(imputed_all_features_combined_age), function(x) loo_cvfit_glmnet(x, imputed_all_features_combined_age, imputed_all_combined_age,
                                                                                                          alpha = 0.7, family = 'gaussian', penalize_age_gender = FALSE))
 
 fit_combined_all_loo_age <- lapply(fitpred_combined_all_loo_age, function(x) x[[1]])
