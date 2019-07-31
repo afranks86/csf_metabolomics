@@ -1421,12 +1421,51 @@ ggbiplot::ggbiplot(combined_c_pca)
 
 ###################
 
-
-missingness_by_type <- wide_data_combined %>% 
+#missingness as percent
+missingness_by_type_comb <- wide_data_combined %>% 
   group_by(Type) %>%
-  group_map(~ map_int(.x, function(y) sum(is.na(y)))) %>%
+  group_map(~ map_dbl(.x, function(y) round(sum(is.na(y))/length(y), digits = 3))) %>%
   set_names(wide_data_combined$Type %>% levels)
 
-old_minus_young_missingness <- missingness_by_type$CO - missingness_by_type$CY 
+co_cy_comb_missingness <- missingness_by_type_comb$CO - missingness_by_type_comb$CY
+co_cy_comb_missingness[co_cy_comb_missingness != 0] %>% sort
+pd_co_comb_missingness <- missingness_by_type_comb$PD - missingness_by_type_comb$CO
+pd_co_comb_missingness[pd_co_comb_missingness != 0] %>% sort
+
+
+missingness_by_type_lipids <- wide_data_lipids %>% 
+  group_by(Type) %>%
+  group_map(~ map_dbl(.x, function(y) round(sum(is.na(y))/length(y), digits = 3))) %>%
+  set_names(wide_data_combined$Type %>% levels) %>%
+  lapply(function(x) enframe(x, name = 'lipid', value = 'pct_missing'))
+
+wide_data_lipids %>% group_by(Type) %>% summarize(n = n())
+
+co_cy_lipids_missingness <- inner_join(missingness_by_type_lipids$CO, missingness_by_type_lipids$CY, by = 'lipid') %>%
+  rename(pct_missing_co = pct_missing.x, pct_missing_cy = pct_missing.y) %>%
+  mutate(co_minus_cy = pct_missing_co - pct_missing_cy)%>%
+  arrange(desc(abs(co_minus_cy)))
+
+pd_co_lipids_missingness <- inner_join(missingness_by_type_lipids$PD, missingness_by_type_lipids$CO, by = 'lipid') %>%
+  rename(pct_missing_pd = pct_missing.x, pct_missing_co = pct_missing.y) %>%
+  mutate(pd_minus_co = pct_missing_pd - pct_missing_co)%>%
+  arrange(desc(abs(pd_minus_co)))
+
+
+
+
+
+missingness_by_type_got <- wide_data %>% 
+  group_by(Type) %>%
+  group_map(~ map_dbl(.x, function(y) round(sum(is.na(y))/length(y), digits = 3))) %>%
+  set_names(wide_data$Type %>% levels) %>%
+  lapply(function(x) enframe(x, name = 'metabolite', value = 'pct_missing'))
+
+co_cy_got_missingness <- inner_join(missingness_by_type_got$CO, missingness_by_type_got$CY, by = 'metabolite') %>%
+  rename(pct_missing_co = pct_missing.x, pct_missing_cy = pct_missing.y) %>%
+  mutate(co_minus_cy = pct_missing_co - pct_missing_cy)%>%
+  arrange(desc(abs(co_minus_cy)))
+
+
 
 
