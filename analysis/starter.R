@@ -155,7 +155,8 @@ wide_data_lipids <- subject_data %>%
     filter(!(Type %in% c("Other"))) %>%
     mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
     dplyr::select(-one_of("Raw", "RawScaled", "Trend", "Name", "Mode", "RunIndex")) %>%
-    spread(key=Lipid, value=Abundance)
+    spread(key=Lipid, value=Abundance) %>%
+    as_tibble(.name_repair = 'minimal')
 
 
 
@@ -345,15 +346,20 @@ importance <- function(fit, metabolites = TRUE){
     #coefficients_sorted <- coefficients[order(abs(coefficients), decreasing = TRUE) & abs(coefficients) > 0,]
     coefficients_sorted_with_zeroes <- coefficients[order(abs(coefficients), decreasing = TRUE),]
     coefficients_sorted <- coefficients_sorted_with_zeroes[coefficients_sorted_with_zeroes != 0]
-    
+    #doing basic cleaning that we want done, regardless of whether it's metabolite, lipid, or anything else
+    names(coefficients_sorted) <- names(coefficients_sorted) %>%
+        str_replace_all('`', '') %>%
+        str_replace_all('\\\\', '')
     
     if(metabolites == TRUE){
         #map metabolites to their names. keep the names of gender and age, since they aren't metabolites
-        names(coefficients_sorted) <- if_else(names(coefficients_sorted) %in% c('Age', 'GenderM', 'TypeCM', 'TypeCO', 'TypeCY', 'TypePD'),
+        names(coefficients_sorted) <- if_else(#names(coefficients_sorted) %in% c('Age', 'GenderM', 'TypeCM', 'TypeCO', 'TypeCY', 'TypePD', "APOE23", "APOE24", "APOE33", "APOE34", "APOE44", '(Intercept)',names(wide_data_lipids)),
+                                              !str_detect(names(coefficients_sorted), 'Result'), #take advantage of fact that all metabolites have "results" in name
                                               names(coefficients_sorted), 
-                                              str_replace_all(names(coefficients_sorted), ' Result.*', "") %>%
-                                                  str_replace_all('`', '') %>%
-                                                  str_replace_all('\\\\', '') %>%
+                                              str_replace_all(names(coefficients_sorted), 'Result.*', "") %>%
+                                                  str_replace_all('\\.$', '') %>%
+                                                  str_replace_all('^\\.+', '') %>%
+                                                  str_trim() %>%
                                                   sapply(function(x) all_matches[match(x, all_matches$Name), 'Metabolite'] %>% deframe))
     }
     
