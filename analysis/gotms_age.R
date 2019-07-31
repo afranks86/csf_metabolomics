@@ -1372,8 +1372,28 @@ ggsave('pred_truth_interaction_control_loo_5.png')
 
 library(ggbiplot)
 
-#change dataset to include age, ect.
-combined_c_pca <- prcomp(imputed_c_combined_df, scale = T, center = T)
+#change dataset to include co/cy/cm, apoe
+imputed_c_combined_full <- do.call(cbind, list(imputed_c_combined_Y, type = imputed_c_combined_labels, apoe = imputed_c_combined_apoe))
+
+combined_c_pca <- prcomp(imputed_c_combined_full, scale = T, center = T)
 plot(combined_c_pca, type = 'l')
 ggbiplot::ggscreeplot(combined_c_pca)
 ggbiplot::ggbiplot(combined_c_pca)
+
+
+
+###################
+
+### Looking at missingness ####
+
+###################
+
+
+missingness_by_type <- wide_data_combined %>% 
+  group_by(Type) %>%
+  group_map(~ map_int(.x, function(y) sum(is.na(y)))) %>%
+  set_names(wide_data_combined$Type %>% levels)
+
+old_minus_young_missingness <- missingness_by_type$CO - missingness_by_type$CY 
+
+
