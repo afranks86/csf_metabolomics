@@ -93,6 +93,9 @@ library(here)
 
 source(here("analysis/utility.R"))
 
+
+theme_set(theme_bw(base_size = 20))
+
 ############################
 
 ### Reading in Data ###

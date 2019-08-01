@@ -1421,16 +1421,74 @@ ggbiplot::ggbiplot(combined_c_pca)
 
 ###################
 
-#missingness as percent
-missingness_by_type_comb <- wide_data_combined %>% 
-  group_by(Type) %>%
-  group_map(~ map_dbl(.x, function(y) round(sum(is.na(y))/length(y), digits = 3))) %>%
-  set_names(wide_data_combined$Type %>% levels)
 
-co_cy_comb_missingness <- missingness_by_type_comb$CO - missingness_by_type_comb$CY
-co_cy_comb_missingness[co_cy_comb_missingness != 0] %>% sort
-pd_co_comb_missingness <- missingness_by_type_comb$PD - missingness_by_type_comb$CO
-pd_co_comb_missingness[pd_co_comb_missingness != 0] %>% sort
+#get sample size by type
+n_by_type_comb <- wide_data_combined %>%
+  group_by(Type) %>%
+  count %>%
+  spread(key = 'Type', value = 'n') %>%
+  rename_all(function(x) paste('n', x, sep = '_'))
+
+missingness_by_type_comb_counts <- wide_data_combined %>%
+  group_by(Type) %>%
+  group_map(~ map_int(.x, function(y) sum(is.na(y)))) %>%
+  set_names(wide_data_combined$Type %>% levels) %>%
+  lapply(function(x) enframe(x, name = 'name', value = 'num_missing')) 
+
+
+
+missingness_by_type_all <- reduce(missingness_by_type_comb_counts, inner_join, by = 'name') %>%
+  #set the names to show type
+  set_names(c('name', paste('num_missing',levels(wide_data_combined$Type), sep = '_'))) %>%
+  # #filter rows where all the missing count is the same? not quite precise since the sample size is different per type
+  filter(reduce(list(num_missing_AD, num_missing_CM,num_missing_CO,num_missing_CY,num_missing_PD), `==`)) %>%
+  filter(!(name %in% c('GBAStatus', 'cognitive_status'))) %>%
+  cbind(n_by_type_comb) %>%
+  mutate(pct_missing_AD = num_missing_AD/n_AD,
+         pct_missing_CM = num_missing_CM/n_CM,
+         pct_missing_CO = num_missing_CO/n_CO,
+         pct_missing_CY = num_missing_CY/n_CY,
+         pct_missing_PD = num_missing_PD/n_PD
+         ) %>%
+  rowwise() %>%
+  #mutate(p_value = (prop.test(x =  str_subset(names(.), 'num_missing'), n = str_subset(names(.), 'n_')))$p.value)
+  mutate(p_value = (prop.test(x = c(num_missing_AD, num_missing_CM, num_missing_CO, num_missing_CY, num_missing_PD), n = c(n_AD,n_CM,n_CO,n_CY,n_PD)))$p.value) %>%
+  filter(p_value <= 0.05) %>%
+  gather('Type', 'pct_missing', contains('pct_missing'))
+
+ggplot(missingness_by_type_all) +
+  geom_col(aes(name, pct_missing, fill = Type)) + 
+  coord_flip()+
+  scale_color_brewer(type = 'qual', palette = 'Set1')
+
+
+
+cy_co_comb_missingness <- inner_join(missingness_by_type_comb_counts$CY, missingness_by_type_comb_counts$CO, by = 'name') %>%
+  rename(num_missing_cy = num_missing.x, num_missing_co = num_missing.y) %>%
+  filter(num_missing_cy != num_missing_co) %>%
+  mutate(n_cy = n_by_type_comb$CY,
+         n_co = n_by_type_comb$CO,
+         pct_missing_cy = num_missing_cy / n_cy,
+         pct_missing_co = num_missing_co / n_co
+         ) %>%
+  #go rowwise to get p values
+  rowwise() %>%
+  mutate(p_value = (prop.test(x = c(num_missing_cy, num_missing_co), n= c(n_cy, n_co)))$p.value) %>%
+  #using 0.05 p value cutouff
+  filter(p_value <= 0.05) %>%
+  gather('Type', 'pct_missing', 'cy' = pct_missing_cy, 'co' = pct_missing_co)
+  
+
+
+ggplot(cy_co_comb_missingness) +
+  geom_col(aes(name,pct_missing, fill = Type)) + 
+  labs(title = 'Percent Missing in GOT/Lipid Data',
+       subtitle = 'CO and CY, filtered using ')
+  coord_flip() 
+
+
+
+
 
 
 missingness_by_type_lipids <- wide_data_lipids %>% 
@@ -1446,11 +1504,15 @@ co_cy_lipids_missingness <- inner_join(missingness_by_type_lipids$CO, missingnes
   mutate(co_minus_cy = pct_missing_co - pct_missing_cy)%>%
   arrange(desc(abs(co_minus_cy)))
 
-pd_co_lipids_missingness <- inner_join(missingness_by_type_lipids$PD, missingness_by_type_lipids$CO, by = 'lipid') %>%
+pd_co_comb_missingness <- inner_join(missingness_by_type_comb$PD, missingness_by_type_comb$CO, by = 'name') %>%
   rename(pct_missing_pd = pct_missing.x, pct_missing_co = pct_missing.y) %>%
   mutate(pd_minus_co = pct_missing_pd - pct_missing_co)%>%
   arrange(desc(abs(pd_minus_co)))
 
+ad_co_comb_missingness <- inner_join(missingness_by_type_comb$AD, missingness_by_type_comb$CO, by = 'name') %>%
+  rename(pct_missing_ad = pct_missing.x, pct_missing_co = pct_missing.y) %>%
+  mutate(ad_minus_co = pct_missing_ad - pct_missing_co)%>%
+  arrange(desc(abs(ad_minus_co)))
 
 
 
