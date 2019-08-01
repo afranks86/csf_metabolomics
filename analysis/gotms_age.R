@@ -1440,8 +1440,6 @@ missingness_by_type_comb_counts <- wide_data_combined %>%
 missingness_by_type_all <- reduce(missingness_by_type_comb_counts, inner_join, by = 'name') %>%
   #set the names to show type
   set_names(c('name', paste('num_missing',levels(wide_data_combined$Type), sep = '_'))) %>%
-  # #filter rows where all the missing count is the same? not quite precise since the sample size is different per type
-  filter(reduce(list(num_missing_AD, num_missing_CM,num_missing_CO,num_missing_CY,num_missing_PD), `==`)) %>%
   filter(!(name %in% c('GBAStatus', 'cognitive_status'))) %>%
   cbind(n_by_type_comb) %>%
   mutate(pct_missing_AD = num_missing_AD/n_AD,
@@ -1450,6 +1448,7 @@ missingness_by_type_all <- reduce(missingness_by_type_comb_counts, inner_join, b
          pct_missing_CY = num_missing_CY/n_CY,
          pct_missing_PD = num_missing_PD/n_PD
          ) %>%
+  #filter(reduce(list(pct_missing_AD, pct_missing_CM,pct_missing_CO,pct_missing_CY,pct_missing_PD), `==`)) %>%
   rowwise() %>%
   #mutate(p_value = (prop.test(x =  str_subset(names(.), 'num_missing'), n = str_subset(names(.), 'n_')))$p.value)
   mutate(p_value = (prop.test(x = c(num_missing_AD, num_missing_CM, num_missing_CO, num_missing_CY, num_missing_PD), n = c(n_AD,n_CM,n_CO,n_CY,n_PD)))$p.value) %>%
