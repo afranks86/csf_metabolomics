@@ -1440,7 +1440,7 @@ missingness_by_type_comb_counts <- wide_data_combined %>%
 missingness_by_type_all <- reduce(missingness_by_type_comb_counts, inner_join, by = 'name') %>%
   #set the names to show type
   set_names(c('name', paste('num_missing',levels(wide_data_combined$Type), sep = '_'))) %>%
-  filter(!(name %in% c('GBAStatus', 'cognitive_status'))) %>%
+  filter(!(name %in% c('GBAStatus', 'cognitive_status', 'GBA_T369M'))) %>%
   cbind(n_by_type_comb) %>%
   mutate(pct_missing_AD = num_missing_AD/n_AD,
          pct_missing_CM = num_missing_CM/n_CM,
@@ -1455,10 +1455,11 @@ missingness_by_type_all <- reduce(missingness_by_type_comb_counts, inner_join, b
   filter(p_value <= 0.05) %>%
   gather('Type', 'pct_missing', contains('pct_missing'))
 
-ggplot(missingness_by_type_all) +
-  geom_col(aes(name, pct_missing, fill = Type)) + 
-  coord_flip()+
-  scale_color_brewer(type = 'qual', palette = 'Set1')
+ggplot(missingness_by_type_all, aes(pct_missing, name)) +
+  geom_point(aes(color = Type), size = 3, position = position_jitter(width = 0.01, height = 0,seed = 1)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  theme(axis.text.x = element_text(angle= 90, hjust =1))
+  
 
 
 
