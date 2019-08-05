@@ -1245,7 +1245,7 @@ ggsave('pred_truth_c_female_loo_7.png')
 
 ## without APOE as a predictor ##
 imputed_c_features_combined_age_tmp <- imputed_c_combined_Y %>% 
-  as_tibble(.name_repair = 'minimal') %>%
+  as_tibble(.name_repair = 'universal') %>%
   select(-c(Age))
 
 #this gives us a formula with every column being column*gender + column2*gender + ..
@@ -1406,13 +1406,62 @@ ggsave('pred_truth_interaction_control_loo_5.png')
 library(ggbiplot)
 
 #change dataset to include co/cy/cm, apoe
-imputed_c_combined_full <- do.call(cbind, list(imputed_c_combined_Y, type = imputed_c_combined_labels, apoe = imputed_c_combined_apoe))
+  #drop intercept column
+imputed_c_combined_full <- do.call(cbind, list(imputed_c_combined_Y, type = imputed_c_combined_labels, apoe = imputed_c_combined_apoe))[,-1]
 
 combined_c_pca <- prcomp(imputed_c_combined_full, scale = T, center = T)
-plot(combined_c_pca, type = 'l')
 ggbiplot::ggscreeplot(combined_c_pca)
-ggbiplot::ggbiplot(combined_c_pca)
+#ggbiplot::ggbiplot(combined_c_pca, obs.scale = 1, choices = 1:2)
 
+combined_c_pca$x %>%
+  as_tibble %>%
+  ggplot(aes(PC1, PC2)) + 
+  geom_point(aes(color = imputed_c_combined_full[,'Age']), size = 3) + 
+  scale_color_distiller(type = 'seq') + 
+  labs(title = 'First Two Principal Components',
+       subtitle = 'Combined GOT + Lipids, age + gender + type + apoe',
+       color = 'Age')
+
+combined_c_pca$x %>%
+  as_tibble %>%
+  ggplot(aes(PC1, PC2)) + 
+  geom_point(aes(color = as.factor(imputed_c_combined_full[,'GenderM'])), size = 3) + 
+  scale_color_brewer(palette = 'Set2') + 
+  labs(title = 'First Two Principal Components',
+       subtitle = 'Combined GOT + Lipids, age + gender + type + apoe',
+       color = 'Male')
+
+combined_c_pca$x %>%
+  as_tibble %>%
+  ggplot(aes(PC1, PC2)) + 
+  geom_point(aes(color = imputed_c_combined_apoe), size = 3) + 
+  scale_color_brewer(palette = 'Set2') + 
+  labs(title = 'First Two Principal Components',
+       subtitle = 'Combined GOT + Lipids, age + gender + type + apoe',
+       color = 'APOE')
+
+combined_c_pca$x %>%
+  as_tibble %>%
+  ggplot(aes(PC1, PC2)) + 
+  geom_point(aes(color = imputed_c_combined_apoe%>% fct_collapse('1' = c('24','34','44'), '0' = c('22', '23', '33'))), size = 3) + 
+  scale_color_brewer(palette = 'Set2') + 
+  labs(title = 'First Two Principal Components',
+       subtitle = 'Combined GOT + Lipids, age + gender + type + apoe',
+       color = 'APOE4')
+
+
+
+
+
+
+
+# ggplot() + 
+#   geom_line(aes(1:length(combined_c_pca$sdev), combined_c_pca$sdev^2/sum(combined_c_pca$sdev^2))) + 
+#   geom_point() + 
+#   labs(title = 'Proportion of Variance Explained',
+#        subtitle = 'Combined GOT + Lipids + type + apoe + age + gender, all controls',
+#        x = 'Principal Component #',
+#        y = '% Total Variance Explained')
 
 
 ###################
@@ -1424,8 +1473,8 @@ ggbiplot::ggbiplot(combined_c_pca)
 
 #get sample size by type
 n_by_type_comb <- wide_data_combined %>%
-  group_by(Type) %>%
-  count %>%
+  group_by(Type) %>% 
+  tally() %>%
   spread(key = 'Type', value = 'n') %>%
   rename_all(function(x) paste('n', x, sep = '_'))
 
@@ -1458,7 +1507,10 @@ missingness_by_type_all <- reduce(missingness_by_type_comb_counts, inner_join, b
 ggplot(missingness_by_type_all, aes(pct_missing, name)) +
   geom_point(aes(color = Type), size = 3, position = position_jitter(width = 0.01, height = 0,seed = 1)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
-  theme(axis.text.x = element_text(angle= 90, hjust =1))
+  theme(axis.text.x = element_text(angle= 90, hjust =1)) + 
+  labs(title = 'Percent Missingness by Type',
+       subtitle = 'GOT + Lipids, filtered using 2-tailed Pearson Chi squared test, alpha = 0.05')
+ggsave('plots/combined_pct_missing.png')
   
 
 
@@ -1529,5 +1581,21 @@ co_cy_got_missingness <- inner_join(missingness_by_type_got$CO, missingness_by_t
   arrange(desc(abs(co_minus_cy)))
 
 
+
+
+
+
+
+
+### untargeted data
+processed_files_untargeted <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_untargeted_data*")
+load(max(file.path(data_path, 'analysis', processed_files_untargeted[grep("-20+", processed_files_untargeted)])), verbose = T)
+wide_data_untargeted <- subject_data %>%     
+  filter(!(Type %in% c("Other"))) %>%
+  unite("Metabolite", c("Metabolite", "Mode")) %>% 
+  #mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+  dplyr::select(-one_of("Raw", "RawScaled", "Trend",
+                        "RunIndex", "Name","Data File")) %>%
+  spread(key=Metabolite, value=Abundance)
 
 
