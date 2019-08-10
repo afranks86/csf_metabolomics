@@ -464,5 +464,92 @@ ggsave(filename = 'roc_lipids_pd_c_loo_matched5.png')
 
 
 
+############################
+
+### Gender vs C ###
+## {Lipids, GOT} ##
+
+############################
+
+imputed_c_comb <- filter_and_impute(wide_data_combined, c('CO', 'CM', 'CY'))
+imputed_c_gender_comb_y <- imputed_c_comb[[1]][, -which(colnames(imputed_c_comb[[1]]) == 'GenderM')]
+imputed_c_gender_comb_type <- imputed_c_comb[[2]] %>% 
+  fct_collapse(C = c('CO', 'CM', 'CY'))
+imputed_c_comb_gender <- imputed_c_comb[[1]][, 'GenderM'] %>%
+  as.factor %>%
+  fct_recode(M = '1', F = '0')
+
+#fit models with each of the alphas
+fit_c_gender_comb_list <- lapply(seq(0, 1, .1), function(x) fit_glmnet(imputed_c_gender_comb_y, imputed_c_comb_gender, alpha = x, penalize_age_gender = FALSE))
+#in sample prediction
+pred_c_gender_comb_list <- lapply(fit_c_gender_comb_list, 
+                              function(x) predict(x, newx = imputed_c_gender_comb_y, 
+                                                  type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_c_gender_comb_list <- lapply(fit_c_gender_comb_list, function(x) importance(x))
+
+importance_c_gender_comb_list[[6]] %>%
+  enframe(name = 'name', value= 'coefficient') 
+  
+
+importance_c_gender_comb_list%>% 
+  lapply(function(x) names(x) %>% 
+           na.omit) %>%
+  unlist %>%
+  table %>% enframe(name = 'name', value = 'num_appearances') %>%
+  arrange(desc(num_appearances))
+
+
+#roc for each of the alphas
+roc_c_gender_comb_list <- lapply(pred_c_gender_comb_list, function(x) fpr_tpr(x, imputed_c_comb_gender)) %>%
+  bind_rows(.id = 'alpha') %>%      #convert to long format with new id column alpha
+  mutate(alpha  = as.factor((as.numeric(alpha) - 1)*.1))
+
+#plot for all alphas
+#note: tpr and fpr are switched because the roc curve was going the wrong way
+ggplot(roc_c_gender_comb_list, mapping = aes(fpr, tpr, color = alpha))+ 
+  geom_line() + 
+  labs(title = 'ROC, Gender vs {CO, CM, CY}',
+       subtitle = 'GOT + Lipids, no Age, Gender Penalty')
+ggsave('roc_gender_c_comb_insample.png')
+
+
+#look at auc for each alpha.
+roc_c_gender_comb_list %>% 
+  group_by(alpha) %>%
+  slice(1) %>%
+  select(alpha, auc)
+
+
+## out of sample prediction using the loo fits
+## alpha = 0.5 had bestish
+
+fitpred_c_gender_loo <- lapply(1:nrow(imputed_c_gender_comb_y), function(x) loo_cvfit_glmnet(index = x, features = imputed_c_gender_comb_y, labels = imputed_c_comb_gender, 
+                                                                                     alpha = 0.5, penalize_age_gender = FALSE, family = 'binomial'))
+fit_c_gender_loo <- lapply(fitpred_c_gender_loo, function(x) x[[1]])
+pred_c_gender_loo <- lapply(fitpred_c_gender_loo, function(x) x[[2]]) %>% unlist
+importance_c_gender_loo_list <- lapply(fit_c_gender_loo, function(x) importance(x))
+importance_c_gender_loo_list%>% 
+  lapply(function(x) names(x) %>% 
+           na.omit) %>%
+  unlist %>%
+  table %>%
+  sort() %>% names
+
+
+
+
+roc_c_gender_loo <- fpr_tpr(pred_c_gender_loo, imputed_c_comb_gender)
+ggplot(roc_c_gender_loo) + 
+  geom_line(mapping = aes(fpr, tpr)) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+  theme_minimal() + 
+  labs(title = "ROC: Gender vs C",
+       subtitle = TeX('GOT + Lipids ,$\\alpha = 0.5$, loo'),
+       x = 'False Positive Rate',
+       y = 'True Positive Rate') + 
+  geom_text(x = 0.9, y = 0,label = paste0('AUC:', round(roc_c_gender_loo$auc[1], 3)))
+ggsave(filename = 'roc_comb_gender_c_loo_5.png')
+
 
 

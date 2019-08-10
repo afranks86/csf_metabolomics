@@ -1346,6 +1346,20 @@ pred_c_interaction_combined_loo_age <- lapply(fitpred_c_interaction_combined_loo
 
 #some measure of variable importance
 importance_c_interaction_combined_loo_age <- lapply(fit_c_interaction_combined_loo_age, function(x) importance(x))
+
+
+#look at ones with gender
+importance_c_interaction_combined_loo_age%>% 
+  lapply(function(x) names(x) %>% 
+           str_extract('GenderM.*') %>%
+           na.omit) %>%
+  unlist %>%
+  table
+  
+  
+
+
+
 mse_c_interaction_combined_loo_age <- mean((pred_c_interaction_combined_loo_age - imputed_c_combined_age)^2)
 resid_c_interaction_combined_loo_age <- pred_c_interaction_combined_loo_age - imputed_c_combined_age
 
@@ -1391,6 +1405,14 @@ ggplot(loo_c_interaction_age_table) +
        y = 'Predicted Age')
 ggsave('pred_truth_interaction_control_loo_5.png')
 
+
+ggplot(loo_c_interaction_age_table) + 
+  geom_point(aes(truth, pred, color = gender)) + 
+  scale_color_brewexzr(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: True vs Predicted Age',
+       subtitle = 'Combined GOT and Lipid with gender interaction, alpha = 0.5, loo',
+       x = 'True Age',
+       y = 'Predicted Age')
 
 #### #maybe look into group lasso?
 #https://stats.stackexchange.com/questions/296581/group-elastic-net
@@ -1587,15 +1609,5 @@ co_cy_got_missingness <- inner_join(missingness_by_type_got$CO, missingness_by_t
 
 
 
-### untargeted data
-processed_files_untargeted <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_untargeted_data*")
-load(max(file.path(data_path, 'analysis', processed_files_untargeted[grep("-20+", processed_files_untargeted)])), verbose = T)
-wide_data_untargeted <- subject_data %>%     
-  filter(!(Type %in% c("Other"))) %>%
-  unite("Metabolite", c("Metabolite", "Mode")) %>% 
-  #mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
-  dplyr::select(-one_of("Raw", "RawScaled", "Trend",
-                        "RunIndex", "Name","Data File")) %>%
-  spread(key=Metabolite, value=Abundance)
 
 

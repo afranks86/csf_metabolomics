@@ -102,17 +102,17 @@ theme_set(theme_bw(base_size = 20))
 
 ############################
 set.seed(1)
-data_path <- '~/course/ND_Metabolomics/'
-processed_files <- dir(path = data_path, pattern="^preprocessed_gotms_data*")
-## Most recent file
-load(max(file.path(data_path, processed_files[grep("-20+", processed_files)])))
-load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
-
-# data_path <- file.path('E:', 'Projects', 'metabolomics', 'ND_Metabolomics')
-# processed_files <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_gotms_data*")
+# data_path <- '~/course/ND_Metabolomics/'
+# processed_files <- dir(path = data_path, pattern="^preprocessed_gotms_data*")
 # ## Most recent file
-# load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])))
+# load(max(file.path(data_path, processed_files[grep("-20+", processed_files)])))
 # load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
+
+data_path <- file.path('E:', 'Projects', 'metabolomics', 'ND_Metabolomics')
+processed_files <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_gotms_data*")
+## Most recent file
+load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])))
+load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
 
 wide_data <- subject_data %>%     
     filter(!(Type %in% c("Other"))) %>%
@@ -144,13 +144,13 @@ wide_data_raw <- subject_data %>%
 
 ### NOTE: For lipids, need to load in new files. the GOT subject_data df is overwritten with the below lines!!
 
-# processed_files_lipids <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_lipid_data*")
-# ## Most recent file
-# load(max(file.path(data_path, 'analysis', processed_files_lipids[grep("-20+", processed_files_lipids)])))
+processed_files_lipids <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_lipid_data*")
+## Most recent file
+load(max(file.path(data_path, 'analysis', processed_files_lipids[grep("-20+", processed_files_lipids)])))
 
 
-processed_files_lipids <- dir(path = data_path, pattern="^preprocessed_lipid_data*")
-load(max(file.path(data_path, processed_files_lipids[grep("-20+", processed_files_lipids)])))
+# processed_files_lipids <- dir(path = data_path, pattern="^preprocessed_lipid_data*")
+# load(max(file.path(data_path, processed_files_lipids[grep("-20+", processed_files_lipids)])))
 
 
 
@@ -167,6 +167,29 @@ wide_data_combined <- wide_data %>%
     #remove duplicate columns
     select(-c(Age, Type, Gender, Batch, Index, GBAStatus, GBA_T369M, cognitive_status, APOE, Type2)) %>%
     left_join(wide_data_lipids, by = 'Id') 
+
+
+### untargeted data
+processed_files_untargeted <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_untargeted_data*")
+load(max(file.path(data_path, 'analysis', processed_files_untargeted[grep("-20+", processed_files_untargeted)])), verbose = T)
+wide_data_untargeted <- subject_data %>%     
+    filter(!(Type %in% c("Other"))) %>%
+    unite("Metabolite", c("Metabolite", "Mode")) %>% 
+    select(Age, Gender, APOE, Type, Metabolite, Abundance, GBAStatus, GBA_T369M, Name) %>%
+    #mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+    # dplyr::select(-one_of("Raw", "RawScaled", "Trend",
+    #                       "RunIndex", "Name", 'Id')) %>%
+    spread(key=Metabolite, value=Abundance)
+z
+
+
+untargeted_columns <- wide_data_untargeted %>% 
+    map_dbl(~ sum(is.na(.x))/nrow(wide_data_untargeted) < .9) %>%
+    names
+
+wide_data_untargeted <- wide_data_untargeted %>%
+    select(untargeted_columns)
+
 
 
 
