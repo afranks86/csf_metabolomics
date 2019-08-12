@@ -1408,7 +1408,7 @@ ggsave('pred_truth_interaction_control_loo_5.png')
 
 ggplot(loo_c_interaction_age_table) + 
   geom_point(aes(truth, pred, color = gender)) + 
-  scale_color_brewexzr(type = 'qual', palette = 'Set1') +
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: True vs Predicted Age',
        subtitle = 'Combined GOT and Lipid with gender interaction, alpha = 0.5, loo',
        x = 'True Age',
@@ -1607,6 +1607,256 @@ co_cy_got_missingness <- inner_join(missingness_by_type_got$CO, missingness_by_t
 
 
 
+
+##########################
+
+### Untargeted Age analysis for controls ###
+###  ###
+
+###########################
+
+imputed_c_untargeted <- filter_and_impute(wide_data_untargeted_dropped, types = c('CO', 'CY', 'CM'))
+
+imputed_c_untargeted_Y <- imputed_c_untargeted[[1]]
+imputed_c_untargeted_labels <- imputed_c_untargeted[[2]]
+imputed_c_untargeted_apoe <- imputed_c_untargeted[[3]]
+imputed_c_untargeted_gender <- imputed_c_untargeted_Y[,'GenderM'] %>% as.factor %>%
+  fct_recode(M = '1', F = '0')
+
+
+
+
+
+imputed_c_untargeted_age <- imputed_c_untargeted_Y[,'Age']
+# no type as a feature in this analysis. it's just metabolites + gender
+imputed_c_features_untargeted_age_tmp <- imputed_c_untargeted_Y %>% 
+  as_tibble %>%
+  #mutate(Type = imputed_c_labels) %>%
+  select(-Age)
+
+#transform factor vars into dummies
+imputed_c_features_untargeted_age <- model.matrix(~., imputed_c_features_untargeted_age_tmp)
+
+
+### list to determine alphas
+fit_c_untargeted_age_list <- lapply(seq(0,1,.1), function(x) fit_glmnet(imputed_c_features_untargeted_age, imputed_c_untargeted_age, 
+                                                                    family = 'gaussian', alpha = x, penalize_age_gender = FALSE))
+
+
+#in sample prediction
+pred_c_untargeted_age_list <- lapply(fit_c_untargeted_age_list, 
+                                 function(x) predict(x, newx = imputed_c_features_untargeted_age, 
+                                                     type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_c_untargeted_age_list <- lapply(fit_c_untargeted_age_list, function(x) importance(x, metabolites = FALSE))
+
+mse_c_untargeted_age_list <- lapply(pred_c_untargeted_age_list, function(x) mean((x - imputed_c_untargeted_age)^2))
+
+
+
+
+### leave one out using chosen alpha from above
+
+fitpred_c_untargeted_loo_age <- lapply(1:nrow(imputed_c_features_untargeted_age), function(x) loo_cvfit_glmnet(x, imputed_c_features_untargeted_age, imputed_c_untargeted_age, 
+                                                                                                       alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
+
+fit_c_untargeted_loo_age <- lapply(fitpred_c_untargeted_loo_age, function(x) x[[1]])
+pred_c_untargeted_loo_age <- lapply(fitpred_c_untargeted_loo_age, function(x) x[[2]]) %>%
+  unlist
+
+#some measure of variable importance
+importance_c_untargeted_loo_age <- lapply(fit_c_untargeted_loo_age, function(x) importance(x))
+mse_c_untargeted_loo_age <- mean((pred_c_untargeted_loo_age - imputed_c_untargeted_age)^2)
+resid_c_untargeted_loo_age <- pred_c_untargeted_loo_age - imputed_c_untargeted_age
+
+
+shapiro.test(resid_c_untargeted_loo_age)
+
+qplot(resid_c_untargeted_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.5')
+#ggsave('got_untargeted_age_control_resid_hist.png')
+qqnorm(resid_c_untargeted_loo_age)
+qqline(resid_c_untargeted_loo_age)
+
+
+### look at alpha = 0.5
+untargeted_c_loo_age_table <- tibble(truth = imputed_c_untargeted_age, 
+                                 pred = pred_c_untargeted_loo_age,
+                                 resid = truth - pred,
+                                 apoe = imputed_c_untargeted_apoe,
+                                 type = imputed_c_untargeted_labels,
+                                 gender = imputed_c_untargeted_gender,
+                                 apoe4 = apoe %>% fct_collapse('1' = c('24','34','44'), '0' = c('22', '23', '33'))
+)
+
+#### colored by APOE  ####
+#pred vs residuals
+ggplot(untargeted_c_loo_age_table) + 
+  geom_point(aes(pred, resid, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: Age vs Residuals',
+       subtitle = 'Untargeted, alpha = 0.5, loo',
+       x = 'Predicted Age',
+       y = 'Residuals (Truth - Pred)') #+ 
+#stat_ellipse(data = filter(age_untargeted_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
+#stat_ellipse(data = filter(age_untargeted_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
+ggsave('pred_age_residuals_control_untargeted_loo_5.png')
+
+
+ggplot(untargeted_c_loo_age_table) + 
+  geom_point(aes(truth, pred, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: True vs Predicted Age',
+       subtitle = 'untargeted, alpha = 0.5, loo',
+       x = 'True Age',
+       y = 'Predicted Age') + 
+  geom_abline(intercept = 0, slope = 1)
+ggsave('pred_truth_control_untargeted_loo_5.png')
+
+
+
+
+#########################
+
+### univariate regression on MISSINGNESS ~ Age + Gender for each metabolite ###
+
+########################
+
+missingness_metabolite_p <- function(data, metabolite){
+  metabolite <- sym(metabolite)
+  df <- data %>% 
+    mutate(missing = ifelse(is.na(!!metabolite), 1, 0)) %>%
+    select(missing, Gender, Age)
+  
+  fit <- glm(missing ~ Gender + Age, data = df, family = 'binomial')
+  null_fit <- glm(missing ~ 1, data = df, family = 'binomial')
+  
+  #need to manually get an overall p value from the logistic regression, by comparing dispersion to null model
+  compare <- anova(fit, null_fit, test = 'Chisq')
+  
+  #this is the p value
+  compare$`Pr(>Chi)`[2]
+}
+
+
+
+missingness_some_na_names <- wide_data_combined %>% 
+  #leaving only metabolites/lipids
+  dplyr::select(-one_of("Type2", "Type", "Gender", "Age", "APOE", "Batch",
+                        "Index", "GBAStatus", "Id", 
+                        "GBA_T369M", "cognitive_status")) %>%
+  #need at least one NA, but not all NA
+  dplyr::select_if(function(x) any(is.na(x)) & !all(is.na(x))) %>%
+  names
+
+missingness_p_values <- map(missingness_some_na_names, ~missingness_metabolite_p(wide_data_combined, .x)) %>%
+  unlist
+
+#bh corrected controls for false discovery rate.
+missingness_p_table <- bind_cols('name' = missingness_some_na_names, 
+                                 'og_p_value' = missingness_p_values,
+                                 'bh_q_value' = p.adjust(missingness_p_values, method = 'BH')) 
+
+missingness_p_table$name <- if_else(!str_detect(missingness_p_table$name, 'Result'), #take advantage of fact that all metabolites have "results" in name
+  missingness_p_table$name, 
+  str_replace_all(missingness_p_table$name, 'Result.*', "") %>%
+    str_replace_all('\\.$', '') %>%
+    str_replace_all('^\\.+', '') %>%
+    str_trim() %>%
+    sapply(function(x) all_matches[match(x, all_matches$Name), 'Metabolite'] %>% deframe))
+
+
+  
+missingness_p_table %>% 
+  arrange(bh_q_value) %>%
+  filter(bh_q_value < 0.05) %>%
+  write_csv('combined_missingnesS_p.csv')
+
+
+
+
+
+#########################
+
+### univariate regression on MISSINGNESS ~ Age + Gender for each metabolite ###
+## on Untargeted ##
+
+########################
+
+
+missingness_some_na_names_untargeted <- wide_data_untargeted %>% 
+  #leaving only metabolites/lipids
+  dplyr::select(-one_of("Type", "Gender", "Age", "APOE", "GBAStatus", "Id", 
+                        "GBA_T369M")) %>%
+  #need at least one NA, but not all NA
+  dplyr::select_if(function(x) any(is.na(x)) & !all(is.na(x))) %>%
+  names
+
+missingness_p_values_untargeted <- map(missingness_some_na_names_untargeted, ~missingness_metabolite_p(wide_data_untargeted, .x)) %>%
+  unlist
+
+#bh corrected controls for false discovery rate.
+missingness_p_table_untargeted <- bind_cols('name' = missingness_some_na_names_untargeted, 
+                                 'og_p_value' = missingness_p_values_untargeted,
+                                 'bh_q_value' = p.adjust(missingness_p_values_untargeted, method = 'BH'))
+
+
+
+missingness_p_table_untargeted %>% 
+  arrange(bh_q_value) %>%
+  filter(bh_q_value < 0.05) %>%
+  write_csv('untargeted_missingness_p.csv')
+
+
+
+#########################
+
+### univariate regression on Age ~ Metabolite + Gender for each metabolite ###
+
+########################
+
+age_metabolite_p <- function(data, metabolite){
+  metabolite <- sym(metabolite)
+  df <- data %>%
+    select(Age, !!metabolite)
+  fit <- glm(Age ~ ., data = df)
+  
+  #get the p vlaue
+  (summary(fit))$coefficients[,4][2]
+
+}
+
+imputed_all_combined_df <- imputed_all_combined[[1]] %>% 
+  as_tibble %>%
+  select(-c('(Intercept)', 'GenderM'))
+
+ age_metabolite_p_values <- imputed_all_combined_df %>% 
+  names %>%
+   map(~age_metabolite_p(imputed_all_combined_df, .x)) %>%
+   unlist %>%
+   enframe(value = 'og_p_value')
+ 
+ age_metabolite_p_table <- cbind(age_metabolite_p_values, 
+                                 'bh_p_value' = p.adjust(age_metabolite_p_values$og_p_value, method = 'BH'))
+ 
+ 
+age_metabolite_p_table %>%
+  filter(bh_p_value < 0.05) %>%
+  write_csv('combined_age_metabolite_p.csv')
+
+
+#### now do the same for untargeted
+imputed_c_untargeted_df <- imputed_c_untargeted_Y %>%
+  as_tibble() %>%
+  select(-c('(Intercept)', GenderM))
+
+age_untargeted_p_values <- imputed_c_untargeted_df %>%
+  names %>%
+  map(~age_metabolite_p(imputed_c_untargeted_df, .x)) %>%
+  unlist %>%
+  enframe(value = 'og_p_value')
+
+age_untargeted_p_table <- cbind(age_untargeted_p_values, 
+                                'bh_p_value' = p.adjust(age_untargeted_p_values$og_p_value, method = 'BH'))
 
 
 

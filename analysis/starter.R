@@ -89,6 +89,8 @@ library(Matrix)
 library(glmnet)
 library(ROCR)
 library(latex2exp)
+library(rsample)
+library(yardstick)
 library(here)
 
 source(here("analysis/utility.R"))
@@ -175,19 +177,19 @@ load(max(file.path(data_path, 'analysis', processed_files_untargeted[grep("-20+"
 wide_data_untargeted <- subject_data %>%     
     filter(!(Type %in% c("Other"))) %>%
     unite("Metabolite", c("Metabolite", "Mode")) %>% 
-    select(Age, Gender, APOE, Type, Metabolite, Abundance, GBAStatus, GBA_T369M, Name) %>%
+    select(Age, Gender, APOE, Type, Metabolite, Abundance, GBAStatus, GBA_T369M, Id) %>%
     #mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
     # dplyr::select(-one_of("Raw", "RawScaled", "Trend",
     #                       "RunIndex", "Name", 'Id')) %>%
     spread(key=Metabolite, value=Abundance)
-z
 
 
 untargeted_columns <- wide_data_untargeted %>% 
     map_dbl(~ sum(is.na(.x))/nrow(wide_data_untargeted) < .9) %>%
     names
 
-wide_data_untargeted <- wide_data_untargeted %>%
+#smaller wide_data_untargeted with columns with < .9 NA
+wide_data_untargeted_dropped <- wide_data_untargeted %>%
     select(untargeted_columns)
 
 
@@ -225,15 +227,18 @@ filter_and_impute <- function(data, types){
     filtered_features <- filtered %>%
         dplyr::select(-one_of("Type2", "Type", "Gender", "Age", "APOE", "Batch",
                               #"Data File",  (not found in dataset, so removed)
-                              "Index", "GBAStatus", "Id",
+                              "Index", "GBAStatus", "Id", 
                               "GBA_T369M", "cognitive_status"))
         
 
+    #0 doesn't make any sense, so we remove all zeroes with NA, and remove totally NA columns and rows
     Y <- filtered_features %>% 
+        mutate_all(~replace(., .==0, NA)) %>%
         #remove columns that are ALL NA
         select_if(function(x) any(!is.na(x))) %>%
+        janitor::remove_empty('rows') %>%
         as.matrix()
-    Y[Y==0] <- NA
+    #Y[Y==0] <- NA
     
     #do imputation
     Yt <- amelia(t(Y), m = 1, empri = 100)$imputations$imp1
