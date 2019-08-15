@@ -92,6 +92,7 @@ library(latex2exp)
 library(rsample)
 library(yardstick)
 library(here)
+library(CCA)
 
 source(here("analysis/utility.R"))
 

@@ -353,6 +353,19 @@ ggplot(got_lipids_resid) +
   geom_point(aes(got, lipids))
 
 
+
+##### regularized canonical correlation between got and lipids #####
+# First, get data without the common variables age, gender, intercept (first column and last 2)
+got_only_c_Y <- imputed_c_got_Y[,-c(1, ncol(imputed_c_got_Y)-1, ncol(imputed_c_got_Y))]
+lipids_only_c_Y <- imputed_c_lipids_Y[,-c(1, ncol(imputed_c_lipids_Y)-1, ncol(imputed_c_lipids_Y))]
+
+#grid for the loocv to find ridge param. defaults to 5x5 gridsearch
+params <- CCA::estim.regul(got_only_c_Y, lipids_only_c_Y)
+rcca <- CCA::rcc(got_only_c_Y, lipids_only_c_Y, params$lambda1, params$lamda2)
+barplot(rcca$cor, xlab = "Dimension",
+        + ylab = "Canonical correlations", ylim = c(0,1))
+
+
 ##########################
 
 ### GOT and Lipids Age analysis for controls ###
@@ -362,18 +375,18 @@ ggplot(got_lipids_resid) +
 ###########################
 
 # #impute data and split into parts
-# set.seed(1)
-# imputed_c_combined <- filter_and_impute(wide_data_combined,c('CO', 'CM', 'CY'))
-# imputed_c_combined_Y <- imputed_c_combined[[1]]
-# imputed_c_combined_labels <- imputed_c_combined[[2]]
-# imputed_c_combined_apoe <- imputed_c_combined[[3]]
-# imputed_c_combined_age <- imputed_c_combined_Y[,'Age']
+set.seed(1)
+imputed_c_combined <- filter_and_impute(wide_data_combined,c('CO', 'CM', 'CY'))
+imputed_c_combined_Y <- imputed_c_combined[[1]]
+imputed_c_combined_labels <- imputed_c_combined[[2]]
+imputed_c_combined_apoe <- imputed_c_combined[[3]]
+imputed_c_combined_age <- imputed_c_combined_Y[,'Age']
 
-c_index <- which(imputed_comb_all[[2]] %in% c('CM', 'CY', 'CO'))
-imputed_c_combined_Y <- (imputed_comb_all[[1]])[c_index,]
-imputed_c_combined_labels <- (imputed_comb_all[[2]])[c_index]
-imputed_c_combined_apoe <- (imputed_comb_all[[3]])[c_index]
-imputed_c_combined_age <- imputed_c_combined_Y[, 'Age']
+# c_index <- which(imputed_comb_all[[2]] %in% c('CM', 'CY', 'CO'))
+# imputed_c_combined_Y <- (imputed_comb_all[[1]])[c_index,]
+# imputed_c_combined_labels <- (imputed_comb_all[[2]])[c_index]
+# imputed_c_combined_apoe <- (imputed_comb_all[[3]])[c_index]
+# imputed_c_combined_age <- imputed_c_combined_Y[, 'Age']
 imputed_c_combined_gender <- imputed_c_combined_Y[,'GenderM'] %>% as.factor %>%
   fct_recode(M = '1', F = '0')
 
@@ -1523,7 +1536,8 @@ missingness_by_type_all <- reduce(missingness_by_type_comb_counts, inner_join, b
   rowwise() %>%
   #mutate(p_value = (prop.test(x =  str_subset(names(.), 'num_missing'), n = str_subset(names(.), 'n_')))$p.value)
   mutate(p_value = (prop.test(x = c(num_missing_AD, num_missing_CM, num_missing_CO, num_missing_CY, num_missing_PD), n = c(n_AD,n_CM,n_CO,n_CY,n_PD)))$p.value) %>%
-  filter(p_value <= 0.05) %>%
+  cbind('bh_q_value' = p.adjust(.$p_value, method = 'BH')) %>%
+  filter(bh_q_value < 0.05) %>%
   gather('Type', 'pct_missing', contains('pct_missing'))
 
 ggplot(missingness_by_type_all, aes(pct_missing, name)) +
@@ -1531,7 +1545,7 @@ ggplot(missingness_by_type_all, aes(pct_missing, name)) +
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   theme(axis.text.x = element_text(angle= 90, hjust =1)) + 
   labs(title = 'Percent Missingness by Type',
-       subtitle = 'GOT + Lipids, filtered using 2-tailed Pearson Chi squared test, alpha = 0.05')
+       subtitle = 'GOT + Lipids, filtered using 2-tailed Pearson Chi squared test, BH q< 0.05')
 ggsave('plots/combined_pct_missing.png')
   
 
@@ -1768,7 +1782,7 @@ missingness_p_table$name <- if_else(!str_detect(missingness_p_table$name, 'Resul
   
 missingness_p_table %>% 
   arrange(bh_q_value) %>%
-  filter(bh_q_value < 0.05) %>%
+  #filter(bh_q_value < 0.05) %>%
   write_csv('combined_missingnesS_p.csv')
 
 
@@ -1803,7 +1817,7 @@ missingness_p_table_untargeted <- bind_cols('name' = missingness_some_na_names_u
 
 missingness_p_table_untargeted %>% 
   arrange(bh_q_value) %>%
-  filter(bh_q_value < 0.05) %>%
+  #filter(bh_q_value < 0.05) %>%
   write_csv('untargeted_missingness_p.csv')
 
 
@@ -1840,8 +1854,28 @@ imputed_all_combined_df <- imputed_all_combined[[1]] %>%
  
  
 age_metabolite_p_table %>%
-  filter(bh_p_value < 0.05) %>%
   write_csv('combined_age_metabolite_p.csv')
+
+
+#### Now do the same for controls only
+imputed_c_combined_df <- imputed_c_combined_Y %>%
+  as_tibble() %>%
+  select(-c('(Intercept)', GenderM))
+
+age_combined_p_values <- imputed_c_combined_df %>%
+  names %>%
+  map(~age_metabolite_p(imputed_c_combined_df, .x)) %>%
+  unlist %>%
+  enframe(value = 'og_p_value')
+
+age_combined_p_table <- cbind(age_combined_p_values, 
+                                'bh_p_value' = p.adjust(age_combined_p_values$og_p_value, method = 'BH'))
+
+age_combined_p_table %>%
+  filter(bh_p_value < 0.05) %>%
+
+
+
 
 
 #### now do the same for untargeted
@@ -1860,4 +1894,33 @@ age_untargeted_p_table <- cbind(age_untargeted_p_values,
 
 
 
+##### now do the same for lipids only
+imputed_c_lipids_df <- imputed_c_lipids_Y %>%
+ as_tibble() %>%
+  select(-c('(Intercept)', GenderM))
+age_lipids_p_values <- imputed_c_lipids_df %>%
+  names %>%
+  map(~age_metabolite_p(imputed_c_lipids_df, .x)) %>%
+  unlist %>%
+  enframe(value = 'og_p_value')
 
+age_lipids_p_table <- cbind(age_lipids_p_values, 
+                                'bh_p_value' = p.adjust(age_lipids_p_values$og_p_value, method = 'BH'))
+age_lipids_p_table %>% 
+  filter(bh_p_value < 0.05)
+
+
+#### now do the same for got only
+imputed_c_got_df <- imputed_c_got_Y %>%
+  as_tibble() %>%
+  select(-c('(Intercept)', GenderM))
+age_got_p_values <- imputed_c_got_df %>%
+  names %>%
+  map(~age_metabolite_p(imputed_c_got_df, .x)) %>%
+  unlist %>%
+  enframe(value = 'og_p_value')
+
+age_got_p_table <- cbind(age_got_p_values, 
+                            'bh_p_value' = p.adjust(age_got_p_values$og_p_value, method = 'BH'))
+age_got_p_table %>% 
+  filter(bh_p_value < 0.05)
