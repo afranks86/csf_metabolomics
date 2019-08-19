@@ -1735,20 +1735,26 @@ ggsave('pred_truth_control_untargeted_loo_5.png')
 
 ########################
 
-missingness_metabolite_p <- function(data, metabolite){
+#' Returns list of overall p value, p value for gender, p value for age only.
+#' @param data is must have some NA
+#' @param form is a formula for the logistic regression
+#' @param metabolite is lipid/metabolite, as a string
+missingness_metabolite_p <- function(data, form, metabolite){
   metabolite <- sym(metabolite)
   df <- data %>% 
-    mutate(missing = ifelse(is.na(!!metabolite), 1, 0)) %>%
-    select(missing, Gender, Age)
+    mutate(missing = ifelse(is.na(eval(metabolite)), 1, 0))
   
-  fit <- glm(missing ~ Gender + Age, data = df, family = 'binomial')
-  null_fit <- glm(missing ~ 1, data = df, family = 'binomial')
+  fit <- glm(form, data = df, family = 'binomial', maxit = 100)
+  null_fit <- glm(missing ~ 1, data = df, family = 'binomial', maxit = 100)
   
   #need to manually get an overall p value from the logistic regression, by comparing dispersion to null model
   compare <- anova(fit, null_fit, test = 'Chisq')
   
-  #this is the p value
-  compare$`Pr(>Chi)`[2]
+  overall_p <- compare$`Pr(>Chi)`[2]
+  # -1 removes intercept
+  individual_p <- summary(fit)$coefficients[-1,'Pr(>|z|)'] %>% as.list
+  c('overall' = overall_p, individual_p)
+  
 }
 
 
@@ -1762,13 +1768,24 @@ missingness_some_na_names <- wide_data_combined %>%
   dplyr::select_if(function(x) any(is.na(x)) & !all(is.na(x))) %>%
   names
 
-missingness_p_values <- map(missingness_some_na_names, ~missingness_metabolite_p(wide_data_combined, .x)) %>%
+form_missing_genderAge <- formula(missing~Gender + Age)
+missingness_overall_p_values <- purrr::map(missingness_some_na_names, ~missingness_metabolite_p(wide_data_combined,form_missing_genderAge, .x)[[1]]) %>%
   unlist
+missingness_gender_p_values <- purrr::map(missingness_some_na_names, ~missingness_metabolite_p(wide_data_combined,form_missing_genderAge, .x)[[2]]) %>%
+  unlist
+missingness_age_p_values <- purrr::map(missingness_some_na_names, ~missingness_metabolite_p(wide_data_combined,form_missing_genderAge, .x)[[3]]) %>%
+  unlist
+
 
 #bh corrected controls for false discovery rate.
 missingness_p_table <- bind_cols('name' = missingness_some_na_names, 
-                                 'og_p_value' = missingness_p_values,
-                                 'bh_q_value' = p.adjust(missingness_p_values, method = 'BH')) 
+                                 'og_overall_p_value' = missingness_overall_p_values,
+                                 'og_gender_p_value' = missingness_gender_p_values,
+                                 'og_age_p_value' = missingness_age_p_values,
+                                 'bh_overall_q_value' = p.adjust(missingness_overall_p_values, method = 'BH'),
+                                 'bh_gender_q_value' = p.adjust(missingness_gender_p_values, method = 'BH'),
+                                 'bh_age_q_value' = p.adjust(missingness_age_p_values, method = 'BH')
+                                 ) 
 
 missingness_p_table$name <- if_else(!str_detect(missingness_p_table$name, 'Result'), #take advantage of fact that all metabolites have "results" in name
   missingness_p_table$name, 
@@ -1783,8 +1800,149 @@ missingness_p_table$name <- if_else(!str_detect(missingness_p_table$name, 'Resul
 missingness_p_table %>% 
   arrange(bh_q_value) %>%
   #filter(bh_q_value < 0.05) %>%
-  write_csv('combined_missingnesS_p.csv')
+  write_csv('combined_missingness_p.csv')
 
+
+missingness_p_table %>%
+  arrange(bh_gender_q_value) 
+
+bh_missingness_age <- missingness_p_table %>%
+  arrange(bh_age_q_value) %>%
+  filter(bh_age_q_value < 0.01)
+
+bh_missingness_overall <- missingness_p_table %>%
+  arrange(bh_overall_q_value) %>%
+  filter(bh_overall_q_value < 0.01)
+
+intersect(bh_missingness_age$name, bh_missingness_overall$name)
+
+
+#########################
+
+### univariate regression on MISSINGNESS ~ Age +Type for each metabolite ###
+
+########################
+
+
+# indicators for AD, PD
+wide_data_combined_adpd <- wide_data_combined %>%
+  mutate(typeAD = ifelse(Type == 'AD', 1,0),
+         typePD = ifelse(Type == 'PD', 1, 0))
+
+
+formula_missing_ageType <- formula(missing ~ Age + typeAD + typePD)
+missingness_overall_ageType_p_values <- purrr::map(missingness_some_na_names, ~missingness_metabolite_p(wide_data_combined_adpd, formula_missing_ageType, .x)[[1]]) %>%
+  unlist
+missingness_age_ageType_p_values <- purrr::map(missingness_some_na_names, ~missingness_metabolite_p(wide_data_combined_adpd, formula_missing_ageType, .x)[[2]]) %>%
+  unlist
+missingness_ad_ageType_p_values <- purrr::map(missingness_some_na_names, ~missingness_metabolite_p(wide_data_combined_adpd, formula_missing_ageType, .x)[[3]]) %>%
+  unlist
+missingness_pd_ageType_p_values <- purrr::map(missingness_some_na_names, ~missingness_metabolite_p(wide_data_combined_adpd, formula_missing_ageType, .x)[[4]]) %>%
+  unlist
+
+
+
+#bh corrected controls for false discovery rate.
+missingness_ageType_p_table <- bind_cols('name' = missingness_some_na_names, 
+                                 'og_overall_p_value' = missingness_overall_ageType_p_values,
+                                 'og_age_p_value' = missingness_age_ageType_p_values,
+                                 'og_ad_p_value' = missingness_ad_ageType_p_values,
+                                 'og_pd_p_value' = missingness_pd_ageType_p_values,
+                                 'bh_overall_q_value' = p.adjust(missingness_overall_ageType_p_values, method = 'BH'),
+                                 'bh_age_q_value' = p.adjust(missingness_age_ageType_p_values, method = 'BH'),
+                                 'bh_ad_q_value' = p.adjust(missingness_ad_ageType_p_values, method = 'BH'),
+                                 'bh_pd_q_value' = p.adjust(missingness_pd_ageType_p_values, method = 'BH')
+) 
+
+missingness_ageType_p_table$name <- if_else(!str_detect(missingness_ageType_p_table$name, 'Result'), #take advantage of fact that all metabolites have "results" in name
+                                    missingness_ageType_p_table$name, 
+                                    str_replace_all(missingness_ageType_p_table$name, 'Result.*', "") %>%
+                                      str_replace_all('\\.$', '') %>%
+                                      str_replace_all('^\\.+', '') %>%
+                                      str_trim() %>%
+                                      sapply(function(x) all_matches[match(x, all_matches$Name), 'Metabolite'] %>% deframe))
+
+
+
+missingness_ageType_p_table %>% 
+  arrange(bh_overall_q_value) %>%
+  #filter(bh_q_value < 0.05) %>%
+  write_csv('combined_missingness_ageType_p.csv')
+
+missingness_ageType_p_table %>%
+  arrange(bh_pd_q_value)
+
+missingness_ageType_p_table %>%
+  arrange(bh_ad_q_value)
+
+missingness_ageType_p_table %>%
+  filter(bh_ad_q_value < 0.05)
+
+a <- missingness_ageType_p_table %>%
+  filter(bh_age_q_value < 0.01)
+
+b <- missingness_ageType_p_table %>%
+  filter(bh_overall_q_value < 0.01)
+
+
+
+  
+
+
+#########################
+
+### univariate regression on MISSINGNESS ~ Gender +Type for each metabolite ###
+
+########################
+
+
+# indicators for AD, PD
+
+formula_missing_genderType <- formula(missing ~ Gender + typeAD + typePD)
+missingness_overall_genderType_p_values <- purrr::map(missingness_some_na_names, ~missingness_metabolite_p(wide_data_combined_adpd, formula_missing_genderType, .x)[[1]]) %>%
+  unlist
+missingness_gender_genderType_p_values <- purrr::map(missingness_some_na_names, ~missingness_metabolite_p(wide_data_combined_adpd, formula_missing_genderType, .x)[[2]]) %>%
+  unlist
+missingness_ad_genderType_p_values <- purrr::map(missingness_some_na_names, ~missingness_metabolite_p(wide_data_combined_adpd, formula_missing_genderType, .x)[[3]]) %>%
+  unlist
+missingness_pd_genderType_p_values <- purrr::map(missingness_some_na_names, ~missingness_metabolite_p(wide_data_combined_adpd, formula_missing_genderType, .x)[[4]]) %>%
+  unlist
+
+
+
+#bh corrected controls for false discovery rate.
+missingness_genderType_p_table <- bind_cols('name' = missingness_some_na_names, 
+                                         'og_overall_p_value' = missingness_overall_genderType_p_values,
+                                         'og_gender_p_value' = missingness_gender_genderType_p_values,
+                                         'og_ad_p_value' = missingness_ad_genderType_p_values,
+                                         'og_pd_p_value' = missingness_pd_genderType_p_values,
+                                         'bh_overall_q_value' = p.adjust(missingness_overall_genderType_p_values, method = 'BH'),
+                                         'bh_gender_q_value' = p.adjust(missingness_gender_genderType_p_values, method = 'BH'),
+                                         'bh_ad_q_value' = p.adjust(missingness_ad_genderType_p_values, method = 'BH'),
+                                         'bh_pd_q_value' = p.adjust(missingness_pd_genderType_p_values, method = 'BH')
+) 
+
+missingness_genderType_p_table$name <- if_else(!str_detect(missingness_genderType_p_table$name, 'Result'), #take advantgender of fact that all metabolites have "results" in name
+                                            missingness_genderType_p_table$name, 
+                                            str_replace_all(missingness_genderType_p_table$name, 'Result.*', "") %>%
+                                              str_replace_all('\\.$', '') %>%
+                                              str_replace_all('^\\.+', '') %>%
+                                              str_trim() %>%
+                                              sapply(function(x) all_matches[match(x, all_matches$Name), 'Metabolite'] %>% deframe))
+
+
+
+missingness_genderType_p_table %>% 
+  arrange(bh_overall_q_value) %>%
+  #filter(bh_q_value < 0.05) %>%
+  write_csv('combined_missingness_genderType_p.csv')
+
+missingness_genderType_p_table %>% lapply(min)
+
+missingness_genderType_p_table %>%
+  arrange(bh_overall_q_value) %>%
+  filter(bh_overall_q_value < 0.1)
+  
 
 
 
@@ -1805,8 +1963,13 @@ missingness_some_na_names_untargeted <- wide_data_untargeted %>%
   dplyr::select_if(function(x) any(is.na(x)) & !all(is.na(x))) %>%
   names
 
-missingness_p_values_untargeted <- map(missingness_some_na_names_untargeted, ~missingness_metabolite_p(wide_data_untargeted, .x)) %>%
+missingness_overall_p_values_untargeted <- map(missingness_some_na_names_untargeted, ~missingness_metabolite_p(wide_data_untargeted, form, .x)[[1]]) %>%
   unlist
+missingness_age_p_values_untargeted <- map(missingness_some_na_names_untargeted, ~missingness_metabolite_p(wide_data_untargeted, form, .x)[[2]]) %>%
+  unlist
+missingness_gender_p_values_untargeted <- map(missingness_some_na_names_untargeted, ~missingness_metabolite_p(wide_data_untargeted, form, .x)[[3]]) %>%
+  unlist
+
 
 #bh corrected controls for false discovery rate.
 missingness_p_table_untargeted <- bind_cols('name' = missingness_some_na_names_untargeted, 
@@ -1822,6 +1985,7 @@ missingness_p_table_untargeted %>%
 
 
 
+
 #########################
 
 ### univariate regression on Age ~ Metabolite + Gender for each metabolite ###
@@ -1834,8 +1998,13 @@ age_metabolite_p <- function(data, metabolite){
     select(Age, !!metabolite)
   fit <- glm(Age ~ ., data = df)
   
-  #get the p vlaue
-  (summary(fit))$coefficients[,4][2]
+  #get the t-value and p score (excluding intercept)
+  tryCatch({
+    enframe(summary(fit)$coefficients[-1,3:4]) %>% spread(key = name, value = value) %>%
+    cbind('name' = rlang::as_string(metabolite))
+  },
+  error = function(w) cat('metabolite is ', metabolite)
+  )
 
 }
 
@@ -1845,9 +2014,11 @@ imputed_all_combined_df <- imputed_all_combined[[1]] %>%
 
  age_metabolite_p_values <- imputed_all_combined_df %>% 
   names %>%
-   map(~age_metabolite_p(imputed_all_combined_df, .x)) %>%
-   unlist %>%
-   enframe(value = 'og_p_value')
+   setdiff('Age') %>%
+   purrr::map(~age_metabolite_p(imputed_all_combined_df, .x)) %>%
+   purrr::reduce(rbind) %>%
+   as_tibble() %>%
+   rename('og_p_value' = `Pr(>|t|)``)
  
  age_metabolite_p_table <- cbind(age_metabolite_p_values, 
                                  'bh_p_value' = p.adjust(age_metabolite_p_values$og_p_value, method = 'BH'))
@@ -1864,19 +2035,28 @@ imputed_c_combined_df <- imputed_c_combined_Y %>%
 
 age_combined_p_values <- imputed_c_combined_df %>%
   names %>%
-  map(~age_metabolite_p(imputed_c_combined_df, .x)) %>%
-  unlist %>%
-  enframe(value = 'og_p_value')
+  setdiff('Age') %>%
+  purrr::map(~age_metabolite_p(imputed_c_combined_df, .x)) %>%
+  purrr::reduce(rbind) %>%
+  as_tibble() %>%
+  dplyr::rename('og_p_value' =  `Pr(>|t|)`)
+
 
 age_combined_p_table <- cbind(age_combined_p_values, 
-                                'bh_p_value' = p.adjust(age_combined_p_values$og_p_value, method = 'BH'))
+                              'bh_p_value' = p.adjust(age_combined_p_values$og_p_value, method = 'BH'))
 
-age_combined_p_table %>%
-  filter(bh_p_value < 0.05) %>%
+age_combined_bh_cut <- age_combined_p_table %>%
+  mutate(name = str_replace_all(name, '`', ''))
+  filter(bh_p_value < 0.01)
 
+#### combine with m/z and retention time
+mz_retention_minus <- read_csv(file.path('..', 'ND_Metabolomics', 'data', 'Got-MS', 'measurement_ESI-.csv'))
+mz_rentention_plus <- read_csv(file.path('..', 'ND_Metabolomics', 'data', 'Got-MS', 'measurement_ESI+.csv'))
+identification_plus <- read_csv(file.path('..', 'ND_Metabolomics', 'data', 'Got-MS', 'identification ESI+.csv'))
 
-
-
+id_columns <- all_matches %>% 
+  rowwise() %>% 
+  mutate(newcol = paste(`Precursor Ion`, `Product Ion`, sep = '_'))
 
 #### now do the same for untargeted
 imputed_c_untargeted_df <- imputed_c_untargeted_Y %>%
@@ -1924,3 +2104,59 @@ age_got_p_table <- cbind(age_got_p_values,
                             'bh_p_value' = p.adjust(age_got_p_values$og_p_value, method = 'BH'))
 age_got_p_table %>% 
   filter(bh_p_value < 0.05)
+
+
+
+
+
+
+
+
+
+
+
+
+#########################
+
+### univariate regression on Gender ~ Metabolite for each metabolite/lipid ###
+
+########################
+
+
+imputed_c_combined_gender_df <- imputed_c_combined_Y %>%
+  as_tibble() %>%
+  rename_all(function(x) str_replace_all(x, "`", "")) %>%
+  select(-c('(Intercept)', Age))
+
+gender_metabolite_p <- function(data, metabolite){
+  metabolite <- sym(metabolite)
+  formula <- formula(paste0("GenderM ~ `", metabolite, '`'))
+  fit <- glm(formula, data = data, family = 'binomial')
+  
+  summary(fit)$coefficients[,'Pr(>|z|)'][2]
+}
+
+
+metabolite_lipid_names <- names(imputed_c_combined_gender_df) %>% setdiff('GenderM')
+gender_p_values <- purrr::map(metabolite_lipid_names, ~gender_metabolite_p(imputed_c_combined_gender_df, .x)) %>%
+  unlist
+
+#bh corrected controls for false discovery rate.
+gender_p_table <- bind_cols('name' = metabolite_lipid_names, 
+                            'og_p_value' = gender_p_values,
+                            'bh_q_value' = p.adjust(gender_p_values, method = 'BH')) 
+
+gender_p_table$name <- if_else(!str_detect(gender_p_table$name, 'Result'), #take advantage of fact that all metabolites have "results" in name
+                                    gender_p_table$name, 
+                                    str_replace_all(gender_p_table$name, 'Result.*', "") %>%
+                                      str_replace_all('\\.$', '') %>%
+                                      str_replace_all('^\\.+', '') %>%
+                                      str_trim() %>%
+                                      sapply(function(x) all_matches[match(x, all_matches$Name), 'Metabolite'] %>% deframe))
+
+
+
+gender_p_table %>% 
+  arrange(bh_q_value) %>%
+  #filter(bh_q_value < 0.05) %>%
+  write_csv('combined_gender_p.csv')
