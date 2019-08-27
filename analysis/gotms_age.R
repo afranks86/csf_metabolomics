@@ -360,10 +360,10 @@ got_only_c_Y <- imputed_c_got_Y[,-c(1, ncol(imputed_c_got_Y)-1, ncol(imputed_c_g
 lipids_only_c_Y <- imputed_c_lipids_Y[,-c(1, ncol(imputed_c_lipids_Y)-1, ncol(imputed_c_lipids_Y))]
 
 #grid for the loocv to find ridge param. defaults to 5x5 gridsearch
-params <- CCA::estim.regul(got_only_c_Y, lipids_only_c_Y)
-rcca <- CCA::rcc(got_only_c_Y, lipids_only_c_Y, params$lambda1, params$lamda2)
-barplot(rcca$cor, xlab = "Dimension",
-        + ylab = "Canonical correlations", ylim = c(0,1))
+# params <- CCA::estim.regul(got_only_c_Y, lipids_only_c_Y)
+# rcca <- CCA::rcc(got_only_c_Y, lipids_only_c_Y, params$lambda1, params$lamda2)
+# barplot(rcca$cor, xlab = "Dimension",
+#         + ylab = "Canonical correlations", ylim = c(0,1))
 
 
 ##########################
@@ -685,7 +685,7 @@ ggsave('pred_age_residuals_adpd_4.png')
 ggplot(adpd_age_table_4) + 
   geom_point(aes(truth, pred, color = type)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
-  labs(title = 'Control: True vs Predicted Age (trained on control)',
+  labs(title = 'AD/PD: True vs Predicted Age (trained on control)',
        subtitle = 'Combined GOT and Lipid, alpha = 0.4',
        x = 'True Age',
        y = 'Predicted Age') + 
@@ -695,7 +695,7 @@ ggsave('pred_age_truth_adpd_4.png')
 ggplot(adpd_age_table_4) + 
   geom_point(aes(truth, pred, color = apoe4)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
-  labs(title = 'Control: True vs Predicted Age (trained on control)',
+  labs(title = 'AD/PD: True vs Predicted Age (trained on control)',
        subtitle = 'Combined GOT and Lipid, alpha = 0.4',
        x = 'True Age',
        y = 'Predicted Age')
@@ -1988,7 +1988,7 @@ missingness_p_table_untargeted %>%
 
 #########################
 
-### univariate regression on Age ~ Metabolite + Gender for each metabolite ###
+### univariate regression on Age ~ Metabolite for each metabolite ###
 
 ########################
 
@@ -2018,7 +2018,7 @@ imputed_all_combined_df <- imputed_all_combined[[1]] %>%
    purrr::map(~age_metabolite_p(imputed_all_combined_df, .x)) %>%
    purrr::reduce(rbind) %>%
    as_tibble() %>%
-   rename('og_p_value' = `Pr(>|t|)``)
+   rename('og_p_value' = `Pr(>|t|)`)
  
  age_metabolite_p_table <- cbind(age_metabolite_p_values, 
                                  'bh_p_value' = p.adjust(age_metabolite_p_values$og_p_value, method = 'BH'))
@@ -2033,7 +2033,7 @@ imputed_c_combined_df <- imputed_c_combined_Y %>%
   as_tibble() %>%
   select(-c('(Intercept)', GenderM))
 
-age_combined_p_values <- imputed_c_combined_df %>%
+age_c_combined_p_values <- imputed_c_combined_df %>%
   names %>%
   setdiff('Age') %>%
   purrr::map(~age_metabolite_p(imputed_c_combined_df, .x)) %>%
@@ -2042,21 +2042,31 @@ age_combined_p_values <- imputed_c_combined_df %>%
   dplyr::rename('og_p_value' =  `Pr(>|t|)`)
 
 
-age_combined_p_table <- cbind(age_combined_p_values, 
-                              'bh_p_value' = p.adjust(age_combined_p_values$og_p_value, method = 'BH'))
+age_c_combined_p_table <- cbind(age_c_combined_p_values, 
+                              'bh_p_value' = p.adjust(age_c_combined_p_values$og_p_value, method = 'BH'))
 
 age_combined_bh_cut <- age_combined_p_table %>%
   mutate(name = str_replace_all(name, '`', ''))
   filter(bh_p_value < 0.01)
+  
+  
+## for mummichog
+#age_combined_
 
-#### combine with m/z and retention time
-mz_retention_minus <- read_csv(file.path('..', 'ND_Metabolomics', 'data', 'Got-MS', 'measurement_ESI-.csv'))
-mz_rentention_plus <- read_csv(file.path('..', 'ND_Metabolomics', 'data', 'Got-MS', 'measurement_ESI+.csv'))
-identification_plus <- read_csv(file.path('..', 'ND_Metabolomics', 'data', 'Got-MS', 'identification ESI+.csv'))
 
-id_columns <- all_matches %>% 
-  rowwise() %>% 
-  mutate(newcol = paste(`Precursor Ion`, `Product Ion`, sep = '_'))
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 #### now do the same for untargeted
 imputed_c_untargeted_df <- imputed_c_untargeted_Y %>%
@@ -2065,12 +2075,37 @@ imputed_c_untargeted_df <- imputed_c_untargeted_Y %>%
 
 age_untargeted_p_values <- imputed_c_untargeted_df %>%
   names %>%
-  map(~age_metabolite_p(imputed_c_untargeted_df, .x)) %>%
-  unlist %>%
-  enframe(value = 'og_p_value')
+  setdiff('Age') %>%
+  purrr::map(~age_metabolite_p(imputed_c_untargeted_df, .x)) %>%
+  purrr::reduce(rbind) %>%
+  as_tibble() %>%
+  dplyr::rename('og_p_value' =  `Pr(>|t|)`) %>%
+  dplyr::mutate(name = str_replace_all(name, "`", "")) %>%
+  tidyr::separate(col = name, into = c('Metabolite1','Metabolite2', 'Mode'), sep = '_') %>%
+  tidyr::unite(col = "Metabolite", Metabolite1, Metabolite2)
 
 age_untargeted_p_table <- cbind(age_untargeted_p_values, 
                                 'bh_p_value' = p.adjust(age_untargeted_p_values$og_p_value, method = 'BH'))
+
+
+mz_retention_untargeted <- raw_data_untargeted %>%
+  group_by(Metabolite, Mode) %>%
+  slice(1) %>%
+  select(Metabolite, Mode, `m/z`, `Retention time (min)`)
+
+# Left join because age_untargeted has less columns. pull out only significant (.05 level)
+mummichog_untargeted <- age_untargeted_p_table %>% 
+  left_join(mz_retention_untargeted, by = c('Metabolite', 'Mode')) %>%
+  filter(bh_p_value < 0.05) %>%
+  select('mz' = `m/z`, 'rtime' = `Retention time (min)`, 'p-value' = bh_p_value, 't-score' = `t value`, Metabolite, Mode)
+
+mummichog_untargeted %>% 
+  filter(Mode == 'neg') %>%
+  write_tsv('mummichog_untargeted_neg.txt')
+
+mummichog_untargeted %>% 
+  filter(Mode == 'pos') %>%
+  write_tsv('mummichog_untargeted_pos.txt')
 
 
 
@@ -2160,3 +2195,9 @@ gender_p_table %>%
   arrange(bh_q_value) %>%
   #filter(bh_q_value < 0.05) %>%
   write_csv('combined_gender_p.csv')
+
+
+
+
+
+### maybe play around with metaboanalyst package

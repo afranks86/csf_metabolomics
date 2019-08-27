@@ -115,7 +115,7 @@ data_path <- file.path('E:', 'Projects', 'metabolomics', 'ND_Metabolomics')
 processed_files <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_gotms_data*")
 ## Most recent file
 load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])))
-load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
+load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"), verbose = T)
 
 wide_data <- subject_data %>%     
     filter(!(Type %in% c("Other"))) %>%
@@ -175,6 +175,9 @@ wide_data_combined <- wide_data %>%
 ### untargeted data
 processed_files_untargeted <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_untargeted_data*")
 load(max(file.path(data_path, 'analysis', processed_files_untargeted[grep("-20+", processed_files_untargeted)])), verbose = T)
+
+raw_data_untargeted <- subject_data
+
 wide_data_untargeted <- subject_data %>%     
     filter(!(Type %in% c("Other"))) %>%
     unite("Metabolite", c("Metabolite", "Mode")) %>% 
@@ -196,6 +199,7 @@ wide_data_untargeted_dropped <- wide_data_untargeted %>%
 
 
 
+load(file.path(data_path, 'data', 'preprocessed_csf_data.RData'), verbose =  T)
 
 #create foldid so we can test different alphas on same sets
 set.seed(1)
