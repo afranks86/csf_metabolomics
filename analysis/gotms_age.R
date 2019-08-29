@@ -1728,6 +1728,124 @@ ggsave('pred_truth_control_untargeted_loo_5.png')
 
 
 
+##########################
+
+### targeted Age analysis for controls ###
+###  ###
+
+###########################
+
+imputed_c_targeted <- filter_and_impute(wide_data_targeted, types = c('CO', 'CY', 'CM'))
+
+imputed_c_targeted_Y <- imputed_c_targeted[[1]]
+imputed_c_targeted_labels <- imputed_c_targeted[[2]]
+imputed_c_targeted_apoe <- imputed_c_targeted[[3]]
+imputed_c_targeted_gender <- imputed_c_targeted_Y[,'GenderM'] %>% as.factor %>%
+  fct_recode(M = '1', F = '0')
+
+
+
+
+
+imputed_c_targeted_age <- imputed_c_targeted_Y[,'Age']
+# no type as a feature in this analysis. it's just metabolites + gender
+imputed_c_features_targeted_age_tmp <- imputed_c_targeted_Y %>% 
+  as_tibble %>%
+  #mutate(Type = imputed_c_labels) %>%
+  select(-Age)
+
+#transform factor vars into dummies
+imputed_c_features_targeted_age <- model.matrix(~., imputed_c_features_targeted_age_tmp)
+
+
+### list to determine alphas
+fit_c_targeted_age_list <- lapply(seq(0,1,.1), function(x) fit_glmnet(imputed_c_features_targeted_age, imputed_c_targeted_age, 
+                                                                        family = 'gaussian', alpha = x, penalize_age_gender = FALSE))
+
+
+#in sample prediction
+pred_c_targeted_age_list <- lapply(fit_c_targeted_age_list, 
+                                     function(x) predict(x, newx = imputed_c_features_targeted_age, 
+                                                         type = 'response', s = 'lambda.min'))
+#some measure of variable importance
+importance_c_targeted_age_list <- lapply(fit_c_targeted_age_list, function(x) importance(x, metabolites = FALSE))
+
+importance_c_targeted_age_names <- importance_c_targeted_age_list[[6]] %>% 
+  enframe(name = 'name', value= 'coefficient') %>%
+  filter(name != '(Intercept)') %>%
+  select(name) %>% deframe
+
+
+mse_c_targeted_age_list <- lapply(pred_c_targeted_age_list, function(x) mean((x - imputed_c_targeted_age)^2))
+
+
+
+
+### leave one out using chosen alpha from above
+
+fitpred_c_targeted_loo_age <- lapply(1:nrow(imputed_c_features_targeted_age), function(x) loo_cvfit_glmnet(x, imputed_c_features_targeted_age, imputed_c_targeted_age, 
+                                                                                                               alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
+
+fit_c_targeted_loo_age <- lapply(fitpred_c_targeted_loo_age, function(x) x[[1]])
+pred_c_targeted_loo_age <- lapply(fitpred_c_targeted_loo_age, function(x) x[[2]]) %>%
+  unlist
+
+#some measure of variable importance
+importance_c_targeted_loo_age <- lapply(fit_c_targeted_loo_age, function(x) importance(x))
+mse_c_targeted_loo_age <- mean((pred_c_targeted_loo_age - imputed_c_targeted_age)^2)
+resid_c_targeted_loo_age <- pred_c_targeted_loo_age - imputed_c_targeted_age
+
+
+shapiro.test(resid_c_targeted_loo_age)
+
+qplot(resid_c_targeted_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.5')
+#ggsave('got_targeted_age_control_resid_hist.png')
+qqnorm(resid_c_targeted_loo_age)
+qqline(resid_c_targeted_loo_age)
+
+
+### look at alpha = 0.5
+targeted_c_loo_age_table <- tibble(truth = imputed_c_targeted_age, 
+                                     pred = pred_c_targeted_loo_age,
+                                     resid = truth - pred,
+                                     apoe = imputed_c_targeted_apoe,
+                                     type = imputed_c_targeted_labels,
+                                     gender = imputed_c_targeted_gender,
+                                     apoe4 = apoe %>% fct_collapse('1' = c('24','34','44'), '0' = c('22', '23', '33'))
+)
+
+#### colored by APOE  ####
+#pred vs residuals
+ggplot(targeted_c_loo_age_table) + 
+  geom_point(aes(pred, resid, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: Age vs Residuals',
+       subtitle = 'Targeted, alpha = 0.5, loo',
+       x = 'Predicted Age',
+       y = 'Residuals (Truth - Pred)') #+ 
+#stat_ellipse(data = filter(age_targeted_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
+#stat_ellipse(data = filter(age_targeted_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
+ggsave('pred_age_residuals_control_targeted_loo_5.png')
+
+
+ggplot(targeted_c_loo_age_table) + 
+  geom_point(aes(truth, pred, color = gender)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: True vs Predicted Age',
+       subtitle = 'Targeted, alpha = 0.5, loo',
+       x = 'True Age',
+       y = 'Predicted Age') + 
+  geom_abline(intercept = 0, slope = 1) + 
+  geom_text(x = 80, y = 20, label = paste0('MAE:', abs(targeted_c_loo_age_table$truth - targeted_c_loo_age_table$pred) %>% mean %>% round(3))) 
+ggsave('pred_truth_control_targeted_loo_5.png')
+
+
+
+
+
+
+
+
 
 #########################
 
@@ -2142,8 +2260,33 @@ age_got_p_table %>%
 
 
 
+#### now do the same for targeted
+imputed_c_targeted_df <- imputed_c_targeted_Y %>%
+  as_tibble() %>%
+  select(-c('(Intercept)', GenderM))
 
+age_targeted_p_values <- imputed_c_targeted_df %>%
+  names %>%
+  setdiff('Age') %>%
+  purrr::map(~age_metabolite_p(imputed_c_targeted_df, .x)) %>%
+  purrr::reduce(rbind) %>%
+  as_tibble() %>%
+  dplyr::rename('og_p_value' =  `Pr(>|t|)`) %>%
+  dplyr::mutate(name = str_replace_all(name, "`", "")) #%>%
+  #tidyr::separate(col = name, into = c('Metabolite', 'Mode'), sep = '_')
+  
 
+age_targeted_p_table <- cbind(age_targeted_p_values, 
+                                'bh_p_value' = p.adjust(age_targeted_p_values$og_p_value, method = 'BH'))
+
+univar_targeted_names <- age_targeted_p_table %>%
+  filter(bh_p_value < 0.01) %>% select(name) %>% deframe
+
+setdiff(importance_c_targeted_age_names, univar_targeted_names)
+setdiff(univar_targeted_names, importance_c_targeted_age_names)
+intersect(univar_targeted_names, importance_c_targeted_age_names)
+
+# look at name overlap between here and the .5 glmnet
 
 
 

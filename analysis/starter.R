@@ -198,8 +198,17 @@ wide_data_untargeted_dropped <- wide_data_untargeted %>%
 
 
 
-
+# Targeted data
 load(file.path(data_path, 'data', 'preprocessed_csf_data.RData'), verbose =  T)
+wide_data_targeted <- subject_data %>%     
+    filter(!(Type %in% c("Other"))) %>%
+    unite("Metabolite", c("Metabolite", "Mode")) %>% 
+    select(Age, Gender, APOE, Type, Metabolite, Abundance, GBAStatus, GBA_T369M, Id) %>%
+    #mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+    # dplyr::select(-one_of("Raw", "RawScaled", "Trend",
+    #                       "RunIndex", "Name", 'Id')) %>%
+    spread(key=Metabolite, value=Abundance)
+
 
 #create foldid so we can test different alphas on same sets
 set.seed(1)
