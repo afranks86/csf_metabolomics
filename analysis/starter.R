@@ -245,7 +245,7 @@ filter_and_impute <- function(data, types){
                               "GBA_T369M", "cognitive_status"))
         
 
-    #0 doesn't make any sense, so we remove all zeroes with NA, and remove totally NA columns and rows
+    #0 doesn't make any sense, so we replace all zeroes with NA, and remove totally NA columns and rows
     Y <- filtered_features %>% 
         mutate_all(~replace(., .==0, NA)) %>%
         #remove columns that are ALL NA
@@ -263,6 +263,9 @@ filter_and_impute <- function(data, types){
                Gender = filtered$Gender)
     #convert gender to a dummy var (1 if male, 0 if female)
     Y <- model.matrix(~., Y_tmp)
+    
+    colnames(Y) <- str_replace_all(colnames(Y), '`', '') %>%
+        str_replace_all('\\\\', '')
     
     
     #keep gba for potential gba analysis. GBA is only non-NA for PD
@@ -343,28 +346,62 @@ loo_pred_glmnet <- function(lambda, index, features, labels, alpha, penalize_age
     return(pred)
 }
 
-# alternative to loo_pred_glmnet
-# does loocv cross validation on each fit (With n-1 obs) and returns the fit. 
-#leads to n different lambda.mins. idea is to compare fits to see how similar they are
+# # alternative to loo_pred_glmnet
+# # does loocv cross validation on each fit (With n-1 obs) and returns the fit. 
+# #leads to n different lambda.mins. idea is to compare fits to see how similar they are
+# loo_cvfit_glmnet <- function(index, features, labels, alpha, penalize_age_gender = TRUE, family = 'binomial'){
+#     #features and label, leaving out one observation for training
+#     loo_features <- features[-index,]
+#     loo_labels <- labels[-index]
+#     
+#     #features and labels on the held out observation (converting it to the right type and giving names)
+#         #ie when doing loo, length(labels) = 1
+#     new_features <- features[index,] %>% matrix(nrow = length(index), dimnames = list(1:length(index), colnames(loo_features) ))
+#     new_label <- labels[index]
+#     
+#     
+#     #fit on n-1
+#     #note that this does cv, so we will have n lambda.mins
+#     fit <- fit_glmnet(loo_features, loo_labels, family = family, alpha = alpha, penalize_age_gender = penalize_age_gender)
+#     
+#     #predict on 1
+#     pred <- predict(fit, newx = new_features, type = 'response', s = 'lambda.min')
+#     return(list(fit, pred))
+# }
+
+# Fit a model on the full data to find lambda, and use that lambda for leave one out.
 loo_cvfit_glmnet <- function(index, features, labels, alpha, penalize_age_gender = TRUE, family = 'binomial'){
+    full_fit <- fit_glmnet(features = features, labels = labels, alpha = alpha, family = family, penalize_age_gender = penalize_age_gender)
+    lambda <- full_fit$lambda.min
+    
+    
     #features and label, leaving out one observation for training
     loo_features <- features[-index,]
     loo_labels <- labels[-index]
     
-    #features and labels on the held out observation (converting it to the right type and giving names)
-        #ie when doing loo, length(labels) = 1
-    new_features <- features[index,] %>% matrix(nrow = length(index), dimnames = list(1:length(index), colnames(loo_features) ))
+    #features and labels on the held out observation
+    
+    new_features <- features[index,] %>% matrix(nrow = 1, dimnames = list('', colnames(loo_features) ))
     new_label <- labels[index]
     
+    #set penalty factors. (1 for each is default)
+    p_factors <- rep(1, ncol(loo_features))
+    #set age/gender pfactors to 0 if penalize_age_gender flag is true. (assumes age/gender is very important)
+    if(penalize_age_gender == FALSE){
+        age_gender_index <- which(colnames(loo_features) %in% c('Age', 'GenderM'))
+        p_factors[age_gender_index] <- 0
+    }
     
+    #documentation says we should avoid passing in single value of lambda. how else to do?
     #fit on n-1
-    #note that this does cv, so we will have n lambda.mins
-    fit <- fit_glmnet(loo_features, loo_labels, family = family, alpha = alpha, penalize_age_gender = penalize_age_gender)
+    fit <- glmnet(loo_features, loo_labels, family = family, lambda = lambda, alpha = alpha, standardize = TRUE, penalty.factor = p_factors)
     
     #predict on 1
-    pred <- predict(fit, newx = new_features, type = 'response', s = 'lambda.min')
-    return(list(fit, pred))
+    pred <- predict(fit, newx = new_features, type = 'response', s = lambda)
+    return(list(fit,pred))
 }
+
+
 
 
 

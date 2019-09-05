@@ -102,7 +102,7 @@ sw_c_age_list <- lapply(residuals_c_age_list, function(x) (shapiro.test(x))$p.va
 
 #performance is similar across the alphas, so let's just pick one pretty arb
 #all plots look pretty normal!
-resid_9 <- residuals_age_list[[9]]
+resid_9 <- residuals_c_age_list[[9]]
 
 plot(resid_9)
 abline(h = 0)
@@ -128,7 +128,7 @@ ggplot(age_c_table_3) +
   geom_point(aes(truth, resid, color = apoe)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: Age vs Residuals',
-       subtitle = 'GOT, Residuals = Truth - Pred, alpha = 0.7',
+       subtitle = 'GOT, Residuals = Truth - Pred, alpha = 0.5',
        x = 'True Age',
        y = 'Predicted Age') #+ 
 #stat_ellipse(data = filter(age_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
@@ -141,7 +141,7 @@ ggplot(age_c_table_3) +
 ### leave one out using chosen alpha from above
 
 fitpred_c_got_loo_age <- lapply(1:nrow(imputed_c_got_features_age), function(x) loo_cvfit_glmnet(x, imputed_c_got_features_age, imputed_c_got_age, 
-                                                                                                     alpha = 0.4, family = 'gaussian', penalize_age_gender = FALSE))
+                                                                                                     alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
 
 fit_c_got_loo_age <- lapply(fitpred_c_got_loo_age, function(x) x[[1]])
 pred_c_got_loo_age <- lapply(fitpred_c_got_loo_age, function(x) x[[2]]) %>%
@@ -155,13 +155,13 @@ resid_c_got_loo_age <- pred_c_got_loo_age - imputed_c_got_age
 
 shapiro.test(resid_c_got_loo_age)
 
-qplot(resid_c_got_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.4')
+qplot(resid_c_got_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.5')
 #ggsave('got_got_age_control_resid_hist.png')
 qqnorm(resid_c_got_loo_age)
 qqline(resid_c_got_loo_age)
 
 
-### look at alpha = 0.4
+### look at alpha = 0.5
 got_c_loo_age_table <- tibble(truth = imputed_c_got_age, 
                                pred = pred_c_got_loo_age,
                                resid = truth - pred,
@@ -178,7 +178,7 @@ ggplot(got_c_loo_age_table) +
   geom_point(aes(pred, resid, color = apoe)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: Age vs Residuals',
-       subtitle = 'GOT, alpha = 0.4, loo',
+       subtitle = 'GOT, alpha = 0.5, loo',
        x = 'Predicted Age',
        y = 'Residuals (Truth - Pred)') #+ 
 #stat_ellipse(data = filter(age_got_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
@@ -190,7 +190,7 @@ ggplot(got_c_loo_age_table) +
   geom_point(aes(truth, pred, color = apoe)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: True vs Predicted Age',
-       subtitle = 'GOT, alpha = 0.4, loo',
+       subtitle = 'GOT, alpha = 0.5, loo',
        x = 'True Age',
        y = 'Predicted Age') + 
   geom_abline(intercept = 0, slope = 1)
@@ -284,7 +284,7 @@ mse_c_lipids_age_list <- lapply(pred_c_lipids_age_list, function(x) mean((x - im
 ### leave one out using chosen alpha from above
 
 fitpred_c_lipids_loo_age <- lapply(1:nrow(imputed_c_features_lipids_age), function(x) loo_cvfit_glmnet(x, imputed_c_features_lipids_age, imputed_c_lipids_age, 
-                                                                                                         alpha = 0.4, family = 'gaussian', penalize_age_gender = FALSE))
+                                                                                                         alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
 
 fit_c_lipids_loo_age <- lapply(fitpred_c_lipids_loo_age, function(x) x[[1]])
 pred_c_lipids_loo_age <- lapply(fitpred_c_lipids_loo_age, function(x) x[[2]]) %>%
@@ -298,13 +298,13 @@ resid_c_lipids_loo_age <- pred_c_lipids_loo_age - imputed_c_lipids_age
 
 shapiro.test(resid_c_lipids_loo_age)
 
-qplot(resid_c_lipids_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.4')
+qplot(resid_c_lipids_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.5')
 #ggsave('got_lipids_age_control_resid_hist.png')
 qqnorm(resid_c_lipids_loo_age)
 qqline(resid_c_lipids_loo_age)
 
 
-### look at alpha = 0.4
+### look at alpha = 0.5
 lipids_c_loo_age_table <- tibble(truth = imputed_c_lipids_age, 
                         pred = pred_c_lipids_loo_age,
                         resid = truth - pred,
@@ -320,7 +320,7 @@ ggplot(lipids_c_loo_age_table) +
   geom_point(aes(pred, resid, color = apoe)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: Age vs Residuals',
-       subtitle = 'Lipid, alpha = 0.4, loo',
+       subtitle = 'Lipid, alpha = 0.5, loo',
        x = 'Predicted Age',
        y = 'Residuals (Truth - Pred)') #+ 
 #stat_ellipse(data = filter(age_lipids_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
@@ -332,7 +332,7 @@ ggplot(lipids_c_loo_age_table) +
   geom_point(aes(truth, pred, color = apoe)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: True vs Predicted Age',
-       subtitle = 'Lipids, alpha = 0.4, loo',
+       subtitle = 'Lipids, alpha = 0.5, loo',
        x = 'True Age',
        y = 'Predicted Age') + 
   geom_abline(intercept = 0, slope = 1)
@@ -431,9 +431,9 @@ which.min(mse_combined_age_list)
 
 
 #c plots look pretty normal!
-resid_combined_4 <- residuals_combined_age_list[[5]]
+resid_combined_4 <- residuals_combined_age_list[[6]]
 
-qplot(resid_combined_4, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.4')
+qplot(resid_combined_4, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.5')
 ggsave('got_lipids_age_control_resid_hist.png')
 
 
@@ -444,9 +444,9 @@ qqline(resid_combined_4)
 
 
 
-### look at alpha = 0.4
+### look at alpha = 0.5
 age_combined_table_4 <- tibble(truth = imputed_c_combined_age, 
-                               pred = as.numeric(pred_combined_age_list[[5]]),
+                               pred = as.numeric(pred_combined_age_list[[6]]),
                                resid = truth - pred,
                                apoe = imputed_c_combined_apoe,
                                type = imputed_c_combined_labels
@@ -458,7 +458,7 @@ ggplot(age_combined_table_4) +
   geom_point(aes(pred, resid, color = apoe)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: Predicted Age vs Residuals',
-       subtitle = 'Combined GOT and Lipid, alpha = 0.4',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5',
        x = 'Predicted Age',
        y = 'Residuals (Truth - Pred)')
 ggsave('age_pred_resid_c_insample_4.png', width = 7.26, height = 7.26, units = 'in')
@@ -469,7 +469,7 @@ ggplot(age_combined_table_4) +
   geom_point(aes(truth, pred, color = apoe)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: True vs Predicted (in-sample) Age',
-       subtitle = 'Combined GOT and Lipid, alpha = 0.4',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5',
        x = 'True Age',
        y = 'Predicted Age (in-sample)')
 ggsave('age_true_pred_c_insample_4.png', width = 7.26, height = 7.26, units = 'in')
@@ -481,17 +481,17 @@ age_combined_table_4 %>%
   select(apoe, type) %>%
   table
 
-age_combined_table_3 <- age_combined_table_3 %>%
+age_combined_table_4 <- age_combined_table_4 %>%
   mutate(apoe = ifelse(apoe %in% c(24, 34, 44), 4, 0))
 
 #quick lm to see if there's a linear relationship between apoe and pred
-fit <- lm(pred~apoe+ truth, data = age_combined_table_3)
+fit <- lm(pred~apoe+ truth, data = age_combined_table_4)
 summary(fit)
 
-fit2 <- lm(pred ~ apoe, data = age_combined_table_3)
+fit2 <- lm(pred ~ apoe, data = age_combined_table_4)
 summary(fit2)
 
-fit3 <- lm(resid ~ apoe, data = age_combined_table_3)
+fit3 <- lm(resid ~ apoe, data = age_combined_table_4)
 
 
 
@@ -509,9 +509,9 @@ fit3 <- lm(resid ~ apoe, data = age_combined_table_3)
 ### Note: It's really expensive to do a list of alphas like we do with in sample prediction, so I'm just pulling the single alpha based on the insample list
 
 
-#now try with alpha = 0.4
+#now try with alpha = 0.5
 fitpred_combined_loo_age <- lapply(1:nrow(imputed_c_features_combined_age), function(x) loo_cvfit_glmnet(x, imputed_c_features_combined_age, imputed_c_combined_age, 
-                                                           alpha = 0.4, family = 'gaussian', penalize_age_gender = FALSE))
+                                                           alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
 
 fit_combined_loo_age <- lapply(fitpred_combined_loo_age, function(x) x[[1]])
 pred_combined_loo_age <- lapply(fitpred_combined_loo_age, function(x) x[[2]]) %>%
@@ -525,13 +525,13 @@ resid_combined_loo_age <- pred_combined_loo_age - imputed_c_combined_age
 
 shapiro.test(resid_combined_loo_age)
 
-qplot(resid_combined_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.4')
+qplot(resid_combined_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.5')
 #ggsave('got_lipids_age_control_resid_hist.png')
 qqnorm(resid_combined_loo_age)
 qqline(resid_combined_loo_age)
 
 
-### look at alpha = 0.4
+### look at alpha = 0.5
 loo_age_table <- tibble(truth = imputed_c_combined_age, 
                         pred = pred_combined_loo_age,
                         resid = truth - pred,
@@ -547,7 +547,7 @@ ggplot(loo_age_table) +
   geom_point(aes(pred, resid, color = apoe)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: Age vs Residuals',
-       subtitle = 'Combined GOT and Lipid, alpha = 0.4, loo',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5, loo',
        x = 'Predicted Age',
        y = 'Residuals (Truth - Pred)') #+ 
 #stat_ellipse(data = filter(age_combined_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
@@ -559,7 +559,7 @@ ggplot(loo_age_table) +
   geom_point(aes(truth, pred, color = apoe)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: True vs Predicted Age',
-       subtitle = 'Combined GOT and Lipid, alpha = 0.4, loo',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5, loo',
        x = 'True Age',
        y = 'Predicted Age')
 ggsave('pred_truth_control_loo_4.png')
@@ -632,21 +632,21 @@ ggsave('pred_truth_control_loo_gender5.png')
 ### Predict on ad/pd #####
 ### Combined ###
 
-# imputed_adpd_combined <- filter_and_impute(wide_data_combined,c('AD', 'PD'))
-# #features
-# imputed_adpd_combined_Y <- imputed_adpd_combined[[1]]
-# imputed_adpd_combined_labels <- imputed_adpd_combined[[2]]
-# imputed_adpd_combined_apoe <- imputed_adpd_combined[[3]]
-# imputed_adpd_combined_age <- imputed_adpd_combined_Y[,'Age']
+imputed_adpd_combined <- filter_and_impute(wide_data_combined,c('AD', 'PD'))
+#features
+imputed_adpd_combined_Y <- imputed_adpd_combined[[1]]
+imputed_adpd_combined_labels <- imputed_adpd_combined[[2]]
+imputed_adpd_combined_apoe <- imputed_adpd_combined[[3]]
+imputed_adpd_combined_age <- imputed_adpd_combined_Y[,'Age']
 
-adpd_index <- which(imputed_comb_all[[2]] %in% c('AD', 'PD'))
-imputed_adpd_combined_Y <- (imputed_comb_all[[1]])[adpd_index,]
-imputed_adpd_combined_labels <- (imputed_comb_all[[2]])[adpd_index] %>%
-  droplevels
-imputed_adpd_combined_apoe <- (imputed_comb_all[[3]])[adpd_index]
-imputed_adpd_combined_age <- imputed_adpd_combined_Y[, 'Age']
-imputed_adpd_combined_gender <- imputed_adpd_combined_Y[,'GenderM'] %>% as.factor %>%
-  fct_recode(M = '1', F = '0')
+# adpd_index <- which(imputed_comb_all[[2]] %in% c('AD', 'PD'))
+# imputed_adpd_combined_Y <- (imputed_comb_all[[1]])[adpd_index,]
+# imputed_adpd_combined_labels <- (imputed_comb_all[[2]])[adpd_index] %>%
+#   droplevels
+# imputed_adpd_combined_apoe <- (imputed_comb_all[[3]])[adpd_index]
+# imputed_adpd_combined_age <- imputed_adpd_combined_Y[, 'Age']
+# imputed_adpd_combined_gender <- imputed_adpd_combined_Y[,'GenderM'] %>% as.factor %>%
+#   fct_recode(M = '1', F = '0')
 
 # without apoe
 imputed_adpd_features_combined_age_tmp <- imputed_adpd_combined_Y %>% 
@@ -655,11 +655,18 @@ imputed_adpd_features_combined_age_tmp <- imputed_adpd_combined_Y %>%
   select(-Age)
 
 #turn factors into dummy vars.
-imputed_adpd_features_combined_age <- model.matrix(~., imputed_adpd_features_combined_age_tmp)
+imputed_adpd_features_combined_age_tmp <- model.matrix(~., imputed_adpd_features_combined_age_tmp)
 
 
+# there are columns that are completely missing in adpd that are present in controls, so we need to refit a control model on the adpd column subset
+shared_cols_adpd_c <- intersect(colnames(imputed_adpd_features_combined_age_tmp), colnames(imputed_c_features_combined_age))
+imputed_adpd_features_combined_age <- imputed_adpd_features_combined_age_tmp[,which(colnames(imputed_adpd_features_combined_age_tmp) %in% shared_cols_adpd_c)]
+c_features_combined_adpd_column_subset <- imputed_c_features_combined_age[,which(colnames(imputed_c_features_combined_age) %in% shared_cols_adpd_c)]
+fitpred_combined_loo_age_c_adpdsubset<- lapply(1:nrow(c_features_combined_adpd_column_subset), function(x) loo_cvfit_glmnet(x, c_features_combined_adpd_column_subset, imputed_c_combined_age, 
+                                                                                                         alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
+fit_combined_loo_age_c_adpdsubset <- lapply(fitpred_combined_loo_age_c_adpdsubset, function(x) x[[1]])
 
-pred_age_adpd_4 <- predict(fit_combined_age_list[[5]], newx = imputed_adpd_features_combined_age, s = 'lambda.min')
+pred_age_adpd_4 <- predict(fit_combined_loo_age_c_adpdsubset[[5]], newx = imputed_adpd_features_combined_age, s = 'lambda.min')
 adpd_age_table_4 <- tibble(truth = imputed_adpd_combined_age, 
                            pred = pred_age_adpd_4,
                            resid = truth - pred,
@@ -674,7 +681,7 @@ ggplot(adpd_age_table_4) +
   geom_point(aes(pred, resid, color = type)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'AD/PD: Age vs Residuals (trained on Control)',
-       subtitle = 'Combined GOT and Lipid, alpha = 0.4',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5',
        x = 'Predicted Age',
        y = 'Residuals (Truth - Pred)') #+ 
 #stat_ellipse(data = filter(age_combined_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
@@ -686,7 +693,7 @@ ggplot(adpd_age_table_4) +
   geom_point(aes(truth, pred, color = type)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'AD/PD: True vs Predicted Age (trained on control)',
-       subtitle = 'Combined GOT and Lipid, alpha = 0.4',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5',
        x = 'True Age',
        y = 'Predicted Age') + 
   geom_abline(slope = 1, intercept = 0)
@@ -696,7 +703,7 @@ ggplot(adpd_age_table_4) +
   geom_point(aes(truth, pred, color = apoe4)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'AD/PD: True vs Predicted Age (trained on control)',
-       subtitle = 'Combined GOT and Lipid, alpha = 0.4',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5',
        x = 'True Age',
        y = 'Predicted Age')
 ggsave('pred_truth_adpd_apoe4_4.png')
@@ -705,7 +712,7 @@ ggplot(adpd_age_table_4) +
   geom_point(aes(truth, pred, color = apoe)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: True vs Predicted Age (trained on control)',
-       subtitle = 'Combined GOT and Lipid, alpha = 0.4',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5',
        x = 'True Age',
        y = 'Predicted Age')
 ggsave('pred_truth_adpd_apoe_4.png')
@@ -721,7 +728,7 @@ residuals_comparison <- tibble(resid = adpd_age_table_4$resid,
 ggplot(residuals_comparison) +
   geom_histogram(aes(resid, fill = id), position = 'identity', alpha = 0.5, bins = 10) + 
   labs(title = 'Residuals Histogram, split by type',
-       subtitle = 'GOT + Lipids, alpha = 0.4',
+       subtitle = 'GOT + Lipids, alpha = 0.5',
        x = 'Residuals (Truth - Pred)')
 ggsave('age_resid_type_4.png')
 
@@ -729,11 +736,10 @@ ggsave('age_resid_type_4.png')
 
 #################
 
-
-
 ##### GOT and Lipids AGE analysis for controls ###
 ##### With apoe as predictor #####
 
+#################
 ## with apoe as a predictor ##
 imputed_c_features_combined_age_apoe_tmp <- imputed_c_combined_Y %>% 
   as_tibble %>%
@@ -754,7 +760,7 @@ pred_c_combined_age_apoe_list <- lapply(fit_c_combined_age_apoe_list,
 #some measure of variable importance
 importance_c_combined_age_apoe_list <- lapply(fit_c_combined_age_apoe_list, function(x) importance(x, metabolites = TRUE))
 
-importance_c_combined_age_apoe_list[[5]] %>% 
+importance_c_combined_age_apoe_list[[6]] %>% 
   enframe(name = 'name', value= 'coefficient') %>%
   filter(name != '(Intercept)')
 
@@ -774,9 +780,9 @@ which.min(mse_c_combined_age_apoe_list)
 
 
 #c plots look pretty normal!
-resid_c_combined_apoe4 <- residuals_c_combined_age_apoe_list[[5]]
+resid_c_combined_apoe4 <- residuals_c_combined_age_apoe_list[[6]]
 
-qplot(resid_c_combined_apoe4, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.4')
+qplot(resid_c_combined_apoe4, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.5')
 #ggsave('got_lipids_age_control_resid_hist.png')
 
 
@@ -787,9 +793,9 @@ qqline(resid_c_combined_apoe4)
 
 
 
-### look at alpha = 0.4
+### look at alpha = 0.5
 age_apoe_c_combined_table_4 <- tibble(truth = imputed_c_combined_age, 
-                               pred = as.numeric(pred_c_combined_age_apoe_list[[5]]),
+                               pred = as.numeric(pred_c_combined_age_apoe_list[[6]]),
                                resid = truth - pred,
                                apoe = imputed_c_combined_apoe,
                                type = imputed_c_combined_labels
@@ -801,7 +807,7 @@ ggplot(age_apoe_c_combined_table_4) +
   geom_point(aes(pred, resid, color = apoe)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: Predicted Age vs Residuals',
-       subtitle = 'Combined GOT and Lipid (including apoe), alpha = 0.4',
+       subtitle = 'Combined GOT and Lipid (including apoe), alpha = 0.5',
        x = 'Predicted Age',
        y = 'Residuals (Truth - Pred)')
 ggsave('age_pred_resid_c_apoe_insample_4.png', width = 7.26, height = 7.26, units = 'in')
@@ -812,7 +818,7 @@ ggplot(age_apoe_c_combined_table_4) +
   geom_point(aes(truth, pred, color = apoe)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: True vs Predicted (in-sample) Age',
-       subtitle = 'Combined GOT and Lipid (including apoe), alpha = 0.4',
+       subtitle = 'Combined GOT and Lipid (including apoe), alpha = 0.5',
        x = 'True Age',
        y = 'Predicted Age (in-sample)')
 ggsave('age_true_pred_c_apoe_insample_4.png', width = 7.26, height = 7.26, units = 'in')
@@ -867,8 +873,13 @@ best_mtry <- randomForest:::tuneRF(imputed_c_features_combined_age, imputed_c_co
 fitrf_age_c <- randomForest::randomForest(Age ~ ., data = imputed_c_combined_df)
 #oob prediction on training set (control)2
 predrf_age_c <- predict(fitrf_age_c)
-#out of sample prediction on adpd
-predrf_age_adpd <- predict(fitrf_age_c, newdata = select(imputed_adpd_combined_df, -Age))
+
+
+#out of sample prediction on adpd.
+# to do this prediction, we have to refit the controls on the shared non-NA columns between the two
+shared_cols_adpd_c_rf <- intersect(names(imputed_c_combined_df), names(imputed_adpd_combined_df))
+fitrf_age_c_adpd_subset <- randomForest::randomForest(Age ~ ., data = select(imputed_c_combined_df, shared_cols_adpd_c_rf))
+predrf_age_adpd <- predict(fitrf_age_c_adpd_subset, newdata = select(imputed_adpd_combined_df, shared_cols_adpd_c_rf, -Age))
 
 rf_age_c_table <- tibble(truth = imputed_c_combined_age, 
                         pred = predrf_age_c,
@@ -946,7 +957,7 @@ fit_combined_all_age_list <- lapply(seq(0,1,.1), function(x) fit_glmnet(imputed_
 
 #in sample prediction
 pred_combined_all_age_list <- lapply(fit_combined_all_age_list,
-                                 function(x) predict(x, newx = imputed_c_got_features_combined_age,
+                                 function(x) predict(x, newx = imputed_all_features_combined_age,
                                                      type = 'response', s = 'lambda.min'))
 #some measure of variable importance
 importance_combined_all_age_list <- lapply(fit_combined_all_age_list, function(x) importance(x))
@@ -961,14 +972,14 @@ sw_combined_all_age_list <- lapply(residuals_combined_all_age_list, function(x) 
 
 #performance is similar across the alphas, so let's just pick one pretty arb
 #which has lowest mse?
-#it's alpha = 0, but next losest is alph - 0.4
+#it's alpha = 0, but next losest is alph - 0.5
 which.min(mse_combined_all_age_list)
 
 
 
-### look at alpha = 0.7, which has the lowest mse
-age_combined_all_table_7 <- tibble(truth = imputed_all_combined_age,
-                               pred = as.numeric(pred_combined_all_age_list[[8]]),
+### look at alpha = 0.5, which has the lowest mse
+age_combined_all_table_5 <- tibble(truth = imputed_all_combined_age,
+                               pred = as.numeric(pred_combined_all_age_list[[6]]),
                                resid = truth - pred,
                                apoe = imputed_all_combined_apoe,
                                type = imputed_all_combined_labels
@@ -976,25 +987,25 @@ age_combined_all_table_7 <- tibble(truth = imputed_all_combined_age,
 
 
 #pred vs resid
-ggplot(age_combined_all_table_7) +
+ggplot(age_combined_all_table_5) +
   geom_point(aes(pred, resid, color = apoe)) +
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'All: Predicted Age vs Residuals',
-       subtitle = 'Combined GOT and Lipid, alpha = 0.7',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5',
        x = 'Predicted Age',
        y = 'Residuals (Truth - Pred)')
-ggsave('age_pred_resid_all_insample_7.png', width = 7.26, height = 7.26, units = 'in')
+ggsave('age_pred_resid_all_insample_5.png', width = 7.26, height = 7.26, units = 'in')
 
 
 #truth vs pred
-ggplot(age_combined_all_table_7) +
+ggplot(age_combined_all_table_5) +
   geom_point(aes(truth, pred, color = apoe)) +
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'All: True vs Predicted (in-sample) Age',
-       subtitle = 'Combined GOT and Lipid, alpha = 0.7',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5',
        x = 'True Age',
        y = 'Predicted Age (in-sample)')
-ggsave('age_true_pred_all_insample_7.png', width = 7.26, height = 7.26, units = 'in')
+ggsave('age_true_pred_all_insample_5.png', width = 7.26, height = 7.26, units = 'in')
 
 
 
@@ -1009,9 +1020,9 @@ ggsave('age_true_pred_all_insample_7.png', width = 7.26, height = 7.26, units = 
 ### Note: It's recy expensive to do a list of alphas like we do with in sample prediction, so I'm just pulling the single alpha based on the insample list
 
 
-#now try with alpha = 0.4
+#now try with alpha = 0.5
 fitpred_combined_all_loo_age <- lapply(1:nrow(imputed_all_features_combined_age), function(x) loo_cvfit_glmnet(x, imputed_all_features_combined_age, imputed_all_combined_age,
-                                                                                                         alpha = 0.7, family = 'gaussian', penalize_age_gender = FALSE))
+                                                                                                         alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
 
 fit_combined_all_loo_age <- lapply(fitpred_combined_all_loo_age, function(x) x[[1]])
 pred_combined_all_loo_age <- lapply(fitpred_combined_all_loo_age, function(x) x[[2]]) %>%
@@ -1019,19 +1030,19 @@ pred_combined_all_loo_age <- lapply(fitpred_combined_all_loo_age, function(x) x[
 
 #some measure of variable importance
 importance_combined_all_loo_age <- lapply(fit_combined_all_loo_age, function(x) importance(x))
-mse_combined_all_loo_age <- mean((pred_combined_all_loo_age - imputed_c_combined_age)^2)
-resid_combined_all_loo_age <- pred_combined_all_loo_age - imputed_c_combined_age
+mse_combined_all_loo_age <- mean((pred_combined_all_loo_age - imputed_all_combined_age)^2)
+resid_combined_all_loo_age <- pred_combined_all_loo_age - imputed_all_combined_age
 
 
 shapiro.test(resid_combined_all_loo_age)
 
-qplot(resid_combined_all_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.4')
+qplot(resid_combined_all_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.5')
 #ggsave('got_lipids_age_control_resid_hist.png')
 qqnorm(resid_combined_all_loo_age)
 qqline(resid_combined_all_loo_age)
 
 
-### look at alpha = 0.4
+### look at alpha = 0.5
 loo_age_all_table <- tibble(truth = imputed_all_combined_age,
                         pred = pred_combined_all_loo_age,
                         resid = truth - pred,
@@ -1056,6 +1067,7 @@ ggsave('pred_age_residuals_all_loo_5.png')
 ggplot(loo_age_all_table) +
   geom_point(aes(truth, pred, color = apoe)) +
   scale_color_brewer(type = 'qual', palette = 'Set1') +
+  geom_abline(slope =1 , intercept = 0) + 
   labs(title = 'All: True vs Predicted Age',
        subtitle = 'Combined GOT and Lipid, alpha = 0.5, loo',
        x = 'True Age',
@@ -1109,9 +1121,9 @@ importance_c_male_combined_age_list <- lapply(fit_c_male_combined_age_list, func
 mse_c_male_combined_age_list <- lapply(pred_c_male_combined_age_list, function(x) mean((x - imputed_c_male_combined_age)^2))
 
 
-## leave one out (alpha = 0.7)
+## leave one out (alpha = 0.5)
 fitpred_c_male_combined_loo_age <- lapply(1:nrow(imputed_c_male_features_combined_age), function(x) loo_cvfit_glmnet(x, imputed_c_male_features_combined_age, imputed_c_male_combined_age,
-                                                                                                                 alpha = 0.7, family = 'gaussian', penalize_age_gender = FALSE))
+                                                                                                                 alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
 
 fit_c_male_combined_loo_age <- lapply(fitpred_c_male_combined_loo_age, function(x) x[[1]])
 pred_c_male_combined_loo_age <- lapply(fitpred_c_male_combined_loo_age, function(x) x[[2]]) %>%
@@ -1125,13 +1137,13 @@ resid_c_male_combined_loo_age <- pred_c_male_combined_loo_age - imputed_c_male_c
 
 shapiro.test(resid_c_male_combined_loo_age)
 
-qplot(resid_c_male_combined_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.4')
+qplot(resid_c_male_combined_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.5')
 #ggsave('got_lipids_age_control_resid_hist.png')
 qqnorm(resid_c_male_combined_loo_age)
 qqline(resid_c_male_combined_loo_age)
 
 
-### look at alpha = 0.4
+### look at alpha = 0.5
 loo_c_male_age_table <- tibble(truth = imputed_c_male_combined_age,
                             pred = pred_c_male_combined_loo_age,
                             resid = truth - pred,
@@ -1146,23 +1158,23 @@ ggplot(loo_c_male_age_table) +
   geom_point(aes(pred, resid, color = apoe)) +
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Male Controls: Age vs Residuals',
-       subtitle = 'Combined GOT and Lipid, alpha = 0.7, loo',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5, loo',
        x = 'Predicted Age',
        y = 'Residuals (Truth - Pred)') #+
 #stat_ellipse(data = filter(age_combined_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") +
 #stat_ellipse(data = filter(age_combined_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
-ggsave('pred_age_residuals_c_male_loo_7.png')
+ggsave('pred_age_residuals_c_male_loo_5.png')
 
 
 ggplot(loo_c_male_age_table) +
   geom_point(aes(truth, pred, color = apoe)) +
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Male Controls: True vs Predicted Age',
-       subtitle = 'Combined GOT and Lipid, alpha = 0.7, loo',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5, loo',
        x = 'True Age',
        y = 'Predicted Age') +
   geom_abline(intercept = 0, slope=1)
-ggsave('pred_truth_c_male_loo_7.png')
+ggsave('pred_truth_c_male_loo_5.png')
 
 
 
@@ -1192,9 +1204,9 @@ importance_c_female_combined_age_list <- lapply(fit_c_female_combined_age_list, 
 mse_c_female_combined_age_list <- lapply(pred_c_female_combined_age_list, function(x) mean((x - imputed_c_female_combined_age)^2))
 
 
-## leave one out (alpha = 0.3)
+## leave one out (alpha = 0.5)
 fitpred_c_female_combined_loo_age <- lapply(1:nrow(imputed_c_female_features_combined_age), function(x) loo_cvfit_glmnet(x, imputed_c_female_features_combined_age, imputed_c_female_combined_age,
-                                                                                                                     alpha = 0.3, family = 'gaussian', penalize_age_gender = FALSE))
+                                                                                                                     alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
 
 fit_c_female_combined_loo_age <- lapply(fitpred_c_female_combined_loo_age, function(x) x[[1]])
 pred_c_female_combined_loo_age <- lapply(fitpred_c_female_combined_loo_age, function(x) x[[2]]) %>%
@@ -1208,13 +1220,13 @@ resid_c_female_combined_loo_age <- pred_c_female_combined_loo_age - imputed_c_fe
 
 shapiro.test(resid_c_female_combined_loo_age)
 
-qplot(resid_c_female_combined_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.4')
+qplot(resid_c_female_combined_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.5')
 #ggsave('got_lipids_age_control_resid_hist.png')
 qqnorm(resid_c_female_combined_loo_age)
 qqline(resid_c_female_combined_loo_age)
 
 
-### look at alpha = 0.4
+### look at alpha = 0.5
 loo_c_female_age_table <- tibble(truth = imputed_c_female_combined_age,
                                pred = pred_c_female_combined_loo_age,
                                resid = truth - pred,
@@ -1229,23 +1241,23 @@ ggplot(loo_c_female_age_table) +
   geom_point(aes(pred, resid, color = apoe)) +
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Female Controls: Age vs Residuals',
-       subtitle = 'Combined GOT and Lipid, alpha = 0.3, loo',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5, loo',
        x = 'Predicted Age',
        y = 'Residuals (Truth - Pred)') #+
 #stat_ellipse(data = filter(age_combined_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") +
 #stat_ellipse(data = filter(age_combined_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
-ggsave('pred_age_residuals_c_female_loo_7.png')
+ggsave('pred_age_residuals_c_female_loo_5.png')
 
 
 ggplot(loo_c_female_age_table) +
   geom_point(aes(truth, pred, color = apoe)) +
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Female Controls: True vs Predicted Age',
-       subtitle = 'Combined GOT and Lipid, alpha = 0.3, loo',
+       subtitle = 'Combined GOT and Lipid, alpha = 0.5, loo',
        x = 'True Age',
        y = 'Predicted Age') +
   geom_abline(intercept = 0, slope=1)
-ggsave('pred_truth_c_female_loo_7.png')
+ggsave('pred_truth_c_female_loo_5.png')
 
 
 
@@ -1304,20 +1316,20 @@ which.min(mse_c_interaction_combined_age_list)
 
 
 #c plots look pretty normal!
-resid_c_interaction_combined_4 <- residuals_c_interaction_combined_age_list[[5]]
-qplot(resid_c_interaction_combined_4, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.4')
+resid_c_interaction_combined_5 <- residuals_c_interaction_combined_age_list[[6]]
+qplot(resid_c_interaction_combined_5, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.5')
 
 
-qqnorm(resid_c_interaction_combined_4)
-qqline(resid_c_interaction_combined_4)
+qqnorm(resid_c_interaction_combined_5)
+qqline(resid_c_interaction_combined_5)
 
 
 
 
 
-### look at alpha = 0.4
-age_c_interaction_combined_table_4 <- tibble(truth = imputed_c_combined_age, 
-                               pred = as.numeric(pred_c_interaction_combined_age_list[[5]]),
+### look at alpha = 0.5
+age_c_interaction_combined_table_5 <- tibble(truth = imputed_c_combined_age, 
+                               pred = as.numeric(pred_c_interaction_combined_age_list[[6]]),
                                resid = truth - pred,
                                apoe = imputed_c_combined_apoe,
                                type = imputed_c_combined_labels
@@ -1325,33 +1337,33 @@ age_c_interaction_combined_table_4 <- tibble(truth = imputed_c_combined_age,
 
 
 #pred vs resid
-ggplot(age_c_interaction_combined_table_4) + 
+ggplot(age_c_interaction_combined_table_5) + 
   geom_point(aes(pred, resid, color = apoe)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: Predicted Age vs Residuals',
-       subtitle = 'Combined GOT and Lipid, with gender interaction, alpha = 0.4',
+       subtitle = 'Combined GOT and Lipid, with gender interaction, alpha = 0.5',
        x = 'Predicted Age',
        y = 'Residuals (Truth - Pred)')
-ggsave('age_pred_resid_c_interaction_insample_4.png', width = 7.26, height = 7.26, units = 'in')
+ggsave('age_pred_resid_c_interaction_insample_5.png', width = 7.26, height = 7.26, units = 'in')
 
 
 #truth vs pred
-ggplot(age_c_interaction_combined_table_4) + 
+ggplot(age_c_interaction_combined_table_5) + 
   geom_point(aes(truth, pred, color = apoe)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: True vs Predicted (in-sample) Age',
-       subtitle = 'Combined GOT and Lipid, with gender interaction, alpha = 0.4',
+       subtitle = 'Combined GOT and Lipid, with gender interaction, alpha = 0.5',
        x = 'True Age',
        y = 'Predicted Age (in-sample)')
-ggsave('age_true_pred_c_interaction_insample_4.png', width = 7.26, height = 7.26, units = 'in')
+ggsave('age_true_pred_c_interaction_insample_5.png', width = 7.26, height = 7.26, units = 'in')
 
 
 
 ### Leave one out
 
-#now try with alpha = 0.4
+#now try with alpha = 0.5
 fitpred_c_interaction_combined_loo_age <- lapply(1:nrow(imputed_c_features_interaction_combined_age), function(x) loo_cvfit_glmnet(x, imputed_c_features_interaction_combined_age, imputed_c_combined_age, 
-                                                                                                         alpha = 0.4, family = 'gaussian', penalize_age_gender = FALSE))
+                                                                                                         alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
 
 fit_c_interaction_combined_loo_age <- lapply(fitpred_c_interaction_combined_loo_age, function(x) x[[1]])
 pred_c_interaction_combined_loo_age <- lapply(fitpred_c_interaction_combined_loo_age, function(x) x[[2]]) %>%
@@ -1379,13 +1391,13 @@ resid_c_interaction_combined_loo_age <- pred_c_interaction_combined_loo_age - im
 
 shapiro.test(resid_c_interaction_combined_loo_age)
 
-qplot(resid_c_interaction_combined_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.4')
+qplot(resid_c_interaction_combined_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.5')
 #ggsave('got_lipids_age_control_resid_hist.png')
 qqnorm(resid_c_interaction_combined_loo_age)
 qqline(resid_c_interaction_combined_loo_age)
 
 
-### look at alpha = 0.4
+### look at alpha = 0.5
 loo_c_interaction_age_table <- tibble(truth = imputed_c_combined_age, 
                         pred = pred_c_interaction_combined_loo_age,
                         resid = truth - pred,
@@ -1519,6 +1531,12 @@ missingness_by_type_comb_counts <- wide_data_combined %>%
   set_names(wide_data_combined$Type %>% levels) %>%
   lapply(function(x) enframe(x, name = 'name', value = 'num_missing')) 
 
+missingness_by_type_comb_pct <- wide_data_combined %>% 
+  group_by(Type) %>%
+  group_map(~ map_dbl(.x, function(y) round(sum(is.na(y))/length(y), digits = 3))) %>%
+  set_names(wide_data_combined$Type %>% levels) %>%
+  lapply(function(x) enframe(x, name = 'name', value = 'pct_missing'))
+
 
 
 missingness_by_type_all <- reduce(missingness_by_type_comb_counts, inner_join, by = 'name') %>%
@@ -1552,16 +1570,16 @@ ggsave('plots/combined_pct_missing.png')
 
 
 cy_co_comb_missingness <- inner_join(missingness_by_type_comb_counts$CY, missingness_by_type_comb_counts$CO, by = 'name') %>%
-  rename(num_missing_cy = num_missing.x, num_missing_co = num_missing.y) %>%
+  dplyr::rename(num_missing_cy = num_missing.x, num_missing_co = num_missing.y) %>%
   filter(num_missing_cy != num_missing_co) %>%
-  mutate(n_cy = n_by_type_comb$CY,
-         n_co = n_by_type_comb$CO,
+  dplyr::mutate(n_cy = n_by_type_comb$n_CY,
+         n_co = n_by_type_comb$n_CO,
          pct_missing_cy = num_missing_cy / n_cy,
          pct_missing_co = num_missing_co / n_co
          ) %>%
   #go rowwise to get p values
-  rowwise() %>%
-  mutate(p_value = (prop.test(x = c(num_missing_cy, num_missing_co), n= c(n_cy, n_co)))$p.value) %>%
+  dplyr::rowwise() %>%
+  dplyr::mutate(p_value = (prop.test(x = c(num_missing_cy, num_missing_co), n= c(n_cy, n_co)))$p.value) %>%
   #using 0.05 p value cutouff
   filter(p_value <= 0.05) %>%
   gather('Type', 'pct_missing', 'cy' = pct_missing_cy, 'co' = pct_missing_co)
@@ -1571,7 +1589,7 @@ cy_co_comb_missingness <- inner_join(missingness_by_type_comb_counts$CY, missing
 ggplot(cy_co_comb_missingness) +
   geom_col(aes(name,pct_missing, fill = Type)) + 
   labs(title = 'Percent Missing in GOT/Lipid Data',
-       subtitle = 'CO and CY, filtered using ')
+       subtitle = 'CO and CY, filtered using ') + 
   coord_flip() 
 
 
@@ -1585,21 +1603,21 @@ missingness_by_type_lipids <- wide_data_lipids %>%
   set_names(wide_data_combined$Type %>% levels) %>%
   lapply(function(x) enframe(x, name = 'lipid', value = 'pct_missing'))
 
-wide_data_lipids %>% group_by(Type) %>% summarize(n = n())
+wide_data_lipids %>% dplyr::count(Type)
 
 co_cy_lipids_missingness <- inner_join(missingness_by_type_lipids$CO, missingness_by_type_lipids$CY, by = 'lipid') %>%
-  rename(pct_missing_co = pct_missing.x, pct_missing_cy = pct_missing.y) %>%
-  mutate(co_minus_cy = pct_missing_co - pct_missing_cy)%>%
+  dplyr::rename(pct_missing_co = pct_missing.x, pct_missing_cy = pct_missing.y) %>%
+  dplyr::mutate(co_minus_cy = pct_missing_co - pct_missing_cy)%>%
   arrange(desc(abs(co_minus_cy)))
 
-pd_co_comb_missingness <- inner_join(missingness_by_type_comb$PD, missingness_by_type_comb$CO, by = 'name') %>%
-  rename(pct_missing_pd = pct_missing.x, pct_missing_co = pct_missing.y) %>%
-  mutate(pd_minus_co = pct_missing_pd - pct_missing_co)%>%
+pd_co_comb_missingness <- inner_join(missingness_by_type_comb_pct$PD, missingness_by_type_comb_pct$CO, by = 'name') %>%
+  dplyr::rename(pct_missing_pd = pct_missing.x, pct_missing_co = pct_missing.y) %>%
+  dplyr::mutate(pd_minus_co = pct_missing_pd - pct_missing_co)%>%
   arrange(desc(abs(pd_minus_co)))
 
-ad_co_comb_missingness <- inner_join(missingness_by_type_comb$AD, missingness_by_type_comb$CO, by = 'name') %>%
-  rename(pct_missing_ad = pct_missing.x, pct_missing_co = pct_missing.y) %>%
-  mutate(ad_minus_co = pct_missing_ad - pct_missing_co)%>%
+ad_co_comb_missingness <- inner_join(missingness_by_type_comb_pct$AD, missingness_by_type_comb_pct$CO, by = 'name') %>%
+  dplyr::rename(pct_missing_ad = pct_missing.x, pct_missing_co = pct_missing.y) %>%
+  dplyr::mutate(ad_minus_co = pct_missing_ad - pct_missing_co)%>%
   arrange(desc(abs(ad_minus_co)))
 
 
@@ -1612,8 +1630,8 @@ missingness_by_type_got <- wide_data %>%
   lapply(function(x) enframe(x, name = 'metabolite', value = 'pct_missing'))
 
 co_cy_got_missingness <- inner_join(missingness_by_type_got$CO, missingness_by_type_got$CY, by = 'metabolite') %>%
-  rename(pct_missing_co = pct_missing.x, pct_missing_cy = pct_missing.y) %>%
-  mutate(co_minus_cy = pct_missing_co - pct_missing_cy)%>%
+  dplyr::rename(pct_missing_co = pct_missing.x, pct_missing_cy = pct_missing.y) %>%
+  dplyr::mutate(co_minus_cy = pct_missing_co - pct_missing_cy)%>%
   arrange(desc(abs(co_minus_cy)))
 
 
@@ -1915,12 +1933,6 @@ missingness_p_table$name <- if_else(!str_detect(missingness_p_table$name, 'Resul
 
 
   
-missingness_p_table %>% 
-  arrange(bh_q_value) %>%
-  #filter(bh_q_value < 0.05) %>%
-  write_csv('combined_missingness_p.csv')
-
-
 missingness_p_table %>%
   arrange(bh_gender_q_value) 
 
@@ -1929,7 +1941,8 @@ bh_missingness_age <- missingness_p_table %>%
   filter(bh_age_q_value < 0.01)
 
 bh_missingness_overall <- missingness_p_table %>%
-  arrange(bh_overall_q_value) %>%
+  arrange(bh_overall_q_value) %T>%
+  write_csv("combined_missingness_p.csv") %>%
   filter(bh_overall_q_value < 0.01)
 
 intersect(bh_missingness_age$name, bh_missingness_overall$name)
@@ -2081,23 +2094,27 @@ missingness_some_na_names_untargeted <- wide_data_untargeted %>%
   dplyr::select_if(function(x) any(is.na(x)) & !all(is.na(x))) %>%
   names
 
-missingness_overall_p_values_untargeted <- map(missingness_some_na_names_untargeted, ~missingness_metabolite_p(wide_data_untargeted, form, .x)[[1]]) %>%
+missingness_overall_p_values_untargeted <- purrr::map(missingness_some_na_names_untargeted, ~missingness_metabolite_p(wide_data_untargeted, form_missing_genderAge, .x)[[1]]) %>%
   unlist
-missingness_age_p_values_untargeted <- map(missingness_some_na_names_untargeted, ~missingness_metabolite_p(wide_data_untargeted, form, .x)[[2]]) %>%
+missingness_age_p_values_untargeted <- purrr::map(missingness_some_na_names_untargeted, ~missingness_metabolite_p(wide_data_untargeted, form_missing_genderAge, .x)[[2]]) %>%
   unlist
-missingness_gender_p_values_untargeted <- map(missingness_some_na_names_untargeted, ~missingness_metabolite_p(wide_data_untargeted, form, .x)[[3]]) %>%
+missingness_gender_p_values_untargeted <- purrr::map(missingness_some_na_names_untargeted, ~missingness_metabolite_p(wide_data_untargeted, form_missing_genderAge, .x)[[3]]) %>%
   unlist
 
 
 #bh corrected controls for false discovery rate.
 missingness_p_table_untargeted <- bind_cols('name' = missingness_some_na_names_untargeted, 
-                                 'og_p_value' = missingness_p_values_untargeted,
-                                 'bh_q_value' = p.adjust(missingness_p_values_untargeted, method = 'BH'))
+                                 'og_overall_p_value' = missingness_overall_p_values_untargeted,
+                                 'og_age_p_value' = missingness_age_p_values_untargeted,
+                                 'og_gender_value' = missingness_gender_p_values_untargeted,
+                                 'bh_overall_q_value' = p.adjust(missingness_overall_p_values_untargeted, method = 'BH'),
+                                 'bh_age_q_value' = p.adjust(missingness_age_p_values_untargeted, method = 'BH'),
+                                 'bh_gender_q_value' = p.adjust(missingness_gender_p_values_untargeted, method = 'BH'))
 
 
 
 missingness_p_table_untargeted %>% 
-  arrange(bh_q_value) %>%
+  arrange(bh_overall_q_value) %>%
   #filter(bh_q_value < 0.05) %>%
   write_csv('untargeted_missingness_p.csv')
 
@@ -2136,7 +2153,7 @@ imputed_all_combined_df <- imputed_all_combined[[1]] %>%
    purrr::map(~age_metabolite_p(imputed_all_combined_df, .x)) %>%
    purrr::reduce(rbind) %>%
    as_tibble() %>%
-   rename('og_p_value' = `Pr(>|t|)`)
+   dplyr::rename('og_p_value' = `Pr(>|t|)`)
  
  age_metabolite_p_table <- cbind(age_metabolite_p_values, 
                                  'bh_p_value' = p.adjust(age_metabolite_p_values$og_p_value, method = 'BH'))
@@ -2149,7 +2166,7 @@ age_metabolite_p_table %>%
 #### Now do the same for controls only
 imputed_c_combined_df <- imputed_c_combined_Y %>%
   as_tibble() %>%
-  select(-c('(Intercept)', GenderM))
+  dplyr::select(-c('(Intercept)', GenderM))
 
 age_c_combined_p_values <- imputed_c_combined_df %>%
   names %>%
@@ -2163,8 +2180,8 @@ age_c_combined_p_values <- imputed_c_combined_df %>%
 age_c_combined_p_table <- cbind(age_c_combined_p_values, 
                               'bh_p_value' = p.adjust(age_c_combined_p_values$og_p_value, method = 'BH'))
 
-age_combined_bh_cut <- age_combined_p_table %>%
-  mutate(name = str_replace_all(name, '`', ''))
+age_c_combined_bh_cut <- age_c_combined_p_table %>% 
+  dplyr::mutate(name = str_replace_all(name, '`', '')) %>% 
   filter(bh_p_value < 0.01)
   
   
@@ -2189,7 +2206,7 @@ age_combined_bh_cut <- age_combined_p_table %>%
 #### now do the same for untargeted
 imputed_c_untargeted_df <- imputed_c_untargeted_Y %>%
   as_tibble() %>%
-  select(-c('(Intercept)', GenderM))
+  dplyr::select(-c('(Intercept)', GenderM))
 
 age_untargeted_p_values <- imputed_c_untargeted_df %>%
   names %>%
@@ -2209,20 +2226,20 @@ age_untargeted_p_table <- cbind(age_untargeted_p_values,
 mz_retention_untargeted <- raw_data_untargeted %>%
   group_by(Metabolite, Mode) %>%
   slice(1) %>%
-  select(Metabolite, Mode, `m/z`, `Retention time (min)`)
+  dplyr::select(Metabolite, Mode, `m/z`, `Retention time (min)`)
 
 # Left join because age_untargeted has less columns. pull out only significant (.05 level)
 mummichog_untargeted <- age_untargeted_p_table %>% 
   left_join(mz_retention_untargeted, by = c('Metabolite', 'Mode')) %>%
-  filter(bh_p_value < 0.05) %>%
-  select('mz' = `m/z`, 'rtime' = `Retention time (min)`, 'p-value' = bh_p_value, 't-score' = `t value`, Metabolite, Mode)
+  dplyr::filter(bh_p_value < 0.05) %>%
+  dplyr::select('mz' = `m/z`, 'rtime' = `Retention time (min)`, 'p-value' = bh_p_value, 't-score' = `t value`, Metabolite, Mode)
 
 mummichog_untargeted %>% 
-  filter(Mode == 'neg') %>%
+  dplyr::filter(Mode == 'neg') %>%
   write_tsv('mummichog_untargeted_neg.txt')
 
 mummichog_untargeted %>% 
-  filter(Mode == 'pos') %>%
+  dplyr::filter(Mode == 'pos') %>%
   write_tsv('mummichog_untargeted_pos.txt')
 
 
@@ -2230,40 +2247,43 @@ mummichog_untargeted %>%
 ##### now do the same for lipids only
 imputed_c_lipids_df <- imputed_c_lipids_Y %>%
  as_tibble() %>%
-  select(-c('(Intercept)', GenderM))
+  dplyr::select(-c('(Intercept)', GenderM))
 age_lipids_p_values <- imputed_c_lipids_df %>%
   names %>%
-  map(~age_metabolite_p(imputed_c_lipids_df, .x)) %>%
-  unlist %>%
-  enframe(value = 'og_p_value')
+  purrr::map(~age_metabolite_p(imputed_c_lipids_df, .x)) %>%
+  purrr::reduce(rbind) %>%
+  as_tibble() %>%
+  dplyr::rename('og_p_value' =  `Pr(>|t|)`)
 
 age_lipids_p_table <- cbind(age_lipids_p_values, 
                                 'bh_p_value' = p.adjust(age_lipids_p_values$og_p_value, method = 'BH'))
 age_lipids_p_table %>% 
-  filter(bh_p_value < 0.05)
+  dplyr::filter(bh_p_value < 0.05)
 
 
 #### now do the same for got only
 imputed_c_got_df <- imputed_c_got_Y %>%
   as_tibble() %>%
-  select(-c('(Intercept)', GenderM))
+  dplyr::select(-c('(Intercept)', GenderM))
+
 age_got_p_values <- imputed_c_got_df %>%
   names %>%
-  map(~age_metabolite_p(imputed_c_got_df, .x)) %>%
-  unlist %>%
-  enframe(value = 'og_p_value')
+  purrr::map(~age_metabolite_p(imputed_c_got_df, .x)) %>%
+  purrr::reduce(rbind) %>%
+  as_tibble() %>%
+  dplyr::rename('og_p_value' =  `Pr(>|t|)`)
 
 age_got_p_table <- cbind(age_got_p_values, 
                             'bh_p_value' = p.adjust(age_got_p_values$og_p_value, method = 'BH'))
 age_got_p_table %>% 
-  filter(bh_p_value < 0.05)
+  dplyr::filter(bh_p_value < 0.05)
 
 
 
 #### now do the same for targeted
 imputed_c_targeted_df <- imputed_c_targeted_Y %>%
   as_tibble() %>%
-  select(-c('(Intercept)', GenderM))
+  dplyr::select(-c('(Intercept)', GenderM))
 
 age_targeted_p_values <- imputed_c_targeted_df %>%
   names %>%
