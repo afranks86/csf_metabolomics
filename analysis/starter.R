@@ -93,7 +93,7 @@ library(rsample)
 library(yardstick)
 library(here)
 library(CCA)
-
+library(gridExtra)
 source(here("analysis/utility.R"))
 
 

@@ -555,52 +555,23 @@ ggplot(loo_age_table) +
 ggsave('pred_age_residuals_control_loo_5.png')
 
 
-ggplot(loo_age_table) + 
+(pred_truth_c_comb_without_apoe <- ggplot(loo_age_table) + 
   geom_point(aes(truth, pred, color = apoe)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: True vs Predicted Age',
        subtitle = 'Combined GOT and Lipid, alpha = 0.5, loo',
        x = 'True Age',
-       y = 'Predicted Age')
+       y = 'Predicted Age') + 
+    geom_abline(intercept = 0, slope = 1) + 
+  geom_text(aes(x = 75, y = 0, label = paste0("R: ", cor(truth, pred, method = "pearson") %>% round(2), 
+                                              "\nRMSE: ", (truth - pred)^2 %>% mean %>% sqrt %>% round(2))))
+  )
 ggsave('pred_truth_control_loo_5.png')
 
 
 #####
 
 
-
-
-#### colored by Type ####
-#pred vs residuals
-ggplot(loo_age_table) + 
-  geom_point(aes(pred, resid, color = type)) + 
-  scale_color_brewer(type = 'qual', palette = 'Set1') +
-  labs(title = 'Control: Age vs Residuals',
-       subtitle = 'Combined GOT and Lipid, alpha = 0.5, loo',
-       x = 'Predicted Age',
-       y = 'Residuals (Truth - Pred)') #+ 
-#stat_ellipse(data = filter(age_combined_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
-#stat_ellipse(data = filter(age_combined_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
-ggsave('pred_age_residuals_control_loo_5.png')
-
-
-
-
-ggplot(loo_age_table) + 
-  geom_point(aes(truth, pred, color = type)) + 
-  scale_color_brewer(type = 'qual', palette = 'Set1') +
-  labs(title = 'Control: True vs Predicted Age',
-       subtitle = 'Combined GOT and Lipid, alpha = 0.5, loo',
-       x = 'True Age',
-       y = 'Predicted Age')
-ggsave('pred_truth_control_loo_5.png')
-
-ggplot(loo_age_table) + 
-  geom_histogram(aes(resid, fill = apoe4), position = 'identity', alpha = 0.5, bins = 10) + 
-  labs(title = 'Residuals Histogram , split by APOE4',
-       subtitle = 'GOT + Lipids (limited to Controls), alpha = 0.5, loo',
-       x = 'Residuals (Truth - Pred)')
-ggsave('age_resid_c_apoe4_5.png')
 
 
 
@@ -621,7 +592,7 @@ ggplot(loo_age_table) +
   geom_point(aes(truth, pred, color = gender)) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: True vs Predicted Age',
-       subtitle = 'Combined GOT and Lipid, alpha = 0.5, loo',
+       subtitle = 'Combined GOT and Lipid (without APOE as predictor), alpha = 0.5, loo',
        x = 'True Age',
        y = 'Predicted Age') + 
   geom_abline(intercept = 0, slope = 1)
@@ -715,7 +686,9 @@ ggplot(adpd_age_table_5) +
   labs(title = 'Control: True vs Predicted Age (trained on control)',
        subtitle = 'Combined GOT and Lipid, alpha = 0.5',
        x = 'True Age',
-       y = 'Predicted Age')
+       y = 'Predicted Age') + 
+  geom_text(aes(x = 75, y = 0, label = paste0("R: ", cor(truth, pred, method = "pearson") %>% round(2), 
+                                              "\nRMSE: ", (truth - pred)^2 %>% mean %>% sqrt %>% round(2))))
 ggsave('pred_truth_adpd_apoe_5.png')
 
 
@@ -821,14 +794,86 @@ ggplot(age_apoe_c_combined_table_5) +
   labs(title = 'Control: True vs Predicted (in-sample) Age',
        subtitle = 'Combined GOT and Lipid (including apoe), alpha = 0.5',
        x = 'True Age',
-       y = 'Predicted Age (in-sample)')
+       y = 'Predicted Age (in-sample)') + 
+  geom_abline(slope = 1, intercept = 0)
 ggsave('age_true_pred_c_apoe_insample_5.png', width = 7.26, height = 7.26, units = 'in')
 
 
 
 
-###loo
+### LOO (including apoe)
 
+fitpred_combined_loo_apoe_age <- lapply(1:nrow(imputed_c_features_combined_age_apoe), function(x) loo_cvfit_glmnet(x, imputed_c_features_combined_age_apoe, imputed_c_combined_age, 
+                                                                                                         alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
+
+fit_combined_loo_apoe_age <- lapply(fitpred_combined_loo_apoe_age, function(x) x[[1]])
+pred_combined_loo_apoe_age <- lapply(fitpred_combined_loo_apoe_age, function(x) x[[2]]) %>%
+  unlist
+
+#some measure of variable importance
+importance_combined_loo_apoe_age <- lapply(fit_combined_loo_apoe_age, function(x) importance(x))
+mse_combined_loo_apoe_age <- mean((pred_combined_loo_apoe_age - imputed_c_combined_age)^2)
+resid_combined_loo_apoe_age <- pred_combined_loo_apoe_age - imputed_c_combined_age
+
+
+shapiro.test(resid_combined_loo_apoe_age)
+
+qplot(resid_combined_loo_apoe_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.5')
+#ggsave('got_lipids_age_control_resid_hist.png')
+qqnorm(resid_combined_loo_apoe_age)
+qqline(resid_combined_loo_apoe_age)
+
+
+### look at alpha = 0.5
+loo_apoe_age_table <- tibble(truth = imputed_c_combined_age, 
+                        pred = pred_combined_loo_apoe_age,
+                        resid = truth - pred,
+                        apoe = imputed_c_combined_apoe,
+                        type = imputed_c_combined_labels,
+                        gender = imputed_c_combined_gender,
+                        apoe4 = apoe %>% fct_collapse('1' = c('24','34','44'), '0' = c('22', '23', '33'))
+)
+
+#### colored by APOE  ####
+#pred vs residuals
+ggplot(loo_apoe_age_table) + 
+  geom_point(aes(pred, resid, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: Age vs Residuals',
+       subtitle = 'Combined GOT and Lipid (with APOE), alpha = 0.5, loo',
+       x = 'Predicted Age',
+       y = 'Residuals (Truth - Pred)') #+ 
+#stat_ellipse(data = filter(age_combined_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
+#stat_ellipse(data = filter(age_combined_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
+ggsave('pred_age_apoe_residuals_control_loo_5.png')
+
+
+(pred_truth_c_comb_with_apoe <- ggplot(loo_apoe_age_table) + 
+  geom_point(aes(truth, pred, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: True vs Predicted Age',
+       subtitle = 'Combined GOT and Lipid (with APOE), alpha = 0.5, loo',
+       x = 'True Age',
+       y = 'Predicted Age') +
+  geom_abline(slope = 1, intercept = 0) + 
+    geom_text(aes(x = 75, y = 0, label = paste0("R: ", cor(truth, pred, method = "pearson") %>% round(2), 
+                                                "\nRMSE: ", (truth - pred)^2 %>% mean %>% sqrt %>% round(2)))))
+ggsave('pred_truth_apoe_control_loo_5.png')
+
+
+ggplot(loo_apoe_age_table) + 
+  geom_histogram(aes(resid, fill = apoe4), position = 'identity', alpha = 0.5, bins = 10) + 
+  labs(title = 'Residuals Histogram , split by APOE4',
+       subtitle = 'GOT + Lipids (limited to Controls) (with APOE), alpha = 0.5, loo',
+       x = 'Residuals (Truth - Pred)')
+ggsave('age_resid_c_apoe4_5.png')
+
+
+
+# compare models with and without apoe as a predictor
+  # the results are extremely similar
+gridExtra::grid.arrange(pred_truth_c_comb_with_apoe, pred_truth_c_comb_without_apoe, 
+                        nrow = 1, ncol = 2)
 
 
 
@@ -899,7 +944,9 @@ ggplot(rf_age_c_table) +
        subtitle = 'Combined GOT and Lipid, Random Forest, oob',
        x = 'True Age',
        y = 'Predicted Age') + 
-  geom_abline(slope = 1, intercept = 0)
+  geom_abline(slope = 1, intercept = 0) + 
+  geom_text(aes(x = 75, y = 0, label = paste0("R: ", cor(truth, pred, method = "pearson") %>% round(2), 
+                                              "\nRMSE: ", (truth - pred)^2 %>% mean %>% sqrt %>% round(2))))
 
 
 rf_age_adpd_table <- tibble(truth = imputed_adpd_combined_age, 
@@ -918,7 +965,9 @@ ggplot(rf_age_adpd_table) +
        subtitle = 'Combined GOT and Lipid, Random Forest',
        x = 'True Age',
        y = 'Predicted Age') + 
-  geom_abline(slope = 1, intercept = 0)
+  geom_abline(slope = 1, intercept = 0) + 
+  geom_text(aes(x = 75, y = 0, label = paste0("R: ", cor(truth, pred, method = "pearson") %>% round(2), 
+                                              "\nRMSE: ", (truth - pred)^2 %>% mean %>% sqrt %>% round(2))))
 
 
 
@@ -1018,7 +1067,6 @@ ggsave('age_true_pred_all_insample_5.png', width = 7.26, height = 7.26, units = 
 
 ###########################
 
-### Note: It's recy expensive to do a list of alphas like we do with in sample prediction, so I'm just pulling the single alpha based on the insample list
 
 
 #now try with alpha = 0.5
@@ -2365,3 +2413,28 @@ gender_p_table %>%
 
 
 ### maybe play around with metaboanalyst package
+
+
+
+
+
+
+
+
+### what happens if we do the imputations on each type separately?
+imputed_combined_separate <- purrr::map(all_types, ~filter_and_impute(wide_data_combined, .x))
+
+# pull out all the all nonNA columns (can't have any category with all NA)
+all_types_shared_colnames  <- purrr::map(imputed_combined_separate, ~.x[[1]] %>% colnames) %>% 
+  reduce(intersect)
+
+
+# select only these columns
+
+
+
+
+
+
+### trying a simulation to see glmnet is the reason for the overpredicting young/underpredicting old
+sim_data <- matrix(data = rnorm(mean = 0, sd = 1))
