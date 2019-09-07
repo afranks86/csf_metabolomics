@@ -149,6 +149,14 @@ pred_c_got_loo_age <- lapply(fitpred_c_got_loo_age, function(x) x[[2]]) %>%
 
 #some measure of variable importance
 importance_c_got_loo_age <- lapply(fit_c_got_loo_age, function(x) importance(x))
+
+importance_c_got_loo_median_age <- importance_c_got_loo_age %>% 
+  purrr::map(~importance_consolidated_loo(.x)) %>%
+  bind_rows() %>%
+  #select only the variables that were present in >95% of fits
+  select_if(function(x) sum(is.na(x))/length(x) < .05) %>%
+  map_dbl(~median(.x, na.rm = T))
+
 mse_c_got_loo_age <- mean((pred_c_got_loo_age - imputed_c_got_age)^2)
 resid_c_got_loo_age <- pred_c_got_loo_age - imputed_c_got_age
 
@@ -292,6 +300,14 @@ pred_c_lipids_loo_age <- lapply(fitpred_c_lipids_loo_age, function(x) x[[2]]) %>
 
 #some measure of variable importance
 importance_c_lipids_loo_age <- lapply(fit_c_lipids_loo_age, function(x) importance(x))
+
+importance_c_lipids_loo_median_age <- importance_c_lipids_loo_age %>% 
+  purrr::map(~importance_consolidated_loo(.x)) %>%
+  bind_rows() %>%
+  #select only the variables that were present in >95% of fits
+  select_if(function(x) sum(is.na(x))/length(x) < .05) %>%
+  map_dbl(~median(.x, na.rm = T))
+
 mse_c_lipids_loo_age <- mean((pred_c_lipids_loo_age - imputed_c_lipids_age)^2)
 resid_c_lipids_loo_age <- pred_c_lipids_loo_age - imputed_c_lipids_age
 
@@ -519,6 +535,14 @@ pred_combined_loo_age <- lapply(fitpred_combined_loo_age, function(x) x[[2]]) %>
 
 #some measure of variable importance
 importance_combined_loo_age <- lapply(fit_combined_loo_age, function(x) importance(x))
+
+importance_combined_loo_median_age <- importance_combined_loo_age %>% 
+  purrr::map(~importance_consolidated_loo(.x)) %>%
+  bind_rows() %>%
+  #select only the variables that were present in >95% of fits
+  select_if(function(x) sum(is.na(x))/length(x) < .05) %>%
+  map_dbl(~median(.x, na.rm = T))
+
 mse_combined_loo_age <- mean((pred_combined_loo_age - imputed_c_combined_age)^2)
 resid_combined_loo_age <- pred_combined_loo_age - imputed_c_combined_age
 
@@ -812,6 +836,14 @@ pred_combined_loo_apoe_age <- lapply(fitpred_combined_loo_apoe_age, function(x) 
 
 #some measure of variable importance
 importance_combined_loo_apoe_age <- lapply(fit_combined_loo_apoe_age, function(x) importance(x))
+
+importance_combined_loo_apoe_median_age <- importance_combined_loo_apoe_age %>% 
+  purrr::map(~importance_consolidated_loo(.x)) %>%
+  bind_rows() %>%
+  #select only the variables that were present in >95% of fits
+  select_if(function(x) sum(is.na(x))/length(x) < .05) %>%
+  map_dbl(~median(.x, na.rm = T))
+
 mse_combined_loo_apoe_age <- mean((pred_combined_loo_apoe_age - imputed_c_combined_age)^2)
 resid_combined_loo_apoe_age <- pred_combined_loo_apoe_age - imputed_c_combined_age
 
@@ -1079,6 +1111,14 @@ pred_combined_all_loo_age <- lapply(fitpred_combined_all_loo_age, function(x) x[
 
 #some measure of variable importance
 importance_combined_all_loo_age <- lapply(fit_combined_all_loo_age, function(x) importance(x))
+
+importance_combined_all_loo_median_age <- importance_combined_all_loo_age %>% 
+  purrr::map(~importance_consolidated_loo(.x)) %>%
+  bind_rows() %>%
+  #select only the variables that were present in >95% of fits
+  select_if(function(x) sum(is.na(x))/length(x) < .05) %>%
+  map_dbl(~median(.x, na.rm = T))
+
 mse_combined_all_loo_age <- mean((pred_combined_all_loo_age - imputed_all_combined_age)^2)
 resid_combined_all_loo_age <- pred_combined_all_loo_age - imputed_all_combined_age
 
@@ -1180,6 +1220,14 @@ pred_c_male_combined_loo_age <- lapply(fitpred_c_male_combined_loo_age, function
 
 #some measure of variable importance
 importance_c_male_combined_loo_age <- lapply(fit_c_male_combined_loo_age, function(x) importance(x))
+
+importance_c_male_combined_loo_median_age <- importance_c_male_combined_loo_age %>% 
+  purrr::map(~importance_consolidated_loo(.x)) %>%
+  bind_rows() %>%
+  #select only the variables that were present in >95% of fits
+  select_if(function(x) sum(is.na(x))/length(x) < .05) %>%
+  map_dbl(~median(.x, na.rm = T))
+
 mse_c_male_combined_loo_age <- mean((pred_c_male_combined_loo_age - imputed_c_male_combined_age)^2)
 resid_c_male_combined_loo_age <- pred_c_male_combined_loo_age - imputed_c_male_combined_age
 
@@ -1263,6 +1311,14 @@ pred_c_female_combined_loo_age <- lapply(fitpred_c_female_combined_loo_age, func
 
 #some measure of variable importance
 importance_c_female_combined_loo_age <- lapply(fit_c_female_combined_loo_age, function(x) importance(x))
+
+importance_c_female_combined_loo_median_age <- importance_c_female_combined_loo_age %>% 
+  purrr::map(~importance_consolidated_loo(.x)) %>%
+  bind_rows() %>%
+  #select only the variables that were present in >95% of fits
+  select_if(function(x) sum(is.na(x))/length(x) < .05) %>%
+  map_dbl(~median(.x, na.rm = T))
+
 mse_c_female_combined_loo_age <- mean((pred_c_female_combined_loo_age - imputed_c_female_combined_age)^2)
 resid_c_female_combined_loo_age <- pred_c_female_combined_loo_age - imputed_c_female_combined_age
 
@@ -1420,6 +1476,13 @@ pred_c_interaction_combined_loo_age <- lapply(fitpred_c_interaction_combined_loo
 
 #some measure of variable importance
 importance_c_interaction_combined_loo_age <- lapply(fit_c_interaction_combined_loo_age, function(x) importance(x))
+
+importance_c_interaction_combined_loo_median_age <- importance_c_interaction_combined_loo_age %>% 
+  purrr::map(~importance_consolidated_loo(.x)) %>%
+  bind_rows() %>%
+  #select only the variables that were present in >95% of fits
+  select_if(function(x) sum(is.na(x))/length(x) < .05) %>%
+  map_dbl(~median(.x, na.rm = T))
 
 
 #look at ones with gender
@@ -1747,6 +1810,14 @@ pred_c_untargeted_loo_age <- lapply(fitpred_c_untargeted_loo_age, function(x) x[
 
 #some measure of variable importance
 importance_c_untargeted_loo_age <- lapply(fit_c_untargeted_loo_age, function(x) importance(x))
+
+importance_c_untargeted_loo_median_age <- importance_c_untargeted_loo_age %>% 
+  purrr::map(~importance_consolidated_loo(.x)) %>%
+  bind_rows() %>%
+  #select only the variables that were present in >95% of fits
+  select_if(function(x) sum(is.na(x))/length(x) < .05) %>%
+  map_dbl(~median(.x, na.rm = T))
+
 mse_c_untargeted_loo_age <- mean((pred_c_untargeted_loo_age - imputed_c_untargeted_age)^2)
 resid_c_untargeted_loo_age <- pred_c_untargeted_loo_age - imputed_c_untargeted_age
 
@@ -1859,6 +1930,14 @@ pred_c_targeted_loo_age <- lapply(fitpred_c_targeted_loo_age, function(x) x[[2]]
 
 #some measure of variable importance
 importance_c_targeted_loo_age <- lapply(fit_c_targeted_loo_age, function(x) importance(x))
+
+importance_combined_separate_loo_median_age <- importance_combined_separate_loo_age %>% 
+  purrr::map(~importance_consolidated_loo(.x)) %>%
+  bind_rows() %>%
+  #select only the variables that were present in >95% of fits
+  select_if(function(x) sum(is.na(x))/length(x) < .05) %>%
+  map_dbl(~median(.x, na.rm = T))
+
 mse_c_targeted_loo_age <- mean((pred_c_targeted_loo_age - imputed_c_targeted_age)^2)
 resid_c_targeted_loo_age <- pred_c_targeted_loo_age - imputed_c_targeted_age
 
@@ -2527,7 +2606,104 @@ ggsave('pred_truth_control_separate_loo_5.png')
 
 grid.arrange(pred_truth_c_comb_without_apoe, pred_truth_c_comb_separate, ncol = 2)
 
-  
+
+
+
+
+#############################
+
+### Try only using samples between 19-65, following the robinson paper
+
+#############################
+
+age_separate_subset_index <- imputed_c_combined_separate_age %>% between(19,65) %>% which
+imputed_c_combined_separate_subset_Y <- imputed_c_combined_separate_Y[age_separate_subset_index, ]
+imputed_c_combined_separate_subset_labels <- imputed_c_combined_separate_labels[age_separate_subset_index]
+imputed_c_combined_separate_subset_apoe <- imputed_c_combined_separate_apoe[age_separate_subset_index]
+imputed_c_combined_separate_subset_age <- imputed_c_combined_separate_age[age_separate_subset_index]
+imputed_c_combined_separate_subset_gender <- imputed_c_combined_separate_gender[age_separate_subset_index]
+
+
+
+## without APOE as a predictor ##
+imputed_c_features_combined_separate_subset_age_tmp <- imputed_c_combined_separate_subset_Y %>% 
+  as_tibble(.name_repair = 'minimal') %>%
+  select(-c(Age))
+
+#turn type into a dummy var
+imputed_c_features_combined_separate_subset_age <- model.matrix(~., imputed_c_features_combined_separate_subset_age_tmp)
+
+
+
+fitpred_combined_separate_subset_loo_age <- lapply(1:nrow(imputed_c_features_combined_separate_subset_age), function(x) loo_cvfit_glmnet(x, imputed_c_features_combined_separate_subset_age, imputed_c_combined_separate_subset_age, 
+                                                                                                                           alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
+
+fit_combined_separate_subset_loo_age <- lapply(fitpred_combined_separate_subset_loo_age, function(x) x[[1]])
+pred_combined_separate_subset_loo_age <- lapply(fitpred_combined_separate_subset_loo_age, function(x) x[[2]]) %>%
+  unlist
+
+#some measure of variable importance
+importance_combined_separate_subset_loo_age <- lapply(fit_combined_separate_subset_loo_age, function(x) importance(x))
+
+importance_combined_separate_subset_loo_median_age <- importance_combined_separate_subset_loo_age %>% 
+  purrr::map(~importance_consolidated_loo(.x)) %>%
+  bind_rows() %>%
+  #select only the variables that were present in >95% of fits
+  select_if(function(x) sum(is.na(x))/length(x) < .05) %>%
+  map_dbl(~median(.x, na.rm = T))
+
+
+
+mse_combined_separate_subset_loo_age <- mean((pred_combined_separate_subset_loo_age - imputed_c_combined_separate_subset_age)^2)
+resid_combined_separate_subset_loo_age <- pred_combined_separate_subset_loo_age - imputed_c_combined_separate_subset_age
+
+
+shapiro.test(resid_combined_separate_subset_loo_age)
+
+qplot(resid_combined_separate_subset_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.5')
+#ggsave('got_lipids_age_control_resid_hist.png')
+qqnorm(resid_combined_separate_subset_loo_age)
+qqline(resid_combined_separate_subset_loo_age)
+
+
+### look at alpha = 0.5
+loo_separate_subset_age_table <- tibble(truth = imputed_c_combined_separate_subset_age, 
+                                 pred = pred_combined_separate_subset_loo_age,
+                                 resid = truth - pred,
+                                 apoe = imputed_c_combined_separate_subset_apoe,
+                                 type = imputed_c_combined_separate_subset_labels,
+                                 gender = imputed_c_combined_separate_subset_gender,
+                                 apoe4 = apoe %>% fct_collapse('1' = c('24','34','44'), '0' = c('22', '23', '33'))
+)
+
+#### colored by APOE  ####
+#pred vs residuals
+ggplot(loo_separate_subset_age_table) + 
+  geom_point(aes(pred, resid, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: Age vs Residuals',
+       subtitle = 'Combined GOT and Lipid (imputed separately, Ages 19-65), alpha = 0.5, loo',
+       x = 'Predicted Age',
+       y = 'Residuals (Truth - Pred)') #+ 
+#stat_ellipse(data = filter(age_combined_separate_subset_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
+#stat_ellipse(data = filter(age_combined_separate_subset_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
+ggsave('pred_age_residuals_control_separate_subset_loo_5.png')
+
+
+(pred_truth_c_comb_separate_subset <- ggplot(loo_separate_subset_age_table) + 
+    geom_point(aes(truth, pred, color = apoe)) + 
+    scale_color_brewer(type = 'qual', palette = 'Set1') +
+    labs(title = 'Control: True vs Predicted Age',
+         subtitle = 'Combined GOT and Lipid (imputed separately, , Ages 19-65), alpha = 0.5, loo',
+         x = 'True Age',
+         y = 'Predicted Age') + 
+    geom_abline(intercept = 0, slope = 1) + 
+    geom_text(aes(x = 75, y = 0, label = paste0("R: ", cor(truth, pred, method = "pearson") %>% round(2), 
+                                                "\nRMSE: ", (truth - pred)^2 %>% mean %>% sqrt %>% round(2))))
+)
+ggsave('pred_truth_control_separate_subset_loo_5.png')
+
+grid.arrange(pred_truth_c_comb_separate_subset, pred_truth_c_comb_separate, ncol = 2)
 
 
 
