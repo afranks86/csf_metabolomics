@@ -145,6 +145,30 @@ wide_data_raw <- subject_data %>%
     spread(key=Metabolite, value=Raw)
 
 
+
+### code snippit from Alex for better metabolite_matching
+subject_data %>% filter(Metabolite == "176 Results") %>%
+    select(Mode) %>% table
+
+subject_data$Metabolite %>% unique
+
+feature_names <- all_matches %>% ungroup %>%
+    dplyr::rename(MetId=Name) %>% 
+    mutate(pre_diff = abs(`Precursor Ion` - PreOrig)) %>%
+    mutate(BestMatch = ifelse(pre_diff < 0.02, Metabolite, "Unknown")) %>%
+    mutate(MetaboliteName = paste(BestMatch, PreOrig, ProdOrig, MetId, Mode, sep="_")) %>%
+    dplyr::select(-Metabolite)
+
+level_key <- feature_names$MetaboliteName
+names(level_key) <- paste(feature_names$MetId, feature_names$Mode, sep="_")
+level_key <- level_key[!duplicated(names(level_key))]
+
+### End code snippit
+
+metabolite_lookup_table <- feature_names %>% 
+    select("Name" = MetId, "Metabolite" =  MetaboliteName)
+
+
 ### NOTE: For lipids, need to load in new files. the GOT subject_data df is overwritten with the below lines!!
 
 processed_files_lipids <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_lipid_data*")
@@ -442,7 +466,7 @@ importance <- function(fit, metabolites = TRUE){
                                                   str_replace_all('\\.$', '') %>%
                                                   str_replace_all('^\\.+', '') %>%
                                                   str_trim() %>%
-                                                  sapply(function(x) all_matches[match(x, all_matches$Name), 'Metabolite'] %>% deframe))
+                                                  sapply(function(x) metabolite_lookup_table[match(x, metabolite_lookup_table$Name), 'Metabolite'] %>% deframe))
     }
     
     return(coefficients_sorted)
