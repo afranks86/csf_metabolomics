@@ -473,6 +473,23 @@ importance <- function(fit, metabolites = TRUE){
     
 }
 
+#' helper function to pull out significant variables
+#' 
+#' After doing leave one out prediction, we're left with a ton of almost identical fits,
+#' each fit having its own set of retained variables. We pull out all variables with at least 95% presence,
+#' and take the median of each of their coefficients
+#' 
+#' @param importance is a list of named numeric vectors, ie the output of importance()
+importance_consolidated_loo <- function(retained){
+    retained %>% 
+        enframe %>% 
+        dplyr::group_by(name) %>% 
+        #this summary is for when we map 2 metabolites to the same name (within a list)
+        dplyr::summarise(value = median(value)) %>% 
+        ungroup() %>% 
+        spread(name, value)
+}
+
 
 #get the types in our dataset (ie AD, PD, CO, ..)
 all_types <- wide_data$Type %>% 
