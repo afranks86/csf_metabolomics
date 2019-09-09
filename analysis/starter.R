@@ -171,6 +171,10 @@ metabolite_lookup_table <- feature_names %>%
     select("Name" = MetId, "Metabolite" =  MetaboliteName)
 
 
+
+
+
+
 ### NOTE: For lipids, need to load in new files. the GOT subject_data df is overwritten with the below lines!!
 
 processed_files_lipids <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_lipid_data*")

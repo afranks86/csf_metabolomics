@@ -2832,7 +2832,7 @@ ggsave('pred_truth_lipids_control_separate_loo_5.png')
 
 
 grid.arrange(pred_truth_c_got_separate, pred_truth_c_lipids_separate, ncol = 2)
-cor(loo_lipids_separate_age_table$resid, loo_got_separate_age_table$resid, method = "spearman")
+cor.test(loo_lipids_separate_age_table$resid, loo_got_separate_age_table$resid, method = "spearman")
 
 grid.arrange(pred_truth_c_lipids,pred_truth_c_lipids_separate, ncol = 2)
 
