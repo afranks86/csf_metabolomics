@@ -199,7 +199,7 @@ wide_data_lipids <- subject_data %>%
 wide_data_combined <- wide_data %>%
     #remove duplicate columns
     select(-c(Age, Type, Gender, Batch, Index, GBAStatus, GBA_T369M, cognitive_status, APOE, Type2)) %>%
-    left_join(wide_data_lipids, by = 'Id') 
+    inner_join(wide_data_lipids, by = 'Id') 
 
 
 ### untargeted data
@@ -269,10 +269,12 @@ filter_and_impute <- function(data, types){
     apoe <- filtered$APOE %>%
         droplevels
     
+    id <- filtered$Id
+    
     filtered_features <- filtered %>%
         dplyr::select(-one_of("Type2", "Type", "Gender", "Age", "APOE", "Batch",
                               #"Data File",  (not found in dataset, so removed)
-                              "Index", "GBAStatus", "Id", 
+                              "Index", "GBAStatus",  "Id",
                               "GBA_T369M", "cognitive_status"))
         
 
@@ -306,10 +308,11 @@ filter_and_impute <- function(data, types){
                                                    TRUE ~ GBAStatus))) %>%
             select(GBAStatus) %>%
             deframe
-        
-        return(list(Y, type, apoe,gba))
+        message("list order is Y, type, apoe, gba, id")
+        return(list(Y, type, apoe,gba, id))
     }
-    return(list(Y, type, apoe))
+    message("list order is Y, type, apoe, id")
+    return(list(Y, type, apoe, id))
     
     
 }

@@ -2511,119 +2511,19 @@ gender_p_table %>%
 
 
 
-############################################
+
+### ############################################
 
 ### what happens if we do the imputations on each control type separately?
 
 #############################################
 
 
-imputed_c_combined_separate_list <- purrr::map(c("CO", "CM", "CY"), ~filter_and_impute(wide_data_combined, .x))
+############
 
+### GOT 
 
-
-# combine the results. rbind.fill.matrix coerces NAs in the columns that don't have a match,
-  # so we throw these columns out. this is different from the non-separated version, where the NAs are filled
-imputed_c_combined_separate_Y <- imputed_c_combined_separate_list %>% 
-  purrr::map(~.x[[1]]) %>% 
-  plyr::rbind.fill.matrix() %>%
-  .[,!apply(is.na(.), 2, any)]
-
-imputed_c_combined_separate_labels <- imputed_c_combined_separate_list %>% purrr::map(~.x[[2]]) %>% unlist
-imputed_c_combined_separate_apoe <- imputed_c_combined_separate_list %>% purrr::map(~.x[[3]]) %>% unlist
-imputed_c_combined_separate_age <- imputed_c_combined_separate_Y[,'Age']
-
-
-imputed_c_combined_separate_gender <- imputed_c_combined_separate_Y[,'GenderM'] %>% as.factor %>%
-  fct_recode(M = '1', F = '0')
-
-
-## without APOE as a predictor ##
-imputed_c_features_combined_separate_age_tmp <- imputed_c_combined_separate_Y %>% 
-  as_tibble(.name_repair = 'minimal') %>%
-  select(-c(Age))
-
-#turn type into a dummy var
-imputed_c_features_combined_separate_age <- model.matrix(~., imputed_c_features_combined_separate_age_tmp)
-
-  
-
-fitpred_combined_separate_loo_age <- lapply(1:nrow(imputed_c_features_combined_separate_age), function(x) loo_cvfit_glmnet(x, imputed_c_features_combined_separate_age, imputed_c_combined_separate_age, 
-                                                                                                         alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
-
-fit_combined_separate_loo_age <- lapply(fitpred_combined_separate_loo_age, function(x) x[[1]])
-pred_combined_separate_loo_age <- lapply(fitpred_combined_separate_loo_age, function(x) x[[2]]) %>%
-  unlist
-
-#some measure of variable importance
-importance_combined_separate_loo_age <- lapply(fit_combined_separate_loo_age, function(x) importance(x))
-
-importance_combined_separate_loo_median_age <- importance_combined_separate_loo_age %>% 
-  purrr::map(~importance_consolidated_loo(.x)) %>%
-  bind_rows() %>%
-  #select only the variables that were present in >95% of fits
-  select_if(function(x) sum(is.na(x))/length(x) < .05) %>%
-  map_dbl(~median(.x, na.rm = T))
-  
-
-
-mse_combined_separate_loo_age <- mean((pred_combined_separate_loo_age - imputed_c_combined_separate_age)^2)
-resid_combined_separate_loo_age <- pred_combined_separate_loo_age - imputed_c_combined_separate_age
-
-
-shapiro.test(resid_combined_separate_loo_age)
-
-qplot(resid_combined_separate_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.5')
-#ggsave('got_lipids_age_control_resid_hist.png')
-qqnorm(resid_combined_separate_loo_age)
-qqline(resid_combined_separate_loo_age)
-
-
-### look at alpha = 0.5
-loo_separate_age_table <- tibble(truth = imputed_c_combined_separate_age, 
-                        pred = pred_combined_separate_loo_age,
-                        resid = truth - pred,
-                        apoe = imputed_c_combined_separate_apoe,
-                        type = imputed_c_combined_separate_labels,
-                        gender = imputed_c_combined_separate_gender,
-                        apoe4 = apoe %>% fct_collapse('1' = c('24','34','44'), '0' = c('22', '23', '33'))
-)
-
-#### colored by APOE  ####
-#pred vs residuals
-ggplot(loo_separate_age_table) + 
-  geom_point(aes(pred, resid, color = apoe)) + 
-  scale_color_brewer(type = 'qual', palette = 'Set1') +
-  labs(title = 'Control: Age vs Residuals',
-       subtitle = 'Combined GOT and Lipid (imputed separately), alpha = 0.5, loo',
-       x = 'Predicted Age',
-       y = 'Residuals (Truth - Pred)') #+ 
-#stat_ellipse(data = filter(age_combined_separate_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
-#stat_ellipse(data = filter(age_combined_separate_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
-ggsave('pred_age_residuals_control_separate_loo_5.png')
-
-
-(pred_truth_c_comb_separate <- ggplot(loo_separate_age_table) + 
-    geom_point(aes(truth, pred, color = apoe)) + 
-    scale_color_brewer(type = 'qual', palette = 'Set1') +
-    labs(title = 'Control: True vs Predicted Age',
-         subtitle = 'Combined GOT and Lipid (imputed separately), alpha = 0.5, loo',
-         x = 'True Age',
-         y = 'Predicted Age') + 
-    geom_abline(intercept = 0, slope = 1) + 
-    geom_text(aes(x = Inf, y = -Inf, hjust = 1.25, vjust = -1, label = paste0("R: ", cor(truth, pred, method = "pearson") %>% round(2), 
-                                                "\nRMSE: ", (truth - pred)^2 %>% mean %>% sqrt %>% round(2))))
-)
-ggsave('pred_truth_control_separate_loo_5.png')
-
-grid.arrange(pred_truth_c_comb_without_apoe, pred_truth_c_comb_separate, ncol = 2)
-
-
-############################################
-
-### Doing GOT and Lipids separate again, but this time splitting by type
-
-###########################################
+###########
 
 
 imputed_c_got_separate_list <- purrr::map(c("CO", "CM", "CY"), ~filter_and_impute(wide_data, .x))
@@ -2639,7 +2539,9 @@ imputed_c_got_separate_Y <- imputed_c_got_separate_list %>%
 
 imputed_c_got_separate_labels <- imputed_c_got_separate_list %>% purrr::map(~.x[[2]]) %>% unlist
 imputed_c_got_separate_apoe <- imputed_c_got_separate_list %>% purrr::map(~.x[[3]]) %>% unlist
+imputed_c_got_separate_id <- imputed_c_got_separate_list %>% purrr::map(~.x[[4]]) %>% unlist
 imputed_c_got_separate_age <- imputed_c_got_separate_Y[,'Age']
+
 
 
 imputed_c_got_separate_gender <- imputed_c_got_separate_Y[,'GenderM'] %>% as.factor %>%
@@ -2745,6 +2647,7 @@ imputed_c_lipids_separate_Y <- imputed_c_lipids_separate_list %>%
 
 imputed_c_lipids_separate_labels <- imputed_c_lipids_separate_list %>% purrr::map(~.x[[2]]) %>% unlist
 imputed_c_lipids_separate_apoe <- imputed_c_lipids_separate_list %>% purrr::map(~.x[[3]]) %>% unlist
+imputed_c_lipids_separate_id <- imputed_c_lipids_separate_list %>% purrr::map(~.x[[4]]) %>% unlist
 imputed_c_lipids_separate_age <- imputed_c_lipids_separate_Y[,'Age']
 
 
@@ -2835,6 +2738,146 @@ grid.arrange(pred_truth_c_got_separate, pred_truth_c_lipids_separate, ncol = 2)
 cor.test(loo_lipids_separate_age_table$resid, loo_got_separate_age_table$resid, method = "spearman")
 
 grid.arrange(pred_truth_c_lipids,pred_truth_c_lipids_separate, ncol = 2)
+
+
+
+############################################
+
+### combined Lipids + GOT
+
+#############################################
+
+
+imputed_c_combined_separate_list <- purrr::map(c("CO", "CM", "CY"), ~filter_and_impute(wide_data_combined, .x))
+
+# add the id columns to make the join easier
+imputed_c_got_separate_withid <- imputed_c_got_separate_Y %>% 
+  as_tibble() %>%
+  mutate(id = imputed_c_got_separate_id)
+
+# we only need to track apoe/gender/age once
+imputed_c_lipids_separate_withid <- imputed_c_lipids_separate_Y %>%
+  as_tibble() %>%
+  dplyr::select(-c(Age, GenderM, `(Intercept)`)) %>%
+  dplyr::mutate(id = imputed_c_lipids_separate_id, 
+         apoe = imputed_c_lipids_separate_apoe,
+         type = imputed_c_lipids_separate_labels)
+
+# join
+imputed_c_combined_separate_df <- imputed_c_got_separate_withid %>%
+  inner_join(imputed_c_lipids_separate_withid, by = 'id') %>%
+  dplyr::select(-c(id))
+
+# transform into matrix
+imputed_c_combined_separate_Y <- imputed_c_combined_separate_df %>%
+  dplyr::select(-c(apoe, type)) %>%
+  as.matrix()
+
+imputed_c_combined_separate_labels <- imputed_c_combined_separate_df$type %>% as.factor()
+imputed_c_combined_separate_apoe <- imputed_c_combined_separate_df$apoe %>%
+imputed_c_combined_separate_age <- imputed_c_combined_separate_Y[,'Age'] %>% as.numeric
+
+
+imputed_c_combined_separate_gender <- imputed_c_combined_separate_Y[,'GenderM'] %>% as.factor %>%
+  fct_recode(M = '1', F = '0')
+
+
+## without APOE as a predictor ##
+imputed_c_features_combined_separate_age_tmp <- imputed_c_combined_separate_Y %>% 
+  as_tibble(.name_repair = 'minimal') %>%
+  select(-c(Age))
+
+#turn type into a dummy var
+imputed_c_features_combined_separate_age <- model.matrix(~., imputed_c_features_combined_separate_age_tmp)
+
+
+
+fitpred_combined_separate_loo_age <- lapply(1:nrow(imputed_c_features_combined_separate_age), function(x) loo_cvfit_glmnet(x, imputed_c_features_combined_separate_age, imputed_c_combined_separate_age, 
+                                                                                                                           alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
+
+fit_combined_separate_loo_age <- lapply(fitpred_combined_separate_loo_age, function(x) x[[1]])
+pred_combined_separate_loo_age <- lapply(fitpred_combined_separate_loo_age, function(x) x[[2]]) %>%
+  unlist
+
+#some measure of variable importance
+importance_combined_separate_loo_age <- lapply(fit_combined_separate_loo_age, function(x) importance(x))
+
+importance_combined_separate_loo_median_age <- importance_combined_separate_loo_age %>% 
+  purrr::map(~importance_consolidated_loo(.x)) %>%
+  bind_rows() %>%
+  #select only the variables that were present in >95% of fits
+  select_if(function(x) sum(is.na(x))/length(x) < .05) %>%
+  map_dbl(~median(.x, na.rm = T))
+
+
+
+mse_combined_separate_loo_age <- mean((pred_combined_separate_loo_age - imputed_c_combined_separate_age)^2)
+resid_combined_separate_loo_age <- pred_combined_separate_loo_age - imputed_c_combined_separate_age
+
+
+shapiro.test(resid_combined_separate_loo_age)
+
+qplot(resid_combined_separate_loo_age, bins = 10, xlab = 'Residuals', main = 'Histogram of Age Residuals, alpha = 0.5')
+#ggsave('got_lipids_age_control_resid_hist.png')
+qqnorm(resid_combined_separate_loo_age)
+qqline(resid_combined_separate_loo_age)
+
+
+### look at alpha = 0.5
+loo_separate_age_table <- tibble(truth = imputed_c_combined_separate_age, 
+                                 pred = pred_combined_separate_loo_age,
+                                 resid = truth - pred,
+                                 apoe = imputed_c_combined_separate_apoe,
+                                 type = imputed_c_combined_separate_labels,
+                                 gender = imputed_c_combined_separate_gender,
+                                 apoe4 = apoe %>% fct_collapse('1' = c('24','34','44'), '0' = c('22', '23', '33'))
+)
+
+
+### plot 
+(pred_truth_c_comb_separate <- ggplot(loo_separate_age_table) + 
+    geom_point(aes(truth, pred)) + 
+    scale_color_brewer(type = 'qual', palette = 'Set1') +
+    labs(title = 'Control: True vs Predicted Age',
+         subtitle = 'Combined GOT and Lipid (imputed separately), alpha = 0.5, loo',
+         x = 'True Age',
+         y = 'Predicted Age') + 
+    geom_abline(intercept = 0, slope = 1) + 
+    geom_label(aes(x = Inf, y = -Inf, hjust = 1, vjust = 0, label = paste0("R: ", cor(truth, pred, method = "pearson") %>% round(2), 
+                                                                           "\nRMSE: ", (truth - pred)^2 %>% mean %>% sqrt %>% round(2), 
+                                                                           "\nMAE: ", (truth - pred) %>% abs %>% mean %>% round(2))))
+)
+ggsave('pred_truth_control_separate_loo_5.png')
+grid.arrange(pred_truth_c_comb_without_apoe, pred_truth_c_comb_separate, ncol = 2)
+
+
+
+
+#### colored by APOE  ####
+#pred vs residuals
+ggplot(loo_separate_age_table) + 
+  geom_point(aes(pred, resid, color = apoe)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: Age vs Residuals',
+       subtitle = 'Combined GOT and Lipid (imputed separately), alpha = 0.5, loo',
+       x = 'Predicted Age',
+       y = 'Residuals (Truth - Pred)') #+ 
+#stat_ellipse(data = filter(age_combined_separate_table_4, type == 'CO'), aes(truth, resid), size=1, colour="red") + 
+#stat_ellipse(data = filter(age_combined_separate_table_4, type == 'CM'), aes(truth, resid), size = 1, color = 'blue')
+ggsave('pred_age_residuals_control_separate_loo_5.png')
+
+
+ggplot(loo_separate_age_table) + 
+    geom_point(aes(truth, pred, color = apoe)) + 
+    scale_color_brewer(type = 'qual', palette = 'Set1') +
+    labs(title = 'Control: True vs Predicted Age',
+         subtitle = 'Combined GOT and Lipid (imputed separately), alpha = 0.5, loo',
+         x = 'True Age',
+         y = 'Predicted Age') + 
+    geom_abline(intercept = 0, slope = 1) + 
+    geom_label(aes(x = Inf, y = -Inf, hjust = 1, vjust = 0, label = paste0("R: ", cor(truth, pred, method = "pearson") %>% round(2), 
+                                                                              "\nRMSE: ", (truth - pred)^2 %>% mean %>% sqrt %>% round(2), 
+                                                                              "\nMAE: ", (truth - pred) %>% abs %>% mean %>% round(2))))
 
 
 
@@ -2930,8 +2973,9 @@ ggsave('pred_age_residuals_control_separate_subset_loo_5.png')
          x = 'True Age',
          y = 'Predicted Age') + 
     geom_abline(intercept = 0, slope = 1) + 
-    geom_text(aes(x = Inf, y = -Inf, vjust = -1, hjust = 1.25, label = paste0("R: ", cor(truth, pred, method = "pearson") %>% round(2), 
-                                                "\nRMSE: ", (truth - pred)^2 %>% mean %>% sqrt %>% round(2))))
+    geom_label(aes(x = Inf, y = -Inf, hjust = 1, vjust = 0, label = paste0("R: ", cor(truth, pred, method = "pearson") %>% round(2), 
+                                                                           "\nRMSE: ", (truth - pred)^2 %>% mean %>% sqrt %>% round(2), 
+                                                                           "\nMAE: ", (truth - pred) %>% abs %>% mean %>% round(2))))
 )
 ggsave('pred_truth_control_separate_subset_loo_5.png')
 
