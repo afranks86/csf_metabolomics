@@ -3165,8 +3165,9 @@ ggplot(rf_separate_sig_age_c_table) +
   # this one is from the univariate analysis
 targeted_sig_names <- univar_targeted_names %>%
   str_replace_all("_neg", "") %>%
-  str_replace_all("_pos", "") #%>%
-  #str_replace_all("\\?", "")
+  str_replace_all("_pos", "") %>%
+  # an alternate name for 12 ketolithocholic acid according to https://pubchem.ncbi.nlm.nih.gov/compound/12-Ketolithocholic-acid
+  str_replace("3\\?-Hydroxy-12 Ketolithocholic Acid", "12-Ketodeoxycholic acid")
 
 
 ## Following the package vignette
@@ -3179,11 +3180,6 @@ mSet<-CreateMappingResultTable(mSet)
 
 
 ## try to match the NAs manually... 
-
-mSet<-PerformDetailMatch(mSet, "3?-Hydroxy-12 Ketolithocholic Acid")
-# it didn't find any candidates :(
-mSet <- GetCandidateList(mSet)
-
 
 mSet<-PerformDetailMatch(mSet, "HIAA")
 mSet <- GetCandidateList(mSet)
