@@ -94,6 +94,8 @@ library(yardstick)
 library(here)
 library(CCA)
 library(gridExtra)
+library(gbm3)
+library(MetaboAnalystR)
 source(here("analysis/utility.R"))
 
 
@@ -224,6 +226,7 @@ wide_data_untargeted_dropped <- wide_data_untargeted %>%
 
 # Targeted data
 load(file.path(data_path, 'data', 'preprocessed_csf_data.RData'), verbose =  T)
+raw_data_targeted <- subject_data
 wide_data_targeted <- subject_data %>%     
     filter(!(Type %in% c("Other"))) %>%
     unite("Metabolite", c("Metabolite", "Mode")) %>% 
