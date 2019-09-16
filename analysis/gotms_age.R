@@ -2515,6 +2515,8 @@ gender_p_table %>%
 ### ############################################
 
 ### what happens if we do the imputations on each control type separately?
+## we add the imputation to the leave one out set 
+  # (ie impute on n-1 (split by control type), add back the 1, impute the one, then predict)
 
 #############################################
 
@@ -2526,44 +2528,20 @@ gender_p_table %>%
 ###########
 
 
-imputed_c_got_separate_list <- purrr::map(c("CO", "CM", "CY"), ~filter_and_impute(wide_data, .x))
+num_controls_got <- wide_data %>%
+  filter(Type %in% c("CY", "CM", "CO")) %>% 
+  nrow
 
 
-
-# combine the results. rbind.fill.matrix coerces NAs in the columns that don't have a match,
-# so we throw these columns out. this is different from the non-separated version, where the NAs are filled
-imputed_c_got_separate_Y <- imputed_c_got_separate_list %>% 
-  purrr::map(~.x[[1]]) %>% 
-  plyr::rbind.fill.matrix() %>%
-  .[,!apply(is.na(.), 2, any)]
-
-imputed_c_got_separate_labels <- imputed_c_got_separate_list %>% purrr::map(~.x[[2]]) %>% unlist
-imputed_c_got_separate_apoe <- imputed_c_got_separate_list %>% purrr::map(~.x[[3]]) %>% unlist
-imputed_c_got_separate_id <- imputed_c_got_separate_list %>% purrr::map(~.x[[4]]) %>% unlist
-imputed_c_got_separate_age <- imputed_c_got_separate_Y[,'Age']
-
-
-
-imputed_c_got_separate_gender <- imputed_c_got_separate_Y[,'GenderM'] %>% as.factor %>%
-  fct_recode(M = '1', F = '0')
-
-
-## without APOE as a predictor ##
-imputed_c_features_got_separate_age_tmp <- imputed_c_got_separate_Y %>% 
-  as_tibble(.name_repair = 'minimal') %>%
-  select(-c(Age))
-
-#turn type into a dummy var
-imputed_c_features_got_separate_age <- model.matrix(~., imputed_c_features_got_separate_age_tmp)
-
-
-
-fitpred_got_separate_loo_age <- lapply(1:nrow(imputed_c_features_got_separate_age), function(x) loo_cvfit_glmnet(x, imputed_c_features_got_separate_age, imputed_c_got_separate_age, 
-                                                                                                                           alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
+fitpred_got_separate_loo_age <- lapply(1:num_controls_got, function(x) impute_c_loo_cvfit_glmnet(x, wide_data, alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
 
 fit_got_separate_loo_age <- lapply(fitpred_got_separate_loo_age, function(x) x[[1]])
 pred_got_separate_loo_age <- lapply(fitpred_got_separate_loo_age, function(x) x[[2]]) %>%
   unlist
+truth_got_separate_loo_age <- lapply(fitpred_got_separate_loo_age, function(x) x[[3]]) %>% unlist
+type_got_separate_loo_age <- lapply(fitpred_got_separate_loo_age, function(x) x[[4]]) %>% unlist
+apoe_got_separate_loo_age <- lapply(fitpred_got_separate_loo_age, function(x) x[[5]]) %>% unlist
+gender_got_separate_loo_age <- lapply(fitpred_got_separate_loo_age, function(x) x[[6]]) %>% unlist
 
 #some measure of variable importance
 importance_got_separate_loo_age <- lapply(fit_got_separate_loo_age, function(x) importance(x))
@@ -2577,8 +2555,8 @@ importance_got_separate_loo_median_age <- importance_got_separate_loo_age %>%
 
 
 
-mse_got_separate_loo_age <- mean((pred_got_separate_loo_age - imputed_c_got_separate_age)^2)
-resid_got_separate_loo_age <- pred_got_separate_loo_age - imputed_c_got_separate_age
+mse_got_separate_loo_age <- mean((pred_got_separate_loo_age - truth_got_separate_loo_age)^2)
+resid_got_separate_loo_age <- pred_got_separate_loo_age - truth_got_separate_loo_age
 
 
 shapiro.test(resid_got_separate_loo_age)
@@ -2590,12 +2568,12 @@ qqline(resid_got_separate_loo_age)
 
 
 ### look at alpha = 0.5
-loo_got_separate_age_table <- tibble(truth = imputed_c_got_separate_age, 
+loo_got_separate_age_table <- tibble(truth = truth_got_separate_loo_age, 
                                  pred = pred_got_separate_loo_age,
                                  resid = truth - pred,
-                                 apoe = imputed_c_got_separate_apoe,
-                                 type = imputed_c_got_separate_labels,
-                                 gender = imputed_c_got_separate_gender,
+                                 apoe = apoe_got_separate_loo_age,
+                                 type = type_got_separate_loo_age,
+                                 gender = gender_got_separate_loo_age,
                                  apoe4 = apoe %>% fct_collapse('1' = c('24','34','44'), '0' = c('22', '23', '33'))
 )
 
@@ -2635,42 +2613,20 @@ grid.arrange(pred_truth_c_got, pred_truth_c_got_separate, ncol = 2)
 ## Lipids 
 
 #######
-imputed_c_lipids_separate_list <- purrr::map(c("CO", "CM", "CY"), ~filter_and_impute(wide_data_lipids, .x))
+num_controls_lipids <- wide_data_lipids %>%
+  filter(Type %in% c("CY", "CM", "CO")) %>% 
+  nrow
 
 
-# combine the results. rbind.fill.matrix coerces NAs in the columns that don't have a match,
-# so we throw these columns out. this is different from the non-separated version, where the NAs are filled
-imputed_c_lipids_separate_Y <- imputed_c_lipids_separate_list %>% 
-  purrr::map(~.x[[1]]) %>% 
-  plyr::rbind.fill.matrix() %>%
-  .[,!apply(is.na(.), 2, any)]
-
-imputed_c_lipids_separate_labels <- imputed_c_lipids_separate_list %>% purrr::map(~.x[[2]]) %>% unlist
-imputed_c_lipids_separate_apoe <- imputed_c_lipids_separate_list %>% purrr::map(~.x[[3]]) %>% unlist
-imputed_c_lipids_separate_id <- imputed_c_lipids_separate_list %>% purrr::map(~.x[[4]]) %>% unlist
-imputed_c_lipids_separate_age <- imputed_c_lipids_separate_Y[,'Age']
-
-
-imputed_c_lipids_separate_gender <- imputed_c_lipids_separate_Y[,'GenderM'] %>% as.factor %>%
-  fct_recode(M = '1', F = '0')
-
-
-## without APOE as a predictor ##
-imputed_c_features_lipids_separate_age_tmp <- imputed_c_lipids_separate_Y %>% 
-  as_tibble(.name_repair = 'minimal') %>%
-  select(-c(Age))
-
-#turn type into a dummy var
-imputed_c_features_lipids_separate_age <- model.matrix(~., imputed_c_features_lipids_separate_age_tmp)
-
-
-
-fitpred_lipids_separate_loo_age <- lapply(1:nrow(imputed_c_features_lipids_separate_age), function(x) loo_cvfit_glmnet(x, imputed_c_features_lipids_separate_age, imputed_c_lipids_separate_age, 
-                                                                                                                 alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
+fitpred_lipids_separate_loo_age <- lapply(1:num_controls_lipids, function(x) impute_c_loo_cvfit_glmnet(x, wide_data_lipids, alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
 
 fit_lipids_separate_loo_age <- lapply(fitpred_lipids_separate_loo_age, function(x) x[[1]])
 pred_lipids_separate_loo_age <- lapply(fitpred_lipids_separate_loo_age, function(x) x[[2]]) %>%
   unlist
+truth_lipids_separate_loo_age <- lapply(fitpred_lipids_separate_loo_age, function(x) x[[3]]) %>% unlist
+type_lipids_separate_loo_age <- lapply(fitpred_lipids_separate_loo_age, function(x) x[[4]]) %>% unlist
+apoe_lipids_separate_loo_age <- lapply(fitpred_lipids_separate_loo_age, function(x) x[[5]]) %>% unlist
+gender_lipids_separate_loo_age <- lapply(fitpred_lipids_separate_loo_age, function(x) x[[6]]) %>% unlist
 
 #some measure of variable importance
 importance_lipids_separate_loo_age <- lapply(fit_lipids_separate_loo_age, function(x) importance(x))
@@ -2684,8 +2640,8 @@ importance_lipids_separate_loo_median_age <- importance_lipids_separate_loo_age 
 
 
 
-mse_lipids_separate_loo_age <- mean((pred_lipids_separate_loo_age - imputed_c_lipids_separate_age)^2)
-resid_lipids_separate_loo_age <- pred_lipids_separate_loo_age - imputed_c_lipids_separate_age
+mse_lipids_separate_loo_age <- mean((pred_lipids_separate_loo_age - truth_lipids_separate_loo_age)^2)
+resid_lipids_separate_loo_age <- pred_lipids_separate_loo_age - truth_lipids_separate_loo_age
 
 
 shapiro.test(resid_lipids_separate_loo_age)
@@ -2697,12 +2653,12 @@ qqline(resid_lipids_separate_loo_age)
 
 
 ### look at alpha = 0.5
-loo_lipids_separate_age_table <- tibble(truth = imputed_c_lipids_separate_age, 
+loo_lipids_separate_age_table <- tibble(truth = truth_lipids_separate_loo_age, 
                                      pred = pred_lipids_separate_loo_age,
                                      resid = truth - pred,
-                                     apoe = imputed_c_lipids_separate_apoe,
-                                     type = imputed_c_lipids_separate_labels,
-                                     gender = imputed_c_lipids_separate_gender,
+                                     apoe = apoe_lipids_separate_loo_age,
+                                     type = type_lipids_separate_loo_age,
+                                     gender = gender_lipids_separate_loo_age,
                                      apoe4 = apoe %>% fct_collapse('1' = c('24','34','44'), '0' = c('22', '23', '33'))
 )
 

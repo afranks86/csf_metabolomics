@@ -256,7 +256,6 @@ set.seed(1)
 #' filter type and impute using amelia
 #' col is a vector of strings, one of the levels of type
 filter_and_impute <- function(data, types){
-    ## Impute missing values
     filtered <- data %>%
         filter(Type %in% types)
     
@@ -436,6 +435,93 @@ loo_cvfit_glmnet <- function(index, features, labels, alpha, penalize_age_gender
 }
 
 
+
+
+#' Impute with leave one out, then do loo_cvfit_glmnet
+#' 
+impute_c_loo_cvfit_glmnet <- function(index, og_data, alpha, penalize_age_gender = TRUE, family = 'binomial'){
+    #make sure the features only have controls
+    c_rows <- og_data %>% 
+        filter(Type %in% c("CO", "CM", "CY"))
+    
+    loo_rows <- c_rows[-index,]
+    new_rows <- c_rows[index,] 
+    
+    new_apoe <- new_rows$APOE
+    new_type <- new_rows$Type
+    new_id <- new_rows$Id
+    new_gender <- new_rows$Gender
+    new_age <- new_rows$Age
+    
+    new_feature <- new_rows %>% 
+        dplyr::mutate(GenderM = ifelse(Gender == "M", 1, 0)) %>%
+        dplyr::select(-one_of("Type2", "Type",  "APOE", "Gender", "Batch",
+                              #"Data File",  (not found in dataset, so removed)
+                              "Index", "GBAStatus",  "Id",
+                              "GBA_T369M", "cognitive_status")) %>%
+        as.matrix(nrow = 1) 
+    
+    # split the first imputation by type
+    loo_imputed_separate_list <- purrr::map(c("CO", "CM", "CY"), ~filter_and_impute(loo_rows, .x))
+    
+    
+    #creates a list of 3 matrices  (one for CO, CM, and CY)
+    # combine the results. rbind.fill.matrix coerces NAs in the columns that don't have a match,
+    # so we throw these columns out. this is different from the non-separated version, where the NAs are filled
+    loo_imputed_separate_Y <- loo_imputed_separate_list %>% 
+        purrr::map(~.x[[1]]) %>% 
+        plyr::rbind.fill.matrix() %>%
+        .[,!apply(is.na(.), 2, any)] %>%
+        .[,colnames(.) != "(Intercept)"]
+    
+    
+
+    # now we impute again (this time, there are only NA's in the held out row)
+    full_separate_Y <- plyr::rbind.fill.matrix(loo_imputed_separate_Y, new_feature) 
+    full_imputed_separate_Y <- amelia(t(full_separate_Y), m = 1, empri = 100)$imputations$imp1 %>% t
+    
+    # see how different imputations are from one another
+    test <- amelia(t(full_separate_Y), m = 5, empri = 100)$imputations %>%
+        purrr::map(~t(.x) %>% 
+                as_tibble(.name_repair = 'minimal') %>%
+                select_if(function(x) any(!is.na(x))) %>%
+                janitor::remove_empty('rows'))
+    
+    # see how different the imputations are from the old version
+    
+    
+    
+    # list/unlist is a cool trick to preserve factors
+    full_imputed_separate_type <- loo_imputed_separate_list %>% purrr::map(~.x[[2]]) %>% list(., new_type) %>% unlist 
+    full_imputed_separate_apoe <- loo_imputed_separate_list %>% purrr::map(~.x[[3]]) %>% list(., new_apoe) %>% unlist
+    full_imputed_separate_id <- loo_imputed_separate_list %>% purrr::map(~.x[[4]]) %>% list(., new_id) %>% unlist
+    full_imputed_separate_age <- full_imputed_separate_Y[,'Age']
+    full_imputed_separate_gender <- full_imputed_separate_Y[,'GenderM'] %>% as.factor %>%
+        fct_recode(M = '1', F = '0')
+    
+    
+    #zeroes don't make sense, so we replace them with NA
+    # then we remove all columns that are completely na
+    # then we remove any completely empty rows
+    full_imputed_features_separate_age_tmp <- full_imputed_separate_Y %>% 
+        as_tibble(.name_repair = 'minimal') %>%
+        select(-c(Age)) %>%
+        #mutate_all(~replace(., .==0, NA)) %>%
+        #remove columns that are ALL NA
+        select_if(function(x) any(!is.na(x))) %>%
+        janitor::remove_empty('rows')
+    
+    # turn all factors into dummies, add intercept
+    full_imputed_features_separate_age <- model.matrix(~., full_imputed_features_separate_age_tmp)
+    
+    #run the model (note that since we binded the new row to the end, the "index" should be the last row)
+    fitpred <- loo_cvfit_glmnet(nrow(full_imputed_features_separate_age), full_imputed_features_separate_age, full_imputed_separate_age, 
+                     alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE)
+    
+    message("list order is fitpred, truth, type, apoe, gender")
+    list(fitpred[[1]], fitpred[[2]], new_age, new_type, new_apoe, new_gender)
+    
+}
 
 
 
