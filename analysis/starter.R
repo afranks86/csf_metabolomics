@@ -265,6 +265,7 @@ filter_and_impute <- function(data, types){
         #relevel factors alphabetically so it's at least consistent
         fct_relevel(sort(levels(.)))
     
+    
     apoe <- filtered$APOE %>%
         droplevels
     
@@ -439,10 +440,12 @@ loo_cvfit_glmnet <- function(index, features, labels, alpha, penalize_age_gender
 
 #' Impute with leave one out, then do loo_cvfit_glmnet
 #' 
-impute_c_loo_cvfit_glmnet <- function(index, og_data, alpha, penalize_age_gender = TRUE, family = 'binomial'){
+impute_c_loo_cvfit_glmnet <- function(index, og_data, alpha, penalize_age_gender = TRUE, family = 'binomial', imp_num = 1){
     #make sure the features only have controls
     c_rows <- og_data %>% 
         filter(Type %in% c("CO", "CM", "CY"))
+    
+    imputation_num <- paste0("imp", imp_num)
     
     loo_rows <- c_rows[-index,]
     new_rows <- c_rows[index,] 
@@ -474,20 +477,19 @@ impute_c_loo_cvfit_glmnet <- function(index, og_data, alpha, penalize_age_gender
         .[,!apply(is.na(.), 2, any)] %>%
         .[,colnames(.) != "(Intercept)"]
     
-    
 
     # now we impute again (this time, there are only NA's in the held out row)
     full_separate_Y <- plyr::rbind.fill.matrix(loo_imputed_separate_Y, new_feature) 
-    full_imputed_separate_Y <- amelia(t(full_separate_Y), m = 1, empri = 100)$imputations$imp1 %>% t
+    full_imputed_separate_Y <- amelia(t(full_separate_Y), m = 3, empri = 100)$imputations[[imputation_num]] %>% t
     
     # see how different imputations are from one another
     test <- amelia(t(full_separate_Y), m = 5, empri = 100)$imputations %>%
-        purrr::map(~t(.x) %>% 
+        purrr::map(~t(.x) %>%
                 as_tibble(.name_repair = 'minimal') %>%
                 select_if(function(x) any(!is.na(x))) %>%
                 janitor::remove_empty('rows'))
-    
-    # see how different the imputations are from the old version
+
+    # # see how different the imputations are from the old version
     
     
     

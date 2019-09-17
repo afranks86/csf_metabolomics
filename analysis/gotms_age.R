@@ -2699,12 +2699,16 @@ grid.arrange(pred_truth_c_lipids,pred_truth_c_lipids_separate, ncol = 2)
 
 ############################################
 
-### combined Lipids + GOT
+### combined Lipids + GOT ( by gender? )
 
 #############################################
 
+imputed_c_combined_separate_list <- wide_data_combined %>%
+  group_by(Gender) %>%
+  group_map(~filter_and_impute(.x, types = c("CO", "CM", "CY")))
 
-imputed_c_combined_separate_list <- purrr::map(c("CO", "CM", "CY"), ~filter_and_impute(wide_data_combined, .x))
+
+#imputed_c_combined_separate_list <- purrr::map(c("CO", "CM", "CY"), ~filter_and_impute(wide_data_combined, .x))
 
 # add the id columns to make the join easier
 imputed_c_got_separate_withid <- imputed_c_got_separate_Y %>% 
