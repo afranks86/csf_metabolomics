@@ -2699,7 +2699,7 @@ grid.arrange(pred_truth_c_lipids,pred_truth_c_lipids_separate, ncol = 2)
 
 ############################################
 
-### combined Lipids + GOT ( by gender? )
+### combined Lipids + GOT 
 
 #############################################
 
@@ -2926,7 +2926,7 @@ ggsave('pred_age_residuals_control_separate_subset_loo_5.png')
 
 
 (pred_truth_c_comb_separate_subset <- ggplot(loo_separate_subset_age_table) + 
-    geom_point(aes(truth, pred, color = apoe)) + 
+    geom_point(aes(truth, pred, color = NULL)) + 
     scale_color_brewer(type = 'qual', palette = 'Set1') +
     labs(title = 'Control: True vs Predicted Age',
          subtitle = 'Combined GOT and Lipid (imputed separately, Ages 19-65), alpha = 0.5, loo',
@@ -3156,3 +3156,11 @@ mSet<-SetCurrentMsetLib(mSet, "smpdb_pathway", 2);
 # Calculate hypergeometric score, results table generated in your working directory
 mSet<-CalculateHyperScore(mSet)
 mSet<-PlotORA(mSet, "ora_0_", "bar", "png", 72, width=NA)
+
+
+
+
+
+
+
+

@@ -254,7 +254,7 @@ set.seed(1)
 
 
 #' filter type and impute using amelia
-#' col is a vector of strings, one of the levels of type
+#' type is a vector of strings, one of the levels of type
 filter_and_impute <- function(data, types){
     filtered <- data %>%
         filter(Type %in% types)
@@ -316,6 +316,83 @@ filter_and_impute <- function(data, types){
     
     
 }
+
+
+#' filter type and impute using amelia
+#' type is a vector of strings, one of the levels of type
+filter_and_impute_multi <- function(data, types){
+    filtered <- data %>%
+        filter(Type %in% types)
+    
+    #drop unused levels
+    type <- filtered$Type %>%
+        droplevels %>%
+        #relevel factors alphabetically so it's at least consistent
+        fct_relevel(sort(levels(.)))
+    
+    
+    apoe <- filtered$APOE %>%
+        droplevels
+    
+    id <- filtered$Id
+    
+    filtered_features <- filtered %>%
+        dplyr::select(-one_of("Type2", "Type", "Gender", "Age", "APOE", "Batch",
+                              #"Data File",  (not found in dataset, so removed)
+                              "Index", "GBAStatus",  "Id",
+                              "GBA_T369M", "cognitive_status"))
+    
+    
+    #0 doesn't make any sense, so we replace all zeroes with NA, and remove totally NA columns and rows
+    Y <- filtered_features %>% 
+        mutate_all(~replace(., .==0, NA)) %>%
+        #remove columns that are ALL NA
+        select_if(function(x) any(!is.na(x))) %>%
+        janitor::remove_empty('rows') %>%
+        as.matrix()
+    #Y[Y==0] <- NA
+    
+    #do imputation
+    Yt_list <- amelia(t(Y), m = 5, empri = 100)$imputations
+    
+    #' function to clean each of the imputations
+    imputed_data_cleaning <- function(Yt, types = types){
+        #our functions take matrices, and we add age/gender (1 = F, 2 = M)
+        Y_tmp <- t(Yt) %>% 
+            as_tibble %>%
+            mutate(Age = filtered$Age,
+                   Gender = filtered$Gender)
+        #convert gender to a dummy var (1 if male, 0 if female)
+        Y <- model.matrix(~., Y_tmp)
+        
+        colnames(Y) <- str_replace_all(colnames(Y), '`', '') %>%
+            str_replace_all('\\\\', '')
+        
+        
+        #keep gba for potential gba analysis. GBA is only non-NA for PD
+        if('PD' %in% types){
+            gba <- filtered %>%
+                mutate(GBAStatus = as.factor(case_when(GBA_T369M == 'CT' ~ 'CT', 
+                                                       TRUE ~ GBAStatus))) %>%
+                select(GBAStatus) %>%
+                deframe
+            message("list order is Y, type, apoe, gba, id")
+            return(list(Y, type, apoe,gba, id))
+        }
+        message("list order is Y, type, apoe, id")
+        return(list(Y, type, apoe, id))
+    }
+    
+    
+    1:5 %>% paste0('imp', .) %>%
+        purrr::map(~imputed_data_cleaning(Yt_list[[.x]], types = types))
+    
+}
+
+
+
+
+
 
 #does loocv for logistic regression, using deviance loss by default (check?), eval at different elastic net alphas
 #if penalize_age_gender is false, set penalty coeff to 0
