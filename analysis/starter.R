@@ -96,6 +96,7 @@ library(CCA)
 library(gridExtra)
 library(gbm3)
 library(MetaboAnalystR)
+library(mice)
 source(here("analysis/utility.R"))
 
 
@@ -255,7 +256,7 @@ set.seed(1)
 
 #' filter type and impute using amelia
 #' type is a vector of strings, one of the levels of type
-filter_and_impute <- function(data, types){
+filter_and_impute <- function(data, types, method = "amelia"){
     filtered <- data %>%
         filter(Type %in% types)
     
@@ -288,7 +289,12 @@ filter_and_impute <- function(data, types){
     #Y[Y==0] <- NA
     
     #do imputation
-    Yt <- amelia(t(Y), m = 1, empri = 100)$imputations$imp1
+    if(method == "amelia"){
+        Yt <- amelia(t(Y), m = 1, empri = 100)$imputations$imp1
+    } else if(method == "mice"){
+        Yt <- mice(t(Y), m = 3, seed = 1) %>% mice::complete(1)
+    }
+    
     #our functions take matrices, and we add age/gender (1 = F, 2 = M)
     Y_tmp <- t(Yt) %>% 
         as_tibble %>%
@@ -320,7 +326,7 @@ filter_and_impute <- function(data, types){
 
 #' filter type and impute using amelia
 #' type is a vector of strings, one of the levels of type
-filter_and_impute_multi <- function(data, types){
+filter_and_impute_multi <- function(data, types, method = "amelia"){
     filtered <- data %>%
         filter(Type %in% types)
     
@@ -352,11 +358,9 @@ filter_and_impute_multi <- function(data, types){
         as.matrix()
     #Y[Y==0] <- NA
     
-    #do imputation
-    Yt_list <- amelia(t(Y), m = 5, empri = 100)$imputations
     
     #' function to clean each of the imputations
-    imputed_data_cleaning <- function(Yt, types = types){
+    imputed_data_cleaning <- function(Yt, types2 = types){
         #our functions take matrices, and we add age/gender (1 = F, 2 = M)
         Y_tmp <- t(Yt) %>% 
             as_tibble %>%
@@ -370,7 +374,7 @@ filter_and_impute_multi <- function(data, types){
         
         
         #keep gba for potential gba analysis. GBA is only non-NA for PD
-        if('PD' %in% types){
+        if('PD' %in% types2){
             gba <- filtered %>%
                 mutate(GBAStatus = as.factor(case_when(GBA_T369M == 'CT' ~ 'CT', 
                                                        TRUE ~ GBAStatus))) %>%
@@ -383,9 +387,19 @@ filter_and_impute_multi <- function(data, types){
         return(list(Y, type, apoe, id))
     }
     
+    #do imputation
+    if(method == "amelia"){
+        Yt_list <- amelia(t(Y), m = 5, empri = 100)$imputations
+        1:5 %>% paste0('imp', .) %>%
+            purrr::map(~imputed_data_cleaning(Yt_list[[.x]], types = types))
+    } else if (method == "mice"){
+        Yt_list <- mice(t(Y), m = 5, seed = 1)
+        1:5 %>% purrr::map(~imputed_data_cleaning(Yt_list %>% mice::complete(.x))) 
+    }
     
-    1:5 %>% paste0('imp', .) %>%
-        purrr::map(~imputed_data_cleaning(Yt_list[[.x]], types = types))
+    
+    
+    
     
 }
 
@@ -413,8 +427,7 @@ fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, fami
         fit <- cv.glmnet(features, labels, family = 'binomial', 
                          type.measure = 'deviance', nfolds = nrow(features),
                          foldid = foldid, alpha = alpha, standardize = TRUE, penalty.factor = p_factors, grouped = FALSE)
-    }
-    else if(family == 'gaussian'){
+    } else if(family == 'gaussian'){
         fit <- cv.glmnet(features, labels, family = 'gaussian', 
                          type.measure = 'mse', nfolds = nrow(features),
                          foldid = foldid, alpha = alpha, standardize = TRUE, penalty.factor = p_factors, grouped = FALSE)
@@ -517,7 +530,7 @@ loo_cvfit_glmnet <- function(index, features, labels, alpha, penalize_age_gender
 
 #' Impute with leave one out, then do loo_cvfit_glmnet
 #' 
-impute_c_loo_cvfit_glmnet <- function(index, og_data, alpha, penalize_age_gender = TRUE, family = 'binomial', imp_num = 1){
+impute_c_loo_cvfit_glmnet <- function(index, og_data, alpha, penalize_age_gender = TRUE, family = 'binomial', imp_num = 1, method = 'amelia'){
     #make sure the features only have controls
     c_rows <- og_data %>% 
         filter(Type %in% c("CO", "CM", "CY"))
@@ -542,7 +555,7 @@ impute_c_loo_cvfit_glmnet <- function(index, og_data, alpha, penalize_age_gender
         as.matrix(nrow = 1) 
     
     # split the first imputation by type
-    loo_imputed_separate_list <- purrr::map(c("CO", "CM", "CY"), ~filter_and_impute(loo_rows, .x))
+    loo_imputed_separate_list <- purrr::map(c("CO", "CM", "CY"), ~filter_and_impute(loo_rows, .x, method = method))
     
     
     #creates a list of 3 matrices  (one for CO, CM, and CY)
@@ -557,16 +570,22 @@ impute_c_loo_cvfit_glmnet <- function(index, og_data, alpha, penalize_age_gender
 
     # now we impute again (this time, there are only NA's in the held out row)
     full_separate_Y <- plyr::rbind.fill.matrix(loo_imputed_separate_Y, new_feature) 
-    full_imputed_separate_Y <- amelia(t(full_separate_Y), m = 3, empri = 100)$imputations[[imputation_num]] %>% t
     
-    # see how different imputations are from one another
-    test <- amelia(t(full_separate_Y), m = 5, empri = 100)$imputations %>%
-        purrr::map(~t(.x) %>%
-                as_tibble(.name_repair = 'minimal') %>%
-                select_if(function(x) any(!is.na(x))) %>%
-                janitor::remove_empty('rows'))
-
-    # # see how different the imputations are from the old version
+    if(method == "amelia"){
+        full_imputed_separate_Y <- amelia(t(full_separate_Y), m = 3, empri = 100)$imputations[[imputation_num]] %>% t   
+    } else if(method == "mice"){
+        full_imputed_separate_Y <- mice(t(full_separate_Y), m = 3, seed = 1) %>% mice::complete(imp_num) %>% t
+    }
+    
+    
+    # # see how different imputations are from one another
+    # test <- amelia(t(full_separate_Y), m = 5, empri = 100)$imputations %>%
+    #     purrr::map(~t(.x) %>%
+    #             as_tibble(.name_repair = 'minimal') %>%
+    #             select_if(function(x) any(!is.na(x))) %>%
+    #             janitor::remove_empty('rows'))
+    # 
+    # # # see how different the imputations are from the old version
     
     
     
@@ -601,6 +620,10 @@ impute_c_loo_cvfit_glmnet <- function(index, og_data, alpha, penalize_age_gender
     list(fitpred[[1]], fitpred[[2]], new_age, new_type, new_apoe, new_gender)
     
 }
+
+
+
+
 
 
 

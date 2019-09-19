@@ -1865,15 +1865,16 @@ ggsave('pred_age_residuals_control_untargeted_loo_5.png')
 
 
 ggplot(untargeted_c_loo_age_table) + 
-  geom_point(aes(truth, pred, color = apoe)) + 
+  geom_point(aes(truth, pred, color = NULL), size = 2.5) + 
   scale_color_brewer(type = 'qual', palette = 'Set1') +
   labs(title = 'Control: True vs Predicted Age',
        subtitle = 'untargeted, alpha = 0.5, loo',
        x = 'True Age',
        y = 'Predicted Age') + 
   geom_abline(intercept = 0, slope = 1) +
-  geom_text(aes(x = Inf, y = -Inf, hjust = 1.25, vjust = -1, label = paste0("R: ", cor(truth, pred, method = "pearson") %>% round(2), 
-                                                                            "\nRMSE: ", (truth - pred)^2 %>% mean %>% sqrt %>% round(2))))
+  geom_label(aes(x = Inf, y = -Inf, hjust = 1, vjust = 0, label = paste0("R: ", cor(truth, pred, method = "pearson") %>% round(2), 
+                                                                         "\nRMSE: ", (truth - pred)^2 %>% mean %>% sqrt %>% round(2), 
+                                                                         "\nMAE: ", (truth - pred) %>% abs %>% mean %>% round(2))))
   
 ggsave('pred_truth_control_untargeted_loo_5.png')
 
