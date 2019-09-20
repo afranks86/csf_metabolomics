@@ -286,25 +286,31 @@ filter_and_impute <- function(data, types, method = "amelia"){
         select_if(function(x) any(!is.na(x))) %>%
         janitor::remove_empty('rows') %>%
         as.matrix()
-    #Y[Y==0] <- NA
+    
+    
+    # clean up column names
+    Y_colnames <- colnames(Y) %>%
+        str_replace_all('`', '') %>%
+        str_replace_all('\\\\', '')
     
     #do imputation
     if(method == "amelia"){
         Yt <- amelia(t(Y), m = 1, empri = 100)$imputations$imp1
     } else if(method == "mice"){
-        Yt <- mice(t(Y), m = 3, seed = 1) %>% mice::complete(1)
+        Yt <- mice(t(Y), m = 1, seed = 1) %>% 
+            mice::complete(1)
     }
+    
     
     #our functions take matrices, and we add age/gender (1 = F, 2 = M)
     Y_tmp <- t(Yt) %>% 
         as_tibble %>%
+        set_colnames(Y_colnames) %>%
         mutate(Age = filtered$Age,
                Gender = filtered$Gender)
     #convert gender to a dummy var (1 if male, 0 if female)
     Y <- model.matrix(~., Y_tmp)
     
-    colnames(Y) <- str_replace_all(colnames(Y), '`', '') %>%
-        str_replace_all('\\\\', '')
     
     
     #keep gba for potential gba analysis. GBA is only non-NA for PD
@@ -358,12 +364,17 @@ filter_and_impute_multi <- function(data, types, method = "amelia"){
         as.matrix()
     #Y[Y==0] <- NA
     
+    # clean up column names
+    Y_colnames <- colnames(Y) %>%
+        str_replace_all('`', '') %>%
+        str_replace_all('\\\\', '')
     
     #' function to clean each of the imputations
     imputed_data_cleaning <- function(Yt, types2 = types){
         #our functions take matrices, and we add age/gender (1 = F, 2 = M)
         Y_tmp <- t(Yt) %>% 
             as_tibble %>%
+            set_colnames(Y_colnames) %>%
             mutate(Age = filtered$Age,
                    Gender = filtered$Gender)
         #convert gender to a dummy var (1 if male, 0 if female)
