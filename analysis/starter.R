@@ -344,7 +344,7 @@ imputed_data_cleaning <- function(Yt, Y_colnames, age, gender){
     
     # if the method is amelia, age/gender are thrown out before imptuation. 
         # if this is the case, add it back in.
-    if(!("Age" %in% Y_colnames) | !("GenderM" %in% Y_colnames) | !("Gender" %in% Y_colnames)){
+    if(!("Age" %in% Y_colnames) | !( ("GenderM" %in% Y_colnames) | ("Gender" %in% Y_colnames) )){
         Y_tmp <- Y_tmp %>%
             mutate(Age = age,
                    Gender = gender)
@@ -440,7 +440,10 @@ filter_and_impute_multi <- function(data, types, method = "amelia"){
     } else if (method == "mice"){
         #need to change names on the tranposed dataset so that they aren't just numbers. v for variable
         Yt <- t(Y) %>% set_colnames(paste0("V",colnames(.)))
-        Yt_list <- mice(Yt, m = 5, seed = 1)
+        
+        # Note: mice by default removes collinear values for imputation.
+            # by setting remove.collinar = FALSE, it's ignoring their relationship
+        Yt_list <- mice(Yt, m = 5, seed = 1, remove.collinear = FALSE)
         imputed_Y <- 1:5 %>% purrr::map(~imputed_data_cleaning(Yt_list %>% mice::complete(.x), Y_colnames = Y_colnames, age = age, gender = gender))
                                
     }
@@ -512,7 +515,7 @@ loo_filter_and_impute <- function(index, data, method = 'mice'){
 
 
 
-
+#' Attempt 2 at loo mice
 #' Impute with leave one out, then do loo_cvfit_glmnet
 #' Step 1: pick observation (by index paramter)
 #' Step 2: remove age from this observation
