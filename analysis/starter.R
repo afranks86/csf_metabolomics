@@ -330,7 +330,49 @@ filter_and_impute <- function(data, types, method = "amelia"){
 }
 
 
-#' filter type and impute using amelia
+
+#' function to clean each of the imputations
+#' @param Yt is a transposed features matrix (transposed to impute since we need long)
+imputed_data_cleaning <- function(Yt, Y_colnames, age, gender){
+    
+
+    
+    #our functions take matrices, and we add age/gender (1 = F, 2 = M)
+    Y_tmp <- t(Yt) %>% 
+        as_tibble %>%
+        set_colnames(Y_colnames)
+    
+    # if the method is amelia, age/gender are thrown out before imptuation. 
+        # if this is the case, add it back in.
+    if(!("Age" %in% Y_colnames) | !("GenderM" %in% Y_colnames) | !("Gender" %in% Y_colnames)){
+        Y_tmp <- Y_tmp %>%
+            mutate(Age = age,
+                   Gender = gender)
+        }
+    
+            
+        
+
+    
+    # this only does anything if the method for imputation is mice. amelia already has this done.
+    # it keep only features and target
+    Y <- Y_tmp %>% 
+        dplyr::select(-one_of("Type2", "Type", "APOE23", "APOE24", "APOE33", "Batch",
+                          #"Data File",  (not found in dataset, so removed)
+                          "Index", "GBAStatus",  "Id",
+                          "GBA_T369M", "cognitive_status")) %>% 
+        #convert factors to dummmies (1 if male, 0 if female)
+        model.matrix(~., .)
+    
+    colnames(Y) <- str_replace_all(colnames(Y), '`', '') %>%
+        str_replace_all('\\\\', '')
+    
+    Y
+
+}
+
+
+#' filter type and impute using amelia/mice
 #' type is a vector of strings, one of the levels of type
 filter_and_impute_multi <- function(data, types, method = "amelia"){
     filtered <- data %>%
@@ -347,12 +389,26 @@ filter_and_impute_multi <- function(data, types, method = "amelia"){
         droplevels
     
     id <- filtered$Id
+    age <- filtered$Age
+    gender <- filtered$Gender
     
-    filtered_features <- filtered %>%
-        dplyr::select(-one_of("Type2", "Type", "Gender", "Age", "APOE", "Batch",
-                              #"Data File",  (not found in dataset, so removed)
-                              "Index", "GBAStatus",  "Id",
-                              "GBA_T369M", "cognitive_status"))
+    
+    ## removing columns we don't want in the imputation
+    # amelia requires all data to be roughly normal (so no metadata)
+    # but mice can take anything
+    
+    if(method == "amelia"){
+        filtered_features <- filtered %>%
+            dplyr::select(-one_of("Type2", "Type", "Gender", "Age", "APOE", "Batch",
+                                  #"Data File",  (not found in dataset, so removed)
+                                  "Index", "GBAStatus",  "Id",
+                                  "GBA_T369M", "cognitive_status"))
+    } else if(method == "mice"){
+        filtered_features <- filtered %>%
+            # don't need type since we have age.
+            dplyr::select(-one_of("Type2", "Type",  "Index",  "Id"))
+    }
+    
     
     
     #0 doesn't make any sense, so we replace all zeroes with NA, and remove totally NA columns and rows
@@ -361,58 +417,127 @@ filter_and_impute_multi <- function(data, types, method = "amelia"){
         #remove columns that are ALL NA
         select_if(function(x) any(!is.na(x))) %>%
         janitor::remove_empty('rows') %>%
-        as.matrix()
-    #Y[Y==0] <- NA
+        # need to use model.matrix to get the factors to turn into dummies (otherwise they're treated as numeric)
+            # it would be nice we if could keep the factors for mice, but it won't work because we need to transpose
+        # need to use model.matrix.lm to get the na.action argument to ignore na
+        model.matrix.lm(~., ., na.action = "na.pass") %>%
+        # remove the intercept column for imputation (don't worry, it'll come back)
+        .[,-1]
+        
+    
     
     # clean up column names
     Y_colnames <- colnames(Y) %>%
         str_replace_all('`', '') %>%
         str_replace_all('\\\\', '')
     
-    #' function to clean each of the imputations
-    imputed_data_cleaning <- function(Yt, types2 = types){
-        #our functions take matrices, and we add age/gender (1 = F, 2 = M)
-        Y_tmp <- t(Yt) %>% 
-            as_tibble %>%
-            set_colnames(Y_colnames) %>%
-            mutate(Age = filtered$Age,
-                   Gender = filtered$Gender)
-        #convert gender to a dummy var (1 if male, 0 if female)
-        Y <- model.matrix(~., Y_tmp)
-        
-        colnames(Y) <- str_replace_all(colnames(Y), '`', '') %>%
-            str_replace_all('\\\\', '')
-        
-        
-        #keep gba for potential gba analysis. GBA is only non-NA for PD
-        if('PD' %in% types2){
-            gba <- filtered %>%
-                mutate(GBAStatus = as.factor(case_when(GBA_T369M == 'CT' ~ 'CT', 
-                                                       TRUE ~ GBAStatus))) %>%
-                select(GBAStatus) %>%
-                deframe
-            message("list order is Y, type, apoe, gba, id")
-            return(list(Y, type, apoe,gba, id))
-        }
-        message("list order is Y, type, apoe, id")
-        return(list(Y, type, apoe, id))
-    }
     
     #do imputation
     if(method == "amelia"){
         Yt_list <- amelia(t(Y), m = 5, empri = 100)$imputations
-        1:5 %>% paste0('imp', .) %>%
-            purrr::map(~imputed_data_cleaning(Yt_list[[.x]], types = types))
+        imputed_Y <- 1:5 %>% paste0('imp', .) %>%
+            purrr::map(~imputed_data_cleaning(Yt_list[[.x]], Y_colnames = Y_colnames, age = age, gender = gender))
     } else if (method == "mice"){
-        Yt_list <- mice(t(Y), m = 5, seed = 1)
-        1:5 %>% purrr::map(~imputed_data_cleaning(Yt_list %>% mice::complete(.x))) 
+        #need to change names on the tranposed dataset so that they aren't just numbers. v for variable
+        Yt <- t(Y) %>% set_colnames(paste0("V",colnames(.)))
+        Yt_list <- mice(Yt, m = 5, seed = 1)
+        imputed_Y <- 1:5 %>% purrr::map(~imputed_data_cleaning(Yt_list %>% mice::complete(.x), Y_colnames = Y_colnames, age = age, gender = gender))
+                               
     }
     
-    
-    
-    
-    
+    #keep gba for potential gba analysis. GBA is only non-NA for PD
+    if('PD' %in% types){
+        gba <- filtered %>%
+            mutate(GBAStatus = as.factor(case_when(GBA_T369M == 'CT' ~ 'CT', 
+                                                   TRUE ~ GBAStatus))) %>%
+            select(GBAStatus) %>%
+            deframe
+        message("list order is Y, type, apoe, gba, id")
+        return(1:5 %>% purrr::map(~list(imputed_Y[[.x]], type, apoe,gba, id)))
+    }
+    message("list order is Y, type, apoe, id")
+    return(1:5 %>% purrr::map(~list(imputed_Y[[.x]], type, apoe, id)))
 }
+
+
+
+
+#' Quick helper to pull out held out row of a filter_and_impute matrix, and the corresponding metadata
+#' 
+#' @param imputation is the output of filter_and_impute (list with 4 elements: matrix, type, apoe, id)
+held_out_imputed <- function(imputation, index){
+    
+    # first pull out the indexed row of the matrix
+    Y <- imputation[[1]][index,]
+    metadata <- 2:4 %>% purrr::map(~imputation[[.x]][index])
+    
+    list("Y" = Y, "type" = metadata[[1]], "apoe" = metadata[[2]], "id" = metadata[[3]])
+}
+
+
+
+
+
+
+#' Attempt 1 at the loo mice
+#' 
+#'  Step 1: remove age from 1 observation, 
+#'  Step 2: impute
+#'  Step 3: retain the imputed row from the 1 observation
+#'  Step 4: (outside this function) combine all these rows into a matrix
+loo_filter_and_impute <- function(index, data, method = 'mice'){
+    #make sure the features only have controls
+    c_rows <- data %>% 
+        filter(Type %in% c("CO", "CM", "CY"))
+    
+    held_out_row <- c_rows[index,]
+    
+    # save the age for the held out row and remove that obs
+    loo_pred <- held_out_row$Age
+    c_rows[index, "Age"] <- NA
+    
+    # impute
+    loo_imputed <- filter_and_impute_multi(c_rows, types = c("CO", "CM", "CY"), method = method)
+    
+    
+    # pull out only the held out row of each imputation to save, with all the metadata
+    loo_imputed %>%
+        purrr::map(~held_out_imputed(.x, index))
+        
+}
+
+
+
+
+
+
+
+
+#' Impute with leave one out, then do loo_cvfit_glmnet
+#' Step 1: pick observation (by index paramter)
+#' Step 2: remove age from this observation
+#' Step 3: impute using mice (with all metadata)
+#' Step 4: fit model, and predict on 1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -539,98 +664,6 @@ loo_cvfit_glmnet <- function(index, features, labels, alpha, penalize_age_gender
 
 
 
-#' Impute with leave one out, then do loo_cvfit_glmnet
-#' 
-impute_c_loo_cvfit_glmnet <- function(index, og_data, alpha, penalize_age_gender = TRUE, family = 'binomial', imp_num = 1, method = 'amelia'){
-    #make sure the features only have controls
-    c_rows <- og_data %>% 
-        filter(Type %in% c("CO", "CM", "CY"))
-    
-    imputation_num <- paste0("imp", imp_num)
-    
-    loo_rows <- c_rows[-index,]
-    new_rows <- c_rows[index,] 
-    
-    new_apoe <- new_rows$APOE
-    new_type <- new_rows$Type
-    new_id <- new_rows$Id
-    new_gender <- new_rows$Gender
-    new_age <- new_rows$Age
-    
-    new_feature <- new_rows %>% 
-        dplyr::mutate(GenderM = ifelse(Gender == "M", 1, 0)) %>%
-        dplyr::select(-one_of("Type2", "Type",  "APOE", "Gender", "Batch",
-                              #"Data File",  (not found in dataset, so removed)
-                              "Index", "GBAStatus",  "Id",
-                              "GBA_T369M", "cognitive_status")) %>%
-        as.matrix(nrow = 1) 
-    
-    # split the first imputation by type
-    loo_imputed_separate_list <- purrr::map(c("CO", "CM", "CY"), ~filter_and_impute(loo_rows, .x, method = method))
-    
-    
-    #creates a list of 3 matrices  (one for CO, CM, and CY)
-    # combine the results. rbind.fill.matrix coerces NAs in the columns that don't have a match,
-    # so we throw these columns out. this is different from the non-separated version, where the NAs are filled
-    loo_imputed_separate_Y <- loo_imputed_separate_list %>% 
-        purrr::map(~.x[[1]]) %>% 
-        plyr::rbind.fill.matrix() %>%
-        .[,!apply(is.na(.), 2, any)] %>%
-        .[,colnames(.) != "(Intercept)"]
-    
-
-    # now we impute again (this time, there are only NA's in the held out row)
-    full_separate_Y <- plyr::rbind.fill.matrix(loo_imputed_separate_Y, new_feature) 
-    
-    if(method == "amelia"){
-        full_imputed_separate_Y <- amelia(t(full_separate_Y), m = 3, empri = 100)$imputations[[imputation_num]] %>% t   
-    } else if(method == "mice"){
-        full_imputed_separate_Y <- mice(t(full_separate_Y), m = 3, seed = 1) %>% mice::complete(imp_num) %>% t
-    }
-    
-    
-    # # see how different imputations are from one another
-    # test <- amelia(t(full_separate_Y), m = 5, empri = 100)$imputations %>%
-    #     purrr::map(~t(.x) %>%
-    #             as_tibble(.name_repair = 'minimal') %>%
-    #             select_if(function(x) any(!is.na(x))) %>%
-    #             janitor::remove_empty('rows'))
-    # 
-    # # # see how different the imputations are from the old version
-    
-    
-    
-    # list/unlist is a cool trick to preserve factors
-    full_imputed_separate_type <- loo_imputed_separate_list %>% purrr::map(~.x[[2]]) %>% list(., new_type) %>% unlist 
-    full_imputed_separate_apoe <- loo_imputed_separate_list %>% purrr::map(~.x[[3]]) %>% list(., new_apoe) %>% unlist
-    full_imputed_separate_id <- loo_imputed_separate_list %>% purrr::map(~.x[[4]]) %>% list(., new_id) %>% unlist
-    full_imputed_separate_age <- full_imputed_separate_Y[,'Age']
-    full_imputed_separate_gender <- full_imputed_separate_Y[,'GenderM'] %>% as.factor %>%
-        fct_recode(M = '1', F = '0')
-    
-    
-    #zeroes don't make sense, so we replace them with NA
-    # then we remove all columns that are completely na
-    # then we remove any completely empty rows
-    full_imputed_features_separate_age_tmp <- full_imputed_separate_Y %>% 
-        as_tibble(.name_repair = 'minimal') %>%
-        select(-c(Age)) %>%
-        #mutate_all(~replace(., .==0, NA)) %>%
-        #remove columns that are ALL NA
-        select_if(function(x) any(!is.na(x))) %>%
-        janitor::remove_empty('rows')
-    
-    # turn all factors into dummies, add intercept
-    full_imputed_features_separate_age <- model.matrix(~., full_imputed_features_separate_age_tmp)
-    
-    #run the model (note that since we binded the new row to the end, the "index" should be the last row)
-    fitpred <- loo_cvfit_glmnet(nrow(full_imputed_features_separate_age), full_imputed_features_separate_age, full_imputed_separate_age, 
-                     alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE)
-    
-    message("list order is fitpred, truth, type, apoe, gender")
-    list(fitpred[[1]], fitpred[[2]], new_age, new_type, new_apoe, new_gender)
-    
-}
 
 
 
