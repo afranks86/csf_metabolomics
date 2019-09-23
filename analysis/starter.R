@@ -363,7 +363,7 @@ imputed_data_cleaning <- function(Yt, Y_colnames, age, gender){
                           "GBA_T369M", "cognitive_status")) %>% 
         #convert factors to dummmies (1 if male, 0 if female)
         model.matrix(~., .)
-    
+
     colnames(Y) <- str_replace_all(colnames(Y), '`', '') %>%
         str_replace_all('\\\\', '')
     
@@ -374,7 +374,7 @@ imputed_data_cleaning <- function(Yt, Y_colnames, age, gender){
 
 #' filter type and impute using amelia/mice
 #' type is a vector of strings, one of the levels of type
-filter_and_impute_multi <- function(data, types, method = "amelia"){
+filter_and_impute_multi <- function(data, types, method = "amelia", num = 5){
     filtered <- data %>%
         filter(Type %in% types)
     
@@ -434,8 +434,8 @@ filter_and_impute_multi <- function(data, types, method = "amelia"){
     
     #do imputation
     if(method == "amelia"){
-        Yt_list <- amelia(t(Y), m = 5, empri = 100)$imputations
-        imputed_Y <- 1:5 %>% paste0('imp', .) %>%
+        Yt_list <- amelia(t(Y), m = num, empri = 100)$imputations
+        imputed_Y <- 1:num %>% paste0('imp', .) %>%
             purrr::map(~imputed_data_cleaning(Yt_list[[.x]], Y_colnames = Y_colnames, age = age, gender = gender))
     } else if (method == "mice"){
         #need to change names on the tranposed dataset so that they aren't just numbers. v for variable
@@ -443,8 +443,8 @@ filter_and_impute_multi <- function(data, types, method = "amelia"){
         
         # Note: mice by default removes collinear values for imputation.
             # by setting remove.collinar = FALSE, it's ignoring their relationship
-        Yt_list <- mice(Yt, m = 5, seed = 1, remove.collinear = FALSE)
-        imputed_Y <- 1:5 %>% purrr::map(~imputed_data_cleaning(Yt_list %>% mice::complete(.x), Y_colnames = Y_colnames, age = age, gender = gender))
+        Yt_list <- mice(Yt, m = num, seed = 1, remove.collinear = FALSE)
+        imputed_Y <- 1:num %>% purrr::map(~imputed_data_cleaning(Yt_list %>% mice::complete(.x), Y_colnames = Y_colnames, age = age, gender = gender))
                                
     }
     
@@ -456,10 +456,10 @@ filter_and_impute_multi <- function(data, types, method = "amelia"){
             select(GBAStatus) %>%
             deframe
         message("list order is Y, type, apoe, id, gba")
-        return(1:5 %>% purrr::map(~list(imputed_Y[[.x]], type, apoe, id, gba)))
+        return(1:num %>% purrr::map(~list(imputed_Y[[.x]], type, apoe, id, gba)))
     }
     message("list order is Y, type, apoe, id")
-    return(1:5 %>% purrr::map(~list(imputed_Y[[.x]], type, apoe, id)))
+    return(1:num %>% purrr::map(~list(imputed_Y[[.x]], type, apoe, id)))
 }
 
 
@@ -468,8 +468,9 @@ filter_and_impute_multi <- function(data, types, method = "amelia"){
 #' Quick helper to pull out held out row of a filter_and_impute matrix, and the corresponding metadata
 #' 
 #' @param imputation is the output of filter_and_impute (list with 4 elements: matrix, type, apoe, id)
-held_out_imputed <- function(imputation, index){
-    
+#' @param age is an int, the single held out age
+held_out_imputed <- function(imputation, index, age){
+    imputation[[1]][index,"Age"] <- age
     # first pull out the indexed row of the matrix
     Y <- imputation[[1]][index,]
     metadata <- 2:4 %>% purrr::map(~imputation[[.x]][index])
@@ -500,12 +501,13 @@ loo_filter_and_impute <- function(index, data, method = 'mice'){
     c_rows[index, "Age"] <- NA
     
     # impute
-    loo_imputed <- filter_and_impute_multi(c_rows, types = c("CO", "CM", "CY"), method = method)
+    loo_imputed <- filter_and_impute_multi(c_rows, types = c("CO", "CM", "CY"), method = method, num = 3)
     
     
     # pull out only the held out row of each imputation to save, with all the metadata
     loo_imputed %>%
-        purrr::map(~held_out_imputed(.x, index))
+        purrr::map(~held_out_imputed(.x, index, age = loo_pred))
+    
         
 }
 
@@ -522,9 +524,9 @@ v#' Attempt 2 at loo mice
 #' Step 3: impute using mice (with all metadata)
 #' Step 4: fit model, and predict on 1
 
-
-
-
+loo_filter_impute_fitpred <- function(index, data, method = "mice"){
+    
+}
 
 
 

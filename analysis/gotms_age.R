@@ -1639,6 +1639,39 @@ combined_c_pca$x %>%
 
 ###################
 
+# percent missingness by dataset by type
+percent_missing_by_type <- function(data, name){
+  missing <- data %>% 
+    group_by(Type) %>%
+    group_map(~sum(is.na(.x)) / prod(dim(.x)))
+  
+  tibble(
+    "source" = name,
+    "CY" = missing[[4]], 
+    "CM" = missing[[2]],
+    "CO" = missing[[3]],
+    "AD" = missing[[1]],
+    "PD" = missing[[5]]
+       )
+}
+
+data_sources <- list(wide_data, wide_data_lipids, wide_data_targeted, wide_data_untargeted)
+data_names <- list("GOT", "Lipids", "Targeted", "Untargeted")
+pct_missing_data <- purrr::map2(data_sources, data_names, ~percent_missing_by_type(.x, .y)) %>%
+  bind_rows %>%
+  gather(key = "Type", value = "pct_missing", -source) %>%
+  mutate(Type = factor(Type, levels = c("CY", "CM", "CO", "AD", "PD")))
+
+
+ggplot(pct_missing_data) + 
+  geom_col(aes(x = source, y= pct_missing, fill = Type), position = 'dodge') +
+  labs(title = "Percent Missingness by dataset by type",
+       x = "Dataset",
+       y = "Percent Missing")
+ggsave("percent_missingness.png")
+
+
+
 
 #get sample size by type
 n_by_type_comb <- wide_data_combined %>%
@@ -1666,26 +1699,31 @@ missingness_by_type_all <- reduce(missingness_by_type_comb_counts, inner_join, b
   set_names(c('name', paste('num_missing',levels(wide_data_combined$Type), sep = '_'))) %>%
   dplyr::filter(!(name %in% c('GBAStatus', 'cognitive_status', 'GBA_T369M'))) %>%
   cbind(n_by_type_comb) %>%
-  dplyr::mutate(pct_missing_AD = num_missing_AD/n_AD,
-         pct_missing_CM = num_missing_CM/n_CM,
-         pct_missing_CO = num_missing_CO/n_CO,
-         pct_missing_CY = num_missing_CY/n_CY,
-         pct_missing_PD = num_missing_PD/n_PD
+  dplyr::mutate(
+    pct_missing_CY = num_missing_CY/n_CY,
+    pct_missing_CM = num_missing_CM/n_CM,
+    pct_missing_CO = num_missing_CO/n_CO,
+    pct_missing_AD = num_missing_AD/n_AD,
+    pct_missing_PD = num_missing_PD/n_PD
          ) %>%
   #filter(reduce(list(pct_missing_AD, pct_missing_CM,pct_missing_CO,pct_missing_CY,pct_missing_PD), `==`)) %>%
   rowwise() %>%
   #mutate(p_value = (prop.test(x =  str_subset(names(.), 'num_missing'), n = str_subset(names(.), 'n_')))$p.value)
   dplyr::mutate(p_value = (prop.test(x = c(num_missing_AD, num_missing_CM, num_missing_CO, num_missing_CY, num_missing_PD), n = c(n_AD,n_CM,n_CO,n_CY,n_PD)))$p.value) %>%
   cbind('bh_q_value' = p.adjust(.$p_value, method = 'BH')) %>%
-  dplyr::filter(bh_q_value < 0.01) %>%
-  gather('Type', 'pct_missing', contains('pct_missing'))
+  dplyr::filter(bh_q_value < 0.05) %>%
+  gather('Type', 'pct_missing', contains('pct_missing')) %>%
+  mutate(Type = factor(Type, levels = c("pct_missing_CY","pct_missing_CM","pct_missing_CO","pct_missing_AD","pct_missing_PD")))
+
 
 ggplot(missingness_by_type_all, aes(pct_missing, name)) +
   geom_point(aes(color = Type), size = 3, position = position_jitter(width = 0.01, height = 0,seed = 1)) + 
-  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  scale_color_manual(labels = c("CY", "CM", "CO", "AD", "PD"), values = c("lightskyblue", "dodgerblue", "blue", "darkgreen", "purple")) +
   theme(axis.text.x = element_text(angle= 90, hjust =1)) + 
   labs(title = 'Percent Missingness by Type',
-       subtitle = 'GOT + Lipids, filtered using 2-tailed Pearson Chi squared test, BH q< 0.01')
+       subtitle = 'GOT + Lipids, filtered using 2-tailed Pearson Chi squared test, BH q < 0.05',
+       x = "Percent Missing",
+       y = "Name")
 ggsave('plots/combined_pct_missing.png')
   
 
