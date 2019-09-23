@@ -455,8 +455,8 @@ filter_and_impute_multi <- function(data, types, method = "amelia"){
                                                    TRUE ~ GBAStatus))) %>%
             select(GBAStatus) %>%
             deframe
-        message("list order is Y, type, apoe, gba, id")
-        return(1:5 %>% purrr::map(~list(imputed_Y[[.x]], type, apoe,gba, id)))
+        message("list order is Y, type, apoe, id, gba")
+        return(1:5 %>% purrr::map(~list(imputed_Y[[.x]], type, apoe, id, gba)))
     }
     message("list order is Y, type, apoe, id")
     return(1:5 %>% purrr::map(~list(imputed_Y[[.x]], type, apoe, id)))
@@ -515,7 +515,7 @@ loo_filter_and_impute <- function(index, data, method = 'mice'){
 
 
 
-#' Attempt 2 at loo mice
+v#' Attempt 2 at loo mice
 #' Impute with leave one out, then do loo_cvfit_glmnet
 #' Step 1: pick observation (by index paramter)
 #' Step 2: remove age from this observation

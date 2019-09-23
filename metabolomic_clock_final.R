@@ -2,7 +2,7 @@
 #########################################################
 
 
-### Age analysis Function ####
+### Analysis Functions ####
 
 
 ############################################################
@@ -89,7 +89,7 @@ age_control_analysis <- function(imputations, name, color = NULL, imp_num = 1){
     #mutate(Type = imputed_c_type) %>%
     select(-Age)
   
-  #turn type into a dummy var (multiple columns. AD is the redundant column (chosen))
+  #turn factors into dummy variables
   imputed_c_features_age <- model.matrix(~., imputed_c_features_age_tmp)
   
   
@@ -140,7 +140,7 @@ age_control_analysis <- function(imputations, name, color = NULL, imp_num = 1){
   
   
   
-  return(list(importance_c_loo_median_age, shapiro, c_loo_age_table, pred_truth_c)) 
+  return(list(c_loo_age_table, importance_c_loo_median_age, shapiro, pred_truth_c)) 
 }
 
 
@@ -149,19 +149,19 @@ age_control_analysis <- function(imputations, name, color = NULL, imp_num = 1){
 #' 
 imputation_df <- function(analysis){
   analysis %>% 
-    purrr::map(~.x[[3]]$pred) %>%
+    purrr::map(~.x[[1]]$pred) %>%
     enframe %>%
     mutate(name = str_replace(name, "\\d", paste0("imp", name))) %>%
     spread(name, value) %>%
     unnest %>%
     # add truth (all of the truth columns are the same) 
-    mutate(truth = analysis[[1]][[3]]$truth,
-           gender = analysis[[1]][[3]]$gender %>%
+    mutate(truth = analysis[[1]][[1]]$truth,
+           gender = analysis[[1]][[1]]$gender %>%
              as.factor %>%
              fct_recode(M = '1', F = '0'),
-           apoe = analysis[[1]][[3]]$apoe,
-           apoe4 = analysis[[1]][[3]]$apoe4,
-           type = analysis[[1]][[3]]$type
+           apoe = analysis[[1]][[1]]$apoe,
+           apoe4 = analysis[[1]][[1]]$apoe4,
+           type = analysis[[1]][[1]]$type
     ) %>%
     rowwise() %>%
     mutate(imp_avg = mean(c(imp1, imp2, imp3, imp4, imp5)),
@@ -176,7 +176,7 @@ imputation_df <- function(analysis){
 #' @param name is what we want to call the plots in the title (a string)
 #' @param color is a string, representing the variable to color points by, one of apoe, gender, type
 #' @param errorbar is boolean for whether to plot an errorbar. defaults to true
-predtruth_plot <- function(df, name, color = NULL, errorbar = TRUE){
+predtruth_plot <- function(df, name, color = NULL, errorbar = TRUE, data_name = "Control"){
   if(!is.null(color)){
     color <- sym(color)
   }
@@ -185,7 +185,7 @@ predtruth_plot <- function(df, name, color = NULL, errorbar = TRUE){
       geom_point(aes(truth, imp_avg, color = !!color), size = 2.5) + 
       geom_errorbar(aes(x = truth, ymin = imp_min, ymax = imp_max), alpha = 0.5) + 
       scale_color_brewer(type = 'qual', palette = 'Set1') +
-      labs(title = 'Control: True vs Predicted Age',
+      labs(title = paste0(data_name, ': True vs Predicted Age'),
            subtitle = paste0(name, " averaged over 5 imputations, alpha = 0.5, loo"),
            x = 'True Age',
            y = 'Predicted Age') + 
@@ -198,7 +198,7 @@ predtruth_plot <- function(df, name, color = NULL, errorbar = TRUE){
     ggplot(df) + 
       geom_point(aes(truth, imp_avg, color = !!color), size = 2.5) + 
       scale_color_brewer(type = 'qual', palette = 'Set1') +
-      labs(title = 'Control: True vs Predicted Age',
+      labs(title = paste0(data_name, ': True vs Predicted Age'),
            subtitle = paste0(name, " averaged over 5 imputations, alpha = 0.5, loo"),
            x = 'True Age',
            y = 'Predicted Age') + 
@@ -215,7 +215,16 @@ predtruth_plot <- function(df, name, color = NULL, errorbar = TRUE){
 
 
 
+######################################################################
 
+
+
+### Clock (linear glmnet age) ###
+
+
+
+
+######################################################################
 
 
 
@@ -279,6 +288,8 @@ lipids_avg_resid <- lipids_pred_df$imp_avg - lipids_pred_df$truth
 cor.test(got_avg_resid, lipids_avg_resid, method = "spearman")
 
 
+
+
 ########
 
 ### Lipids (mice)
@@ -291,6 +302,21 @@ lipids_age_analysis_mice <- purrr::map(1:5, ~age_control_analysis(imputed_c_lipi
 lipids_pred_mice_df <- imputation_df(lipids_age_analysis_mice)
 
 (lipids_age_mice_predtruth <- predtruth_plot(lipids_pred_mice_df, name = "Lipids (mice)")) 
+
+lipids_in_all_mice <- lipids_age_analysis_mice %>% 
+  purrr::map(~.x[[1]] %>% names) %>% 
+  reduce(intersect) %>%
+  setdiff("(Intercept)")
+
+
+
+########
+
+### Lipids: Mice, loo
+
+########
+
+
 
 
 
@@ -339,8 +365,8 @@ combine_got_lipids <- function(got_imp, lipid_imp){
 }
 
 
-imputed_c_combined5 <- purrr::map2(imputed_c_got5, imputed_c_lipids5, ~combine_got_lipids(.x, .y))
 
+imputed_c_combined_amelia5 <- purrr::map2(imputed_c_got5, imputed_c_lipids5, ~combine_got_lipids(.x, .y))
 combined_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_combined5, name = "Combined GOT + Lipids", color = NULL, imp_num = .x))
 
 combined_pred_df <- imputation_df(combined_age_analysis)
@@ -392,6 +418,85 @@ ggsave(filename = "age_clock_targeted_pred.png") #14.9 x 8.21
 
 
 
+
+
+##################################################################
+
+
+
+### Other tests ###
+
+
+
+###################################################################
+
+
+
+
+
+#########################
+
+### Predict on AD/PD ###
+
+########################
+
+
+# First, we need to create a model fit on the entire dataset
+  # no playing around with that loo monkey business anymore
+  # We use combined got/lipids
+
+#' Function to prepare the data dn create fits
+#' @param imputations is the one element of the output of filter_and_impute_multi used to train
+#' @param new_data is one element of the output of filter_and_impute_multi, used to predict
+full_model_new_data <- function(imputation, new_data){
+  
+  true_control_age <- imputation[[1]][, "Age"]
+  features <- imputation[[1]][,!colnames(imputation[[1]]) %in% 'Age']
+  true_pred_age <- new_data[[1]][,"Age"]
+  
+  # sometimes the imputation leads to different numbers of columns (since it drops totally na)
+  # the fit won't work if they don't have the same sizes, so subset the features to make sure it's same size
+  shared_cols <- intersect(colnames(features), colnames(new_data[[1]]))
+  features_shared <- features[, colnames(features) %in% shared_cols]
+  new_data_shared <- new_data[[1]][, colnames(new_data[[1]]) %in% shared_cols]
+  
+  #combine the datasets to avoid errors because the factors are different
+  combined_data <- rbind(features_shared, new_data_shared)
+  
+  fit <- fit_glmnet(combined_data[1:nrow(features_shared),], true_age, alpha = 0.5, penalize_age_gender = FALSE, family = "gaussian")
+  oos_pred <- predict(fit, newx = combined_data[-(1:nrow(features_shared)),], s = "lambda.min")
+  
+  
+  data_df <- tibble(
+    truth = new_data[[1]][,"Age"],
+    pred = oos_pred,
+    gender = new_data[[1]][,"GenderM"] %>%
+      as.factor %>%
+      fct_recode(M = '1', F = '0'),
+    type = new_data[[2]],
+    apoe = new_data[[3]],
+    apoe4 = apoe %>% fct_collapse('1' = c('24','34','44'), '0' = c('22', '23', '33'))
+  )
+  
+  
+  
+  
+  list("data_df" = data_df, "fit" = fit)
+}
+
+
+imputed_adpd_got_amelia5 <- filter_and_impute_multi(wide_data, c("AD", "PD"), method = "amelia")
+imputed_adpd_lipids_amelia5 <- filter_and_impute_multi(wide_data_lipids, c("AD", "PD"), method = "amelia")
+
+imputed_adpd_combined_amelia5 <- purrr::map2(imputed_adpd_got_amelia5, imputed_adpd_lipids_amelia5, ~combine_got_lipids(.x, .y))
+
+
+adpd_age_analysis <- 1:5 %>% purrr::map(~full_model_new_data(imputed_c_combined_amelia5[[.x]], new_data = imputed_adpd_combined_amelia5[[.x]]))
+
+adpd_pred_df <- imputation_df(adpd_age_analysis)
+
+(adpd_age_predtruth <- predtruth_plot(adpd_pred_df, name = "Combined GOT + Lipids", data_name = "AD/PD")) 
+ggsave(filename = "age_c_adpd_pred.png") #14.9 x 8.21
 
 
 
