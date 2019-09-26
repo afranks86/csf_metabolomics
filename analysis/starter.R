@@ -374,7 +374,8 @@ imputed_data_cleaning <- function(Yt, Y_colnames, age, gender){
 
 #' filter type and impute using amelia/mice
 #' type is a vector of strings, one of the levels of type
-filter_and_impute_multi <- function(data, types, method = "amelia", num = 5){
+#' empri is the argument to amelia to set ridge prior. makes it easier to converge
+filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, empri = 100){
     filtered <- data %>%
         filter(Type %in% types)
     
@@ -434,7 +435,8 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5){
     
     #do imputation
     if(method == "amelia"){
-        Yt_list <- amelia(t(Y), m = num, empri = 100)$imputations
+        #empri ~ 8
+        Yt_list <- amelia(t(Y), m = num, empri = empri)$imputations
         imputed_Y <- 1:num %>% paste0('imp', .) %>%
             purrr::map(~imputed_data_cleaning(Yt_list[[.x]], Y_colnames = Y_colnames, age = age, gender = gender))
     } else if (method == "mice"){
@@ -551,7 +553,7 @@ loo_filter_impute_fitpred <- function(index, data, method = "mice"){
 
 #does loocv for logistic regression, using deviance loss by default (check?), eval at different elastic net alphas
 #if penalize_age_gender is false, set penalty coeff to 0
-fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, family= 'binomial'){
+fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, family= 'binomial', nlambda = 100){
     set.seed(1)
     #set foldid so that same folds every time (it's loocv so it's just an ordering)
     foldid <- sample(nrow(features))
@@ -565,11 +567,11 @@ fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, fami
     }
     #grouped = false is already enforced for small folds. I'm just writing it explicitly to avoid the warning.
     if(family == 'binomial'){
-        fit <- cv.glmnet(features, labels, family = 'binomial', 
+        fit <- cv.glmnet(features, labels, family = 'binomial', nlambda = nlambda, 
                          type.measure = 'deviance', nfolds = nrow(features),
                          foldid = foldid, alpha = alpha, standardize = TRUE, penalty.factor = p_factors, grouped = FALSE)
     } else if(family == 'gaussian'){
-        fit <- cv.glmnet(features, labels, family = 'gaussian', 
+        fit <- cv.glmnet(features, labels, family = 'gaussian', nlambda = nlambda,
                          type.measure = 'mse', nfolds = nrow(features),
                          foldid = foldid, alpha = alpha, standardize = TRUE, penalty.factor = p_factors, grouped = FALSE)
         
@@ -635,8 +637,8 @@ loo_pred_glmnet <- function(lambda, index, features, labels, alpha, penalize_age
 # }
 
 # Fit a model on the full data to find lambda, and use that lambda for leave one out.
-loo_cvfit_glmnet <- function(index, features, labels, alpha, penalize_age_gender = TRUE, family = 'binomial'){
-    full_fit <- fit_glmnet(features = features, labels = labels, alpha = alpha, family = family, penalize_age_gender = penalize_age_gender)
+loo_cvfit_glmnet <- function(index, features, labels, alpha, penalize_age_gender = TRUE, family = 'binomial', nlambda = 100){
+    full_fit <- fit_glmnet(features = features, labels = labels, alpha = alpha, family = family, penalize_age_gender = penalize_age_gender, nlambda = nlambda)
     lambda <- full_fit$lambda.min
     
     
@@ -663,7 +665,7 @@ loo_cvfit_glmnet <- function(index, features, labels, alpha, penalize_age_gender
     
     #predict on 1
     pred <- predict(fit, newx = new_features, type = 'response', s = lambda)
-    return(list(fit,pred))
+    return(list(fit,pred, "cvfit" = full_fit))
 }
 
 
