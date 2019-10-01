@@ -7,7 +7,7 @@
 
 ############################################################
 
-gender_control_analysis <- function(imputations, imp_num = 1){
+gender_control_analysis <- function(imputations, imp_num = 1, nlambda = 100){
   
   imputed_c <- imputations[[imp_num]]
   imputed_c_Y <- imputed_c[[1]]
@@ -28,7 +28,7 @@ gender_control_analysis <- function(imputations, imp_num = 1){
   
   
   fitpred_c_loo_gender <- lapply(1:nrow(imputed_c_features_gender), function(x) loo_cvfit_glmnet(x, imputed_c_features_gender, imputed_c_gender, 
-                                                                                           alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
+                                                                                           alpha = 0.5, family = 'binomial', penalize_age_gender = FALSE, nlambda = nlambda))
   
   fit_c_loo_gender <- lapply(fitpred_c_loo_gender, function(x) x[[1]])
   pred_c_loo_gender <- lapply(fitpred_c_loo_gender, function(x) x[[2]]) %>%
@@ -51,12 +51,12 @@ gender_control_analysis <- function(imputations, imp_num = 1){
     geom_abline(intercept = 0, slope = 1, linetype = 2) + 
     theme_minimal() + 
     labs(title = "ROC: Gender vs C",
-         subtitle = TeX('GOT + Lipids ,$\\alpha = 0.5$, loo'),
+         subtitle = TeX('Untargeted ,$\\alpha = 0.5$, loo'),
          x = 'False Positive Rate',
          y = 'True Positive Rate') + 
     geom_label(x = Inf, y = -Inf, hjust = 1, vjust = 0, label = paste0('AUC:', round(roc_c_gender_loo$auc[1], 3)))
 
-  return(list(importance_c_loo_median_gender, roc_gender_plot)) 
+  return(list(importance_c_loo_median_gender, roc_gender_plot, fit_c_loo_gender)) 
 }
 
 
@@ -69,7 +69,7 @@ gender_control_analysis <- function(imputations, imp_num = 1){
 #' @param imp_num imputation number. 1-5
 #' 
 #' @return median importance, shapiro test, results table, predtruth plot
-age_control_analysis <- function(imputations, name, color = NULL, imp_num = 1){
+age_control_analysis <- function(imputations, name, color = NULL, imp_num = 1, nlambda = 100){
   
   if(!is.null(color)){
     color <- sym(color)
@@ -94,11 +94,14 @@ age_control_analysis <- function(imputations, name, color = NULL, imp_num = 1){
   
   
   fitpred_c_loo_age <- lapply(1:nrow(imputed_c_features_age), function(x) loo_cvfit_glmnet(x, imputed_c_features_age, imputed_c_age, 
-                                                                                           alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE))
+                                                                                           alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE, nlambda = nlambda))
   
   fit_c_loo_age <- lapply(fitpred_c_loo_age, function(x) x[[1]])
   pred_c_loo_age <- lapply(fitpred_c_loo_age, function(x) x[[2]]) %>%
     unlist
+  
+  #fit used to get lambda
+  cv_fits <- lapply(fitpred_c_loo_age, function(x) x[[3]])
   
   #some measure of variable importance
   importance_c_loo_age <- lapply(fit_c_loo_age, function(x) importance(x))
@@ -140,33 +143,60 @@ age_control_analysis <- function(imputations, name, color = NULL, imp_num = 1){
   
   
   
-  return(list(c_loo_age_table, importance_c_loo_median_age, shapiro, pred_truth_c)) 
+  return(list(c_loo_age_table, "importance" = importance_c_loo_median_age, shapiro, pred_truth_c, "loo_fits" = fit_c_loo_age, "full_fits" = cv_fits)) 
 }
 
 
 #' create df to combine/average imputations
 #' @param analysis is a list created by multiple calls to age_control_analysis (eg. got_age_analysis)
-#' 
-imputation_df <- function(analysis){
-  analysis %>% 
-    purrr::map(~.x[[1]]$pred) %>%
-    enframe %>%
-    mutate(name = str_replace(name, "\\d", paste0("imp", name))) %>%
-    spread(name, value) %>%
-    unnest %>%
-    # add truth (all of the truth columns are the same) 
-    mutate(truth = analysis[[1]][[1]]$truth,
-           gender = analysis[[1]][[1]]$gender %>%
-             as.factor %>%
-             fct_recode(M = '1', F = '0'),
-           apoe = analysis[[1]][[1]]$apoe,
-           apoe4 = analysis[[1]][[1]]$apoe4,
-           type = analysis[[1]][[1]]$type
-    ) %>%
-    rowwise() %>%
-    mutate(imp_avg = mean(c(imp1, imp2, imp3, imp4, imp5)),
-           imp_min = min(c(imp1, imp2, imp3, imp4, imp5)),
-           imp_max = max(c(imp1, imp2, imp3, imp4, imp5)))
+#' @param num_imps is the number of imputations made. either 3 or 5
+#' TODO: FIX THIS FUNCTION! code can be much cleaner to allow all num_imps
+imputation_df <- function(analysis, num_imps = 5){
+  
+  if(num_imps == 5){
+    analysis %>% 
+      purrr::map(~.x[[1]]$pred) %>%
+      enframe %>%
+      mutate(name = str_replace(name, "\\d", paste0("imp", name))) %>%
+      spread(name, value) %>%
+      unnest %>%
+      # add truth (all of the truth columns are the same) 
+      mutate(truth = analysis[[1]][[1]]$truth,
+             gender = analysis[[1]][[1]]$gender %>%
+               as.factor %>%
+               fct_recode(M = '1', F = '0'),
+             apoe = analysis[[1]][[1]]$apoe,
+             apoe4 = analysis[[1]][[1]]$apoe4,
+             type = analysis[[1]][[1]]$type
+      ) %>%
+      rowwise() %>%
+      mutate(imp_avg = mean(c(imp1, imp2, imp3, imp4, imp5)),
+             imp_min = min(c(imp1, imp2, imp3, imp4, imp5)),
+             imp_max = max(c(imp1, imp2, imp3, imp4, imp5)))
+  } else if (num_imps == 3){
+    analysis %>% 
+      purrr::map(~.x[[1]]$pred) %>%
+      enframe %>%
+      mutate(name = str_replace(name, "\\d", paste0("imp", name))) %>%
+      spread(name, value) %>%
+      unnest %>%
+      # add truth (all of the truth columns are the same) 
+      mutate(truth = analysis[[1]][[1]]$truth,
+             gender = analysis[[1]][[1]]$gender %>%
+               as.factor %>%
+               fct_recode(M = '1', F = '0'),
+             apoe = analysis[[1]][[1]]$apoe,
+             apoe4 = analysis[[1]][[1]]$apoe4,
+             type = analysis[[1]][[1]]$type
+      ) %>%
+      rowwise() %>%
+      mutate(imp_avg = mean(c(imp1, imp2, imp3)),
+             imp_min = min(c(imp1, imp2, imp3)),
+             imp_max = max(c(imp1, imp2, imp3)))
+  } else {
+    error("num_imps must be 3 or 5")
+  }
+  
   
 }
 
@@ -176,13 +206,15 @@ imputation_df <- function(analysis){
 #' @param name is what we want to call the plots in the title (a string)
 #' @param color is a string, representing the variable to color points by, one of apoe, gender, type
 #' @param errorbar is boolean for whether to plot an errorbar. defaults to true
-predtruth_plot <- function(df, name, color = NULL, errorbar = TRUE, data_name = "Control"){
+predtruth_plot <- function(df, pred_name = "imp_avg", name, color = NULL, errorbar = TRUE, data_name = "Control"){
+  pred_name <- sym(pred_name)
   if(!is.null(color)){
     color <- sym(color)
   }
+  
   if(errorbar){
     ggplot(df) + 
-      geom_point(aes(truth, imp_avg, color = !!color), size = 2.5) + 
+      geom_point(aes(truth, !!pred_name, color = !!color), size = 2.5) + 
       geom_errorbar(aes(x = truth, ymin = imp_min, ymax = imp_max), alpha = 0.5) + 
       scale_color_brewer(type = 'qual', palette = 'Set1') +
       labs(title = paste0(data_name, ': True vs Predicted Age'),
@@ -196,16 +228,16 @@ predtruth_plot <- function(df, name, color = NULL, errorbar = TRUE, data_name = 
   } else {
     # same as above, but just without errorbar
     ggplot(df) + 
-      geom_point(aes(truth, imp_avg, color = !!color), size = 2.5) + 
+      geom_point(aes(truth, !!pred_name, color = !!color), size = 2.5) + 
       scale_color_brewer(type = 'qual', palette = 'Set1') +
       labs(title = paste0(data_name, ': True vs Predicted Age'),
            subtitle = paste0(name, " averaged over 5 imputations, alpha = 0.5, loo"),
            x = 'True Age',
            y = 'Predicted Age') + 
       geom_abline(intercept = 0, slope = 1) + 
-      geom_label(aes(x = Inf, y = -Inf, hjust = 1, vjust = 0, label = paste0("R: ", cor(truth, imp_avg, method = "pearson") %>% round(2), 
-                                                                             "\nRMSE: ", (truth - imp_avg)^2 %>% mean %>% sqrt %>% round(2), 
-                                                                             "\nMAE: ", (truth - imp_avg) %>% abs %>% mean %>% round(2))))
+      geom_label(aes(x = Inf, y = -Inf, hjust = 1, vjust = 0, label = paste0("R: ", cor(truth, !!pred_name, method = "pearson") %>% round(2), 
+                                                                             "\nRMSE: ", (truth - !!pred_name)^2 %>% mean %>% sqrt %>% round(2), 
+                                                                             "\nMAE: ", (truth - !!pred_name) %>% abs %>% mean %>% round(2))))
   }
   
   
@@ -220,12 +252,13 @@ predtruth_plot <- function(df, name, color = NULL, errorbar = TRUE, data_name = 
 
 
 ### Clock (linear glmnet age) ###
+## Note: For the Amelia imputations, we keep empri = ~ 10% of the number of observations
+##        This is a loose upper bound sugggested by the amelia paper
 
 
 
 
 ######################################################################
-
 
 
 
@@ -241,7 +274,7 @@ predtruth_plot <- function(df, name, color = NULL, errorbar = TRUE, data_name = 
 ########
 
 
-imputed_c_got5 <- filter_and_impute_multi(wide_data, c('CO', 'CY', 'CM'))
+imputed_c_got5 <- filter_and_impute_multi(wide_data, c('CO', 'CY', 'CM'), empri = 8)
 got_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_got5, name = "GOT", color = NULL, imp_num = .x))
 
 got_pred_df <- imputation_df(got_age_analysis)
@@ -257,13 +290,25 @@ got_in_all <- got_age_analysis %>%
   setdiff("(Intercept)")
 
 
+
+
+## Create null model as baseline (it's dataset agnositic, since the observations are same)
+null_df <- got_pred_df %>%
+  ungroup() %>%
+  select(truth, gender, apoe, apoe4, type) %>%
+  mutate(pred = mean(truth))
+
+(null_age_predtruth <- predtruth_plot(null_df, pred_name = "pred", name = "Mean model", errorbar = FALSE))
+
+
+
 ########
 
 ### Lipids
 
 ########
 
-imputed_c_lipids5 <- filter_and_impute_multi(wide_data_lipids, c('CO', 'CY', 'CM'))
+imputed_c_lipids5 <- filter_and_impute_multi(wide_data_lipids, c('CO', 'CY', 'CM'), empri = 8)
 lipids_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_lipids5, name = "Lipids", color = NULL, imp_num = .x))
 
 lipids_pred_df <- imputation_df(lipids_age_analysis)
@@ -287,6 +332,26 @@ lipids_avg_resid <- lipids_pred_df$imp_avg - lipids_pred_df$truth
 
 cor.test(got_avg_resid, lipids_avg_resid, method = "spearman")
 
+
+# now, this correlation might include some correlation between the methods (as a result of the regularization to the horizontal line)
+# to try and capture correlation better, we'll fit linear models for pred ~ truth, and then compare the residuals of those models
+  # note: i know it's kinda backwards to do pred ~ truth, but we're just matching the x/y of the plot
+got_truthpred_lm <- lm(imp_avg ~ truth, data = got_pred_df)
+lipids_truthpred_lm <- lm(imp_avg ~ truth, data = lipids_pred_df)
+cor.test(resid(got_truthpred_lm), resid(lipids_truthpred_lm), method = "spearman")
+
+
+got_pred_df %>%
+  ungroup %>%
+  mutate(model_line = predict(got_truthpred_lm)) %>%
+  predtruth_plot(name = "GOT") + 
+  geom_line(aes(truth, model_line), color = "blue")
+
+lipids_pred_df %>%
+  ungroup %>%
+  mutate(model_line = predict(lipids_truthpred_lm)) %>%
+  predtruth_plot(name = "Lipids") + 
+  geom_line(aes(truth, model_line), color = "blue")
 
 
 
@@ -315,7 +380,6 @@ lipids_in_all_mice <- lipids_age_analysis_mice %>%
 ### Lipids: Mice, loo
 
 ########
-
 
 
 
@@ -410,6 +474,20 @@ targeted_pred_df <- imputation_df(targeted_age_analysis)
 ggsave(filename = "age_clock_targeted_pred.png") #14.9 x 8.21
 
 
+########
+
+### Unargeted
+
+########
+
+imputed_c_untargeted5 <- filter_and_impute_multi(wide_data_untargeted, c('CO', 'CY', 'CM'), empri = 8)
+# lambdas were reaching the end of their sequence due to hugeness of data, so we increase nlambda from 100 to 200
+untargeted_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_untargeted5, name = "untargeted", color = NULL, imp_num = .x, nlambda = 200))
+
+untargeted_pred_df <- imputation_df(untargeted_age_analysis)
+
+(untargeted_age_predtruth <- predtruth_plot(untargeted_pred_df, name = "Untargeted")) 
+ggsave(filename = "age_clock_untargeted_pred.png") #14.9 x 8.21
 
 
 
@@ -441,6 +519,14 @@ ggsave(filename = "age_clock_targeted_pred.png") #14.9 x 8.21
 ########################
 
 
+
+################
+
+## Using combined GOT + lipids
+
+################
+
+
 # First, we need to create a model fit on the entire dataset
   # no playing around with that loo monkey business anymore
   # We use combined got/lipids
@@ -448,7 +534,7 @@ ggsave(filename = "age_clock_targeted_pred.png") #14.9 x 8.21
 #' Function to prepare the data dn create fits
 #' @param imputations is the one element of the output of filter_and_impute_multi used to train
 #' @param new_data is one element of the output of filter_and_impute_multi, used to predict
-full_model_new_data <- function(imputation, new_data){
+full_model_new_data <- function(imputation, new_data, nlambda = 100){
   
   true_control_age <- imputation[[1]][, "Age"]
   features <- imputation[[1]][,!colnames(imputation[[1]]) %in% 'Age']
@@ -463,12 +549,12 @@ full_model_new_data <- function(imputation, new_data){
   #combine the datasets to avoid errors because the factors are different
   combined_data <- rbind(features_shared, new_data_shared)
   
-  fit <- fit_glmnet(combined_data[1:nrow(features_shared),], true_age, alpha = 0.5, penalize_age_gender = FALSE, family = "gaussian")
+  fit <- fit_glmnet(combined_data[1:nrow(features_shared),], true_control_age, alpha = 0.5, penalize_age_gender = FALSE, family = "gaussian", nlambda = nlambda)
   oos_pred <- predict(fit, newx = combined_data[-(1:nrow(features_shared)),], s = "lambda.min")
   
   
   data_df <- tibble(
-    truth = new_data[[1]][,"Age"],
+    truth = true_pred_age,
     pred = oos_pred,
     gender = new_data[[1]][,"GenderM"] %>%
       as.factor %>%
@@ -491,12 +577,37 @@ imputed_adpd_lipids_amelia5 <- filter_and_impute_multi(wide_data_lipids, c("AD",
 imputed_adpd_combined_amelia5 <- purrr::map2(imputed_adpd_got_amelia5, imputed_adpd_lipids_amelia5, ~combine_got_lipids(.x, .y))
 
 
-adpd_age_analysis <- 1:5 %>% purrr::map(~full_model_new_data(imputed_c_combined_amelia5[[.x]], new_data = imputed_adpd_combined_amelia5[[.x]]))
+adpd_age_analysis <- 1:5 %>% purrr::map(~full_model_new_data(imputed_c_combined_amelia5[[.x]], new_data = imputed_adpd_combined_amelia5[[.x]], nlambda = 200))
 
 adpd_pred_df <- imputation_df(adpd_age_analysis)
 
 (adpd_age_predtruth <- predtruth_plot(adpd_pred_df, name = "Combined GOT + Lipids", data_name = "AD/PD")) 
 ggsave(filename = "age_c_adpd_pred.png") #14.9 x 8.21
+
+
+
+
+################
+
+## Using untargeted
+
+################
+
+#empri = .1(num PD + num_AD)
+untargeted_adpd_combined_amelia5 <- filter_and_impute_multi(wide_data_untargeted, c('AD', 'PD'), empri = 10)
+
+
+untargeted_adpd_age_analysis <- 1:5 %>% purrr::map(~full_model_new_data(imputed_c_untargeted5[[.x]], new_data = untargeted_adpd_combined_amelia5[[.x]], nlambda = 200))
+
+untargeted_adpd_pred_df <- imputation_df(untargeted_adpd_age_analysis)
+
+(untargeted_adpd_age_predtruth <- predtruth_plot(untargeted_adpd_pred_df, name = "Untargeted", data_name = "AD/PD")) 
+ggsave(filename = "age_c_adpd_pred_untargeted.png") #14.9 x 8.21
+
+
+
+
+
 
 
 
@@ -565,8 +676,7 @@ bh_univariate_age <- function(data) {
   p_table <- cbind(p_values,'bh_p_value' = p.adjust(p_values$og_p_value, method = 'BH'))
   
   p_table %>% 
-    dplyr::mutate(name = str_replace_all(name, '`', '')) %>% 
-    filter(bh_p_value < 0.01)
+    dplyr::mutate(name = str_replace_all(name, '`', ''))
   
 }
 
@@ -577,20 +687,23 @@ bh_univariate_age <- function(data) {
 
 ## GOT
 
-c_got_univariate_table <- bh_univariate_age(imputed_c_got5)
+c_got_univariate_table <- bh_univariate_age(imputed_c_got5) %>%
+  filter(bh_p_value < 0.01)
 
 
 
 ## Lipids
 
-c_lipids_univariate_table <- bh_univariate_age(imputed_c_lipids5)
+c_lipids_univariate_table <- bh_univariate_age(imputed_c_lipids5) %>%
+  filter(bh_p_value < 0.01)
 
 
 
 
 ## Combined GOT + Lipids
 
-c_combined_univariate_table <- bh_univariate_age(imputed_c_combined5)
+c_combined_univariate_table <- bh_univariate_age(imputed_c_combined5) %>%
+  filter(bh_p_value < 0.01)
 
 
 
@@ -598,7 +711,16 @@ c_combined_univariate_table <- bh_univariate_age(imputed_c_combined5)
 
 c_targeted_univariate_table <- bh_univariate_age(imputed_c_targeted5)
 
+c_targeted_univar_sig <- c_targeted_univariate_table %>%
+  filter(bh_p_value < 0.01)
 
+
+## Untargeted
+
+c_untargeted_univariate_table <- bh_univariate_age(imputed_c_untargeted5)
+
+c_untargeted_univar_table_sig <- c_untargeted_univariate_table %>%
+  filter(bh_p_value < 0.01)
 
 
 
@@ -616,11 +738,11 @@ c_targeted_univariate_table <- bh_univariate_age(imputed_c_targeted5)
 
 #############################################
 
-### Gender Logistic Regresssion on combined
+### Gender Logistic Regresssion on untargeted
 
 ############################################
 
-c_gender_logistic <- purrr::map(1:5, ~gender_control_analysis(imputed_c_combined5, imp_num = .x))
+c_gender_logistic <- purrr::map(1:5, ~gender_control_analysis(imputed_c_untargeted5, imp_num = .x, nlambda = 200))
 
 c_gender_logistic %>% 
   purrr::map(~.x[[2]]) %>% 
@@ -632,6 +754,7 @@ ggsave('gender_logistic_c.png')
 
 
 
+
 ############################
 
 ### Gender vs C ###
@@ -639,5 +762,128 @@ ggsave('gender_logistic_c.png')
 
 ############################
 
+
+
+
+
+
+
+
+
+
+
+
+
+############################
+
+### Trying MSEA from MetaboAnalystR
+
+############################
+
+## As input, it takes in the names/ids of significant variables
+univar_targeted_names <- c_targeted_univariate_table %>%
+  filter(bh_p_value < 0.01) %>% select(name) %>% deframe
+
+
+## We also want to add in a reference list (ie include names on insignificant variables)
+## The reference list must be IDs, so we need to map the names to KEGG/HMDB names.
+# Post mortem, I'm coming back and renaming ones that I can identify (but that atempt 2 couldn't)
+univar_targeted_names_all <- c_targeted_univariate_table %>%
+  mutate(name = str_replace_all(name, "_neg|_pos", "") %>% str_to_lower() %>% str_trim(),
+         mapped_name = case_when(
+          #https://pubchem.ncbi.nlm.nih.gov/compound/12-Ketolithocholic-acid
+          name == "3\\?-hydroxy-12 ketolithocholic acid" ~ "12-Ketodeoxycholic acid",
+          #https://www.ebi.ac.uk/chebi/searchId.do?chebiId=CHEBI:27726 / https://www.genome.jp/dbget-bin/www_bget?cpd:C06560
+          name == "2-chloro-4,6-diamino-1,3,5-triazine" ~ "Deisopropyldeethylatrazine",
+          #http://www.hmdb.ca/metabolites/HMDB0006029
+          name == "acetyl-l-glutamine" ~ "N-Acetylglutamine",
+          #https://pubchem.ncbi.nlm.nih.gov/compound/Acetylornithine
+          name == "acetylornithine" ~  "N-Acetylornithine",
+          #https://pubchem.ncbi.nlm.nih.gov/compound/5-Aminovaleric-acid
+          name == "amino valerate" ~ "5-Aminopentanoic acid",
+          #https://pubchem.ncbi.nlm.nih.gov/compound/N_N-dimethylarginine
+          name == "dimethylarginine" ~ "Asymmetric dimethylarginine",
+          #https://pubchem.ncbi.nlm.nih.gov/compound/1826
+          name == "hiaa" ~ 	"5-Hydroxyindoleacetic acid",
+          TRUE ~ name)) %>%
+  select(mapped_name)
+
+
+
+# Attempt 1: Use our kegg_map.csv
+  # .. this one didn't work so well. we only matched ~50% of the the obs
+kegg_lookup <- kegg_map %>%
+  mutate(name_formatted = str_to_lower(METABOLITE) %>% str_replace_all("\\(.+\\)", "") %>% str_trim)
+
+univar_targeted_names_kegg <- univar_targeted_names_all %>% left_join(kegg_lookup, by = "name_formatted")
+
+
+# Attempt 2: Use metaboanalyst to help with the mapping
+hmdbMap <- InitDataObjects("conc", "pathora", F)
+hmdbMap <- Setup.MapData(hmdbMap, deframe(univar_targeted_names_all))
+hmdbMap <- CrossReferencing(hmdbMap, "name")
+hmdbMap <- CreateMappingResultTable(hmdbMap)
+
+#trying to find any of them manually. Thes ones I could correct are corrected above.
+hmdbMap<-PerformDetailMatch(hmdbMap, "Deisopropyldeethylatrazine")
+hmdbMap <- GetCandidateList(hmdbMap)
+
+# --
+hmdb_mapping <- hmdbMap$dataSet$map.table[,c("Query","Match")] %>%
+  as_tibble()
+
+write_delim(select(hmdb_mapping, Match), path = "targeted_names_hmdb_list.txt", delim = "\n", col_names = FALSE)
+
+  
+
+
+
+
+# Using targeted since it's the only analysis with defined mapping
+# this one is from the univariate analysis
+targeted_sig_names <- univar_targeted_names %>%
+  str_replace_all("_neg", "") %>%
+  str_replace_all("_pos", "") %>%
+  # an alternate name for 12 ketolithocholic acid according to https://pubchem.ncbi.nlm.nih.gov/compound/12-Ketolithocholic-acid
+  str_replace("3\\?-Hydroxy-12 Ketolithocholic Acid", "12-Ketodeoxycholic acid")
+
+
+## Following the package vignette
+
+mSet<-InitDataObjects("conc", "msetora", FALSE)
+mSet<-Setup.MapData(mSet, targeted_sig_names)
+
+# upload our reference list (the metabolites we targeted)
+mSet<-Setup.HMDBReferenceMetabolome(mSet, "targeted_names_hmdb_list.txt");
+# Cross reference list of compounds against libraries (hmdb, pubchem, chebi, kegg, metlin)
+mSet<-CrossReferencing(mSet, "name")
+mSet<-CreateMappingResultTable(mSet)
+
+
+
+## try to match the NAs manually... 
+
+mSet<-PerformDetailMatch(mSet, "HIAA")
+mSet <- GetCandidateList(mSet)
+# Match found! set to the first candidate
+mSet<-SetCandidate(mSet, "HIAA", mSet$name.map$hits.candidate.list[1])
+##
+
+
+#what does this do?? True is the only option in the web-tool version, so i'm keeping it as default
+# but it makes a pretty big difference
+mSet<-SetMetabolomeFilter(mSet, F)
+
+# Select metabolite set library
+
+#pathway associated library?
+mSet <- SetCurrentMsetLib(mSet, "smpdb_pathway",2)
+
+# csf associated library?
+#mSet<-SetCurrentMsetLib(mSet, "csf", 2)
+
+# Calculate hypergeometric score, results table generated in your working directory
+mSet<-CalculateHyperScore(mSet)
+mSet<-PlotORA(mSet, "ora_0_", "bar", "png", 72, width=NA)
 
 
