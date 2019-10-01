@@ -3161,7 +3161,7 @@ ggplot(rf_separate_sig_age_c_table) +
 #   #str_replace_all("\\?", "")
 
 # Using targeted since it's the only analysis with defined mapping
-  # this one is from the univariate analysis
+# this one is from the univariate analysis
 targeted_sig_names <- univar_targeted_names %>%
   str_replace_all("_neg", "") %>%
   str_replace_all("_pos", "") %>%

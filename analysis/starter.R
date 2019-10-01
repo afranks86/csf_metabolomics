@@ -740,10 +740,32 @@ importance_consolidated_loo <- function(retained){
 }
 
 
+
+
+#' Function to do univariate analysis on age ~ metabolite
+age_metabolite_p <- function(data, metabolite){
+    metabolite <- sym(metabolite)
+    df <- data %>%
+        select(Age, !!metabolite)
+    fit <- glm(Age ~ ., data = df)
+    
+    #get the t-value and p score (excluding intercept)
+    tryCatch({
+        enframe(summary(fit)$coefficients[-1,3:4]) %>% spread(key = name, value = value) %>%
+            cbind('name' = rlang::as_string(metabolite))
+    },
+    error = function(w) cat('metabolite is ', metabolite)
+    )
+    
+}
+
+
+
 #get the types in our dataset (ie AD, PD, CO, ..)
 all_types <- wide_data$Type %>% 
     unique %>%
     as.character
+
 
 
 
