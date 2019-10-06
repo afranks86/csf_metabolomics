@@ -7,21 +7,21 @@
 
 ############################################################
 
-gender_control_analysis <- function(imputations, imp_num = 1, nlambda = 100){
+logistic_control_analysis <- function(imputations, varname = "GenderM", imp_num = 1, nlambda = 100){
   
   imputed_c <- imputations[[imp_num]]
   imputed_c_Y <- imputed_c[[1]]
   imputed_c_type <- imputed_c[[2]]
   imputed_c_apoe <- imputed_c[[3]]
-  imputed_c_gender <- imputed_c_Y[,'GenderM']
+  imputed_c_gender <- imputed_c_Y[,varname]
+  
   
   
   imputed_c_age <- imputed_c_Y[,'Age']
-  # readd type as a feature in this analysis
   imputed_c_features_gender_tmp <- imputed_c_Y %>% 
     as_tibble %>%
     #mutate(Type = imputed_c_type) %>%
-    select(-GenderM)
+    select(-!!sym(varname))
   
   #turn type into a dummy var (multiple columns. AD is the redundant column (chosen))
   imputed_c_features_gender <- model.matrix(~., imputed_c_features_gender_tmp)
@@ -50,7 +50,7 @@ gender_control_analysis <- function(imputations, imp_num = 1, nlambda = 100){
     geom_line(mapping = aes(fpr, tpr)) + 
     geom_abline(intercept = 0, slope = 1, linetype = 2) + 
     theme_minimal() + 
-    labs(title = "ROC: Gender vs C",
+    labs(title = paste0("ROC: ", varname,  "vs C"),
          subtitle = TeX('Untargeted ,$\\alpha = 0.5$, loo'),
          x = 'False Positive Rate',
          y = 'True Positive Rate') + 
@@ -69,7 +69,7 @@ gender_control_analysis <- function(imputations, imp_num = 1, nlambda = 100){
 #' @param imp_num imputation number. 1-5
 #' 
 #' @return median importance, shapiro test, results table, predtruth plot
-age_control_analysis <- function(imputations, name, color = NULL, imp_num = 1, nlambda = 100){
+age_control_analysis <- function(imputations, name, color = NULL, imp_num = 1, nlambda = 100, ad_indicator = FALSE, pd_indicator = FALSE){
   
   if(!is.null(color)){
     color <- sym(color)
@@ -88,6 +88,20 @@ age_control_analysis <- function(imputations, name, color = NULL, imp_num = 1, n
     as_tibble %>%
     #mutate(Type = imputed_c_type) %>%
     select(-Age)
+  
+  if(ad_indicator == TRUE){
+    imputed_c_features_age_tmp <- imputed_c_features_age_tmp %>%
+      mutate(type = imputed_c_type,
+             ad = ifelse(imputed_c_type == "AD", 1, 0)) %>%
+      select(-type)
+  }
+  if(pd_indicator == TRUE){
+    imputed_c_features_age_tmp <- imputed_c_features_age_tmp %>%
+      mutate(type = imputed_c_type,
+             pd = ifelse(imputed_c_type == "PD", 1, 0)) %>%
+      select(-type)
+  }
+  
   
   #turn factors into dummy variables
   imputed_c_features_age <- model.matrix(~., imputed_c_features_age_tmp)
@@ -498,6 +512,7 @@ ggsave(filename = "age_clock_untargeted_pred.png") #14.9 x 8.21
 
 
 
+
 ##################################################################
 
 
@@ -527,6 +542,55 @@ ggsave(filename = "age_clock_untargeted_pred.png") #14.9 x 8.21
 ################
 
 
+#' Helper function to bind two datasets together, keeping only shared columns
+#' @param  include_metadata A boolean to determine whether to return a list (in same format at imputation1 or imputation2), or just the dataframe
+#' @param include_age A boolean to determine whether to include age. This is useful if we are trying to make a feature set/full merge
+#' @param add_AD/PD_ind A boollean to determine whether to add indicator columns for AD/PD. only works if include_metadata = T
+merge_datasets <- function(imputation1, imputation2, include_metadata = F, include_age = F, add_AD_ind = F, add_PD_ind = FALSE){
+
+  if(include_age == FALSE){
+    features1 <- imputation1[[1]][,!colnames(imputation1[[1]]) %in% 'Age']
+    features2 <- imputation2[[1]][,!colnames(imputation2[[1]]) %in% 'Age']
+  } else if (include_age == TRUE){
+    features1 <- imputation1[[1]]
+    features2 <- imputation2[[1]]
+  }  
+  
+  
+  
+  # sometimes the imputation leads to different numbers of columns (since it drops totally na)
+  # the fit won't work if they don't have the same sizes, so subset the features to make sure it's same size
+  shared_cols <- intersect(colnames(features1), colnames(features2))
+  features1_shared <- features1[, colnames(features1) %in% shared_cols]
+  features2_shared <- features2[, colnames(features2) %in% shared_cols]
+  
+  #combine the datasets to avoid errors because the factors are different
+  combined_data <- rbind(features1_shared, features2_shared)
+  
+  if(include_metadata == TRUE){
+    # 2:length(imputation1) is number of metadata elements in the list
+    # we use unlist(list()) instead of c() to preserve factors
+    metadata <- purrr::map(2:length(imputation1), ~unlist(list(imputation1[[.x]], imputation2[[.x]])))
+    
+    if(add_AD_ind == TRUE){
+      ad_indicator <- ifelse(metadata[[1]] == "AD", 1, 0)
+      combined_data <- cbind(combined_data, "AD_ind" = ad_indicator)
+    }
+    if(add_PD_ind == TRUE){
+      pd_indicator <- ifelse(metadata[[1]] == "PD", 1, 0)
+      combined_data <- cbind(combined_data, "PD_ind" = pd_indicator)
+    }
+    
+    # add return to stop the function from going past the loop
+    # NOTE: better practice would be let this function deal with more than 3 metadata args
+    return(list(combined_data, metadata[[1]], metadata[[2]], metadata[[3]]))
+  }
+  
+  
+  
+  combined_data
+}
+
 # First, we need to create a model fit on the entire dataset
   # no playing around with that loo monkey business anymore
   # We use combined got/lipids
@@ -537,20 +601,15 @@ ggsave(filename = "age_clock_untargeted_pred.png") #14.9 x 8.21
 full_model_new_data <- function(imputation, new_data, nlambda = 100){
   
   true_control_age <- imputation[[1]][, "Age"]
-  features <- imputation[[1]][,!colnames(imputation[[1]]) %in% 'Age']
   true_pred_age <- new_data[[1]][,"Age"]
   
-  # sometimes the imputation leads to different numbers of columns (since it drops totally na)
-  # the fit won't work if they don't have the same sizes, so subset the features to make sure it's same size
-  shared_cols <- intersect(colnames(features), colnames(new_data[[1]]))
-  features_shared <- features[, colnames(features) %in% shared_cols]
-  new_data_shared <- new_data[[1]][, colnames(new_data[[1]]) %in% shared_cols]
-  
-  #combine the datasets to avoid errors because the factors are different
-  combined_data <- rbind(features_shared, new_data_shared)
-  
-  fit <- fit_glmnet(combined_data[1:nrow(features_shared),], true_control_age, alpha = 0.5, penalize_age_gender = FALSE, family = "gaussian", nlambda = nlambda)
-  oos_pred <- predict(fit, newx = combined_data[-(1:nrow(features_shared)),], s = "lambda.min")
+  #to avoid any structure shenanigans, merge the datasets so that the columns match
+    # (remember that we drop columns that have a certain amount of missingness)
+  combined_data <- merge_datasets(imputation, new_data)
+
+  # Make sure to fit only on the training set, and predict only on the test set by indexing combined_data
+  fit <- fit_glmnet(combined_data[1:nrow(imputation[[1]]),], true_control_age, alpha = 0.5, penalize_age_gender = FALSE, family = "gaussian", nlambda = nlambda)
+  oos_pred <- predict(fit, newx = combined_data[-(1:nrow(imputation[[1]])),], s = "lambda.min")
   
   
   data_df <- tibble(
@@ -607,6 +666,53 @@ ggsave(filename = "age_c_adpd_pred_untargeted.png") #14.9 x 8.21
 
 
 
+################
+
+## Using untargeted, separate imputation for AD/PD
+
+################
+
+#empri = .1(num PD/AD)
+untargeted_ad_amelia5 <- filter_and_impute_multi(wide_data_untargeted, c('AD'), empri = 5)
+untargeted_pd_amelia5 <- filter_and_impute_multi(wide_data_untargeted, c('PD'), empri = 5)
+
+untargeted_adpd_separate_amelia5 <- purrr::map2(untargeted_ad_amelia5, untargeted_pd_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE))
+
+untargeted_adpd_age_analysis_separate <- 1:5 %>% purrr::map(~full_model_new_data(imputed_c_untargeted5[[.x]], new_data = untargeted_adpd_separate_amelia5[[.x]], nlambda = 200))
+
+untargeted_adpd_pred_df_separate <- imputation_df(untargeted_adpd_age_analysis_separate)
+
+(untargeted_adpd_age_predtruth_separate <- predtruth_plot(untargeted_adpd_pred_df_separate, name = "Untargeted", data_name = "AD/PD, separate", color = "type")) 
+ggsave(filename = "age_c_adpd_pred_untargeted_separate.png") #14.9 x 8.21
+
+
+
+
+
+
+
+
+
+
+
+
+########
+
+### Untargeted, including ADPD
+### We're interested in the coefficient for AD/PD
+
+########
+
+# combine controls with AD/PD imputation. include indicators for AD/PD as predictors
+untargeted_all_amelia5 <- purrr::map2(imputed_c_untargeted5, untargeted_adpd_separate_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE, add_AD_ind = TRUE, add_PD_ind = TRUE))
+
+
+untargeted_all_age_analysis <- purrr::map(1:5, ~age_control_analysis(untargeted_all_amelia5, name = "untargeted (all)", color = NULL, imp_num = .x, nlambda = 200))
+
+untargeted_all_pred_df <- imputation_df(untargeted_all_age_analysis)
+
+(untargeted_all_age_predtruth <- predtruth_plot(untargeted_all_pred_df, name = "Untargeted (all)")) 
+ggsave(filename = "age_clock_all_untargeted_pred.png") #14.9 x 8.21
 
 
 
@@ -742,7 +848,7 @@ c_untargeted_univar_table_sig <- c_untargeted_univariate_table %>%
 
 ############################################
 
-c_gender_logistic <- purrr::map(1:5, ~gender_control_analysis(imputed_c_untargeted5, imp_num = .x, nlambda = 200))
+c_gender_logistic <- purrr::map(1:5, ~logistic_control_analysis(imputed_c_untargeted5, varname = "GenderM", imp_num = .x, nlambda = 200))
 
 c_gender_logistic %>% 
   purrr::map(~.x[[2]]) %>% 
@@ -757,13 +863,36 @@ ggsave('gender_logistic_c.png')
 
 ############################
 
-### Gender vs C ###
-## {Lipids, GOT} ##
+### AD/PD Logisitic Regression on untargeted ###
 
 ############################
 
+#### AD First -----------------------------
+# we want an AD indicator, but not a PD one
+untargeted_all_amelia5_ad_ind <- purrr::map2(imputed_c_untargeted5, untargeted_adpd_separate_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE, 
+                                                                                                                     add_AD_ind = TRUE, add_PD_ind = FALSE))
+untargted_ad_logistic <- purrr::map(1:5, ~logistic_control_analysis(untargeted_all_amelia5_ad_ind, varname ="AD_ind", imp_num = .x, nlambda = 200))
+
+untargeted_ad_logistic %>%
+  purrr::map(~.x[[2]]) %>%
+  cowplot::plot_grid(plotlist = .)
+
+untargeted_ad_logistic[[1]][[1]]
+ggsave("ad_logistic_untargeted.png")
 
 
+#### PD -------------------------------------
+# we want a PD indicator, but not an AD one
+untargeted_all_amelia5_pd_ind <- purrr::map2(imputed_c_untargeted5, untargeted_adpd_separate_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE, 
+                                                                                                                      add_AD_ind = FALSE, add_PD_ind = TRUE))
+untargted_pd_logistic <- purrr::map(1:5, ~logistic_control_analysis(untargeted_all_amelia5_pd_ind, varname ="PD_ind", imp_num = .x, nlambda = 200))
+
+untargeted_pd_logistic %>%
+  purrr::map(~.x[[2]]) %>%
+  cowplot::plot_grid(plotlist = .)
+
+untargeted_pd_logistic[[1]][[1]]
+ggsave("pd_logistic_untargeted.png")
 
 
 
@@ -776,7 +905,7 @@ ggsave('gender_logistic_c.png')
 
 ############################
 
-### Trying MSEA from MetaboAnalystR
+### Trying MSEA from MetaboAnalystR on Targeted significant age
 
 ############################
 
