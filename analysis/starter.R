@@ -97,6 +97,9 @@ library(gridExtra)
 library(gbm3)
 library(MetaboAnalystR)
 library(mice)
+library(furrr)
+library(gghighlight)
+library(ggtext)
 source(here("analysis/utility.R"))
 
 
@@ -553,7 +556,7 @@ loo_filter_impute_fitpred <- function(index, data, method = "mice"){
 
 #does loocv for logistic regression, using deviance loss by default (check?), eval at different elastic net alphas
 #if penalize_age_gender is false, set penalty coeff to 0
-fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, family= 'binomial', nlambda = 100){
+fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, penalize_AD_PD = TRUE, family= 'binomial', nlambda = 100){
     set.seed(1)
     #set foldid so that same folds every time (it's loocv so it's just an ordering)
     foldid <- sample(nrow(features))
@@ -564,6 +567,10 @@ fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, fami
     if(penalize_age_gender == FALSE){
         age_gender_index <- which(colnames(features) %in% c('Age', 'GenderM'))
         p_factors[age_gender_index] <- 0
+    }
+    if(penalize_AD_PD == FALSE){
+        ad_pd_index <- which(colnames(features) %in% c("AD_ind", "PD_ind"))
+        p_factors[ad_pd_index] <- 0
     }
     #grouped = false is already enforced for small folds. I'm just writing it explicitly to avoid the warning.
     if(family == 'binomial'){
@@ -585,6 +592,7 @@ fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, fami
 # to use when you have a single lambda value you want to use (ie min lambda on full dataset)
 # index is the one observation to remove
 # only pass in binomial or gaussian
+# DEPRECATED!! I leave this around for the times we do EDA with it in gotms_age, lipids_glmnet, ect..
 #https://stats.stackexchange.com/questions/304440/building-final-model-in-glmnet-after-cross-validation
 loo_pred_glmnet <- function(lambda, index, features, labels, alpha, penalize_age_gender = TRUE, family = 'binomial'){
     #features and label, leaving out one observation for training
@@ -636,10 +644,20 @@ loo_pred_glmnet <- function(lambda, index, features, labels, alpha, penalize_age
 #     return(list(fit, pred))
 # }
 
-# Fit a model on the full data to find lambda, and use that lambda for leave one out.
-loo_cvfit_glmnet <- function(index, features, labels, alpha, penalize_age_gender = TRUE, family = 'binomial', nlambda = 100){
-    full_fit <- fit_glmnet(features = features, labels = labels, alpha = alpha, family = family, penalize_age_gender = penalize_age_gender, nlambda = nlambda)
+get_full_model <- function(features, labels, alpha, penalize_age_gender = TRUE, penalize_AD_PD = TRUE, family = 'binomial', nlambda = 100){
+    full_fit <- fit_glmnet(features = features, labels = labels, alpha = alpha, family = family, penalize_age_gender = penalize_age_gender, penalize_AD_PD = penalize_AD_PD, nlambda = nlambda)
     lambda <- full_fit$lambda.min
+    
+    list(full_fit, lambda)
+}
+    
+# Fit a model on the full data to find lambda, and use that lambda for leave one out.
+#' This deprecates loo_pred_glmnet
+# we set penalize_age_gender/penalize_ADPD to be TRUE by default just so it's guaranteed to work with data that doesn't have these columns
+    # but whenever these columns are present, the arguments should be false.
+    # but even if we set the penalize tags as FALSE when the columns aren't there, everything will work (the penalize tag will be ignored)
+loo_cvfit_glmnet <- function(index, features, labels, lambda, full_fit, alpha, penalize_age_gender = TRUE, penalize_AD_PD = TRUE, family = 'binomial', nlambda = 100){
+    
     
     
     #features and label, leaving out one observation for training
@@ -657,6 +675,10 @@ loo_cvfit_glmnet <- function(index, features, labels, alpha, penalize_age_gender
     if(penalize_age_gender == FALSE){
         age_gender_index <- which(colnames(loo_features) %in% c('Age', 'GenderM'))
         p_factors[age_gender_index] <- 0
+    }
+    if(penalize_AD_PD == FALSE){
+        ad_pd_index <- which(colnames(loo_features) %in% c("AD_ind", "PD_ind"))
+        p_factors[ad_pd_index] <- 0
     }
     
     #documentation says we should avoid passing in single value of lambda. how else to do?
@@ -742,22 +764,62 @@ importance_consolidated_loo <- function(retained){
 
 
 
-#' Function to do univariate analysis on age ~ metabolite
-age_metabolite_p <- function(data, metabolite){
-    metabolite <- sym(metabolite)
-    df <- data %>%
-        select(Age, !!metabolite)
-    fit <- glm(Age ~ ., data = df)
+#' Function to do univariate glm's.
+#' @param metabolite is a string name in data
+#' @param var is the other variable (either predicting/a predictor of metabolite)
+#' @param conc is whether we're looking at concentration or not. this puts metabolite on the lhs
+age_metabolite_p <- function(data, metabolite, var = "Age", family = "gaussian", conc = FALSE){
     
-    #get the t-value and p score (excluding intercept)
-    tryCatch({
-        enframe(summary(fit)$coefficients[-1,3:4]) %>% spread(key = name, value = value) %>%
-            cbind('name' = rlang::as_string(metabolite))
-    },
-    error = function(w) cat('metabolite is ', metabolite)
-    )
+    if(conc == FALSE){
+        form <- paste0(var, "~ `", metabolite, "`") %>%
+            as.formula
+    } else if (conc == TRUE){
+        form <- paste0("`", metabolite, "` ~ ", var) %>% 
+            as.formula()
+    } else {
+        stop("conc must be true or false")
+    }
+    
+    
+    metabolite <- sym(metabolite)
+    var = sym(var)
+    df <- data %>%
+        as_tibble() %>%
+        select(!!var, !!metabolite)
+    
+    if(family %in% c("gaussian", "binomial")){
+        fit <- glm(form, data = df, family = family)
+        
+        #get the t-value and p score (excluding intercept)
+        tryCatch({
+            enframe(summary(fit)$coefficients[-1,3:4]) %>% spread(key = name, value = value) %>%
+                cbind('name' = rlang::as_string(metabolite))
+        },
+        error = function(w) cat('metabolite is ', metabolite, "\n")
+        )
+    } else if (family == "rf") {
+        fit <- randomForest::randomForest(form, data = df)
+        
+        #predictions. this method guarantees that the results are aggregated by age.
+        preds <- predict(fit, tibble(Age = pull(df, !!var)))
+        
+        # variation explained. this is equiv to what randomForest spits out as "% variation explained"
+        pseudo_r2 <- 1 - sum((fit$y - preds)^2) / sum((fit$y - mean(fit$y))^2)
+        tibble("name" = rlang::as_string(metabolite),
+               "truth" = fit$y,
+               "pred" = preds,
+               !!var := df %>% select(!!var) %>% deframe,
+               "var_explained" = pseudo_r2)
+        
+    }
+    
+    
+    
+    
+
     
 }
+
 
 
 
@@ -807,32 +869,39 @@ wide_data_control %>%
 ###
 
 #write above into a function
-find_control <- function(row_num, data){
+#' @param data is the smaller dataset you want to find a match for
+#' @param data_control is the larger dataset you find to find a math from
+find_control <- function(row_num, data, data_control){
     #select a row to match
     subject <- data[row_num,]
     # find a control that matches
-    wide_data_control %>%
+    match <- data_control %>%
         filter(Gender == subject$Gender) %>%
-        filter(abs(Age - subject$Age) == min(abs(Age - subject$Age))) %>%
-        filter(abs(Batch - subject$Batch) == min(abs(Batch - subject$Batch))) %>%
-        slice(1) #if there are multiple matches for all three of these, then pick the first one (this should be random)
+        filter(abs(Age - subject$Age) == min(abs(Age - subject$Age))) 
+    
+    if("Batch" %in% names(data_control)){
+        match <- match %>%
+            filter(abs(Batch - subject$Batch) == min(abs(Batch - subject$Batch)))
+    }
+     
+    match %>% slice(1) #if there are multiple matches for all three of these, then pick the first one (this should be random)
 }
 
 # apply function to get pd matched controls
     #the lapply returns a list, where each element is a row, a control match
     # bind_rows will join the 1 row list together into a df, and combine it with wide_data_pd
-wide_data_matched_pd_c <- lapply(1:nrow(wide_data_pd), function(x) find_control(x, data = wide_data_pd)) %>% 
+wide_data_matched_pd_c <- lapply(1:nrow(wide_data_pd), function(x) find_control(x, data = wide_data_pd, data_control = wide_data)) %>% 
     bind_rows(wide_data_pd)
 
 
 ## do the same for ad
-wide_data_matched_ad_c <- lapply(1:nrow(wide_data_ad), function(x) find_control(x, data = wide_data_ad)) %>%
+wide_data_matched_ad_c <- lapply(1:nrow(wide_data_ad), function(x) find_control(x, data = wide_data_ad, data_control = wide_data)) %>%
     bind_rows(wide_data_ad)
 
 ### do the same for lipids
-wide_data_lipids_matched_pd_c <- lapply(1:nrow(wide_data_pd_lipids), function(x) find_control(x, wide_data_pd_lipids)) %>%
+wide_data_lipids_matched_pd_c <- lapply(1:nrow(wide_data_pd_lipids), function(x) find_control(x, wide_data_pd_lipids, wide_data_lipids)) %>%
     bind_rows(wide_data_pd_lipids)
-wide_data_lipids_matched_ad_c <- lapply(1:nrow(wide_data_ad_lipids), function(x) find_control(x, wide_data_ad_lipids)) %>%
+wide_data_lipids_matched_ad_c <- lapply(1:nrow(wide_data_ad_lipids), function(x) find_control(x, wide_data_ad_lipids, wide_data_lipids)) %>%
     bind_rows(wide_data_ad_lipids)
  
 
