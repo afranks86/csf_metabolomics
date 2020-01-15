@@ -100,154 +100,14 @@ library(mice)
 library(furrr)
 library(gghighlight)
 library(ggtext)
+library(ggridges)
+library(ggforce)
+library(denoiseR)
 source(here("analysis/utility.R"))
 
 
 theme_set(theme_bw(base_size = 20))
 
-############################
-
-### Reading in Data ###
-
-############################
-set.seed(1)
-# data_path <- '~/course/ND_Metabolomics/'
-# processed_files <- dir(path = data_path, pattern="^preprocessed_gotms_data*")
-# ## Most recent file
-# load(max(file.path(data_path, processed_files[grep("-20+", processed_files)])))
-# load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
-
-data_path <- file.path('E:', 'Projects', 'metabolomics', 'ND_Metabolomics')
-processed_files <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_gotms_data*")
-## Most recent file
-load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])))
-load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"), verbose = T)
-
-wide_data <- subject_data %>%     
-    filter(!(Type %in% c("Other"))) %>%
-    unite("Metabolite", c("Metabolite", "Mode")) %>% 
-    mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
-    dplyr::select(-one_of("Raw", "RawScaled", "Trend",
-                          "RunIndex", "Name","Data File")) %>%
-    spread(key=Metabolite, value=Abundance)
-dim(wide_data)
-
-
-wide_data_rawscaled <- subject_data %>%     
-    filter(!(Type %in% c("Other"))) %>%
-    unite("Metabolite", c("Metabolite", "Mode")) %>% 
-    mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
-    dplyr::select(-one_of("Raw", "Abundance", "Trend",
-                          "RunIndex", "Name","Data File")) %>%
-    spread(key=Metabolite, value=RawScaled)
-
-
-wide_data_raw <- subject_data %>%     
-    filter(!(Type %in% c("Other"))) %>%
-    unite("Metabolite", c("Metabolite", "Mode")) %>% 
-    mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
-    dplyr::select(-one_of("RawScaled", "Abundance", "Trend",
-                          "RunIndex", "Name","Data File")) %>%
-    spread(key=Metabolite, value=Raw)
-
-
-
-### code snippit from Alex for better metabolite_matching
-subject_data %>% filter(Metabolite == "176 Results") %>%
-    select(Mode) %>% table
-
-subject_data$Metabolite %>% unique
-
-feature_names <- all_matches %>% ungroup %>%
-    dplyr::rename(MetId=Name) %>% 
-    mutate(pre_diff = abs(`Precursor Ion` - PreOrig)) %>%
-    mutate(BestMatch = ifelse(pre_diff < 0.02, Metabolite, "Unknown")) %>%
-    mutate(MetaboliteName = paste(BestMatch, PreOrig, ProdOrig, MetId, Mode, sep="_")) %>%
-    dplyr::select(-Metabolite)
-
-level_key <- feature_names$MetaboliteName
-names(level_key) <- paste(feature_names$MetId, feature_names$Mode, sep="_")
-level_key <- level_key[!duplicated(names(level_key))]
-
-### End code snippit
-
-metabolite_lookup_table <- feature_names %>% 
-    select("Name" = MetId, "Metabolite" =  MetaboliteName)
-
-
-
-
-
-
-### NOTE: For lipids, need to load in new files. the GOT subject_data df is overwritten with the below lines!!
-
-processed_files_lipids <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_lipid_data*")
-## Most recent file
-load(max(file.path(data_path, 'analysis', processed_files_lipids[grep("-20+", processed_files_lipids)])))
-
-
-# processed_files_lipids <- dir(path = data_path, pattern="^preprocessed_lipid_data*")
-# load(max(file.path(data_path, processed_files_lipids[grep("-20+", processed_files_lipids)])))
-
-
-
-wide_data_lipids <- subject_data %>%     
-    filter(!(Type %in% c("Other"))) %>%
-    mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
-    dplyr::select(-one_of("Raw", "RawScaled", "Trend", "Name", "Mode", "RunIndex")) %>%
-    spread(key=Lipid, value=Abundance) %>%
-    as_tibble(.name_repair = 'minimal')
-
-
-
-wide_data_combined <- wide_data %>%
-    #remove duplicate columns
-    select(-c(Age, Type, Gender, Batch, Index, GBAStatus, GBA_T369M, cognitive_status, APOE, Type2)) %>%
-    inner_join(wide_data_lipids, by = 'Id') 
-
-
-### untargeted data
-processed_files_untargeted <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_untargeted_data*")
-load(max(file.path(data_path, 'analysis', processed_files_untargeted[grep("-20+", processed_files_untargeted)])), verbose = T)
-
-raw_data_untargeted <- subject_data
-
-wide_data_untargeted <- subject_data %>%     
-    filter(!(Type %in% c("Other"))) %>%
-    unite("Metabolite", c("Metabolite", "Mode")) %>% 
-    select(Age, Gender, APOE, Type, Metabolite, Abundance, GBAStatus, GBA_T369M, Id) %>%
-    #mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
-    # dplyr::select(-one_of("Raw", "RawScaled", "Trend",
-    #                       "RunIndex", "Name", 'Id')) %>%
-    spread(key=Metabolite, value=Abundance)
-
-
-untargeted_columns <- wide_data_untargeted %>% 
-    map_dbl(~ sum(is.na(.x))/nrow(wide_data_untargeted) < .9) %>%
-    names
-
-#smaller wide_data_untargeted with columns with < .9 NA
-wide_data_untargeted_dropped <- wide_data_untargeted %>%
-    select(untargeted_columns)
-
-
-
-# Targeted data
-load(file.path(data_path, 'data', 'preprocessed_csf_data.RData'), verbose =  T)
-raw_data_targeted <- subject_data
-wide_data_targeted <- subject_data %>%     
-    filter(!(Type %in% c("Other"))) %>%
-    unite("Metabolite", c("Metabolite", "Mode")) %>% 
-    select(Age, Gender, APOE, Type, Metabolite, Abundance, GBAStatus, GBA_T369M, Id) %>%
-    #mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
-    # dplyr::select(-one_of("Raw", "RawScaled", "Trend",
-    #                       "RunIndex", "Name", 'Id')) %>%
-    spread(key=Metabolite, value=Abundance)
-
-
-#create foldid so we can test different alphas on same sets
-set.seed(1)
-#foldid <- sample(nrow(imputed_pd_co_y))
 
 
 ############################
@@ -255,6 +115,16 @@ set.seed(1)
 ### Helper Functions ###
 
 ############################
+
+
+#' function to convert observations that are 3 MAD away from the median
+#' @param data is a dataframe, expected as "wide_data_*"
+#' @param metadata is a dataframe in long format with the metadata info (ie subject_data)
+modify_outliers <- function(data, metadata){
+    data %>% mutate_at(vars(-one_of(names(metadata))), 
+                  function(x) ifelse(abs(x) < 3*mad(x, na.rm = TRUE), x, NA)
+                  )
+}
 
 
 #' filter type and impute using amelia
@@ -302,6 +172,9 @@ filter_and_impute <- function(data, types, method = "amelia"){
     } else if(method == "mice"){
         Yt <- mice(t(Y), m = 1, seed = 1) %>% 
             mice::complete(1)
+    } else if(method == "ada"){
+        # tranpose should be unnecessary here
+        Y <- imputeada(t(Y))$completeObs
     }
     
     
@@ -336,14 +209,21 @@ filter_and_impute <- function(data, types, method = "amelia"){
 
 #' function to clean each of the imputations
 #' @param Yt is a transposed features matrix (transposed to impute since we need long)
-imputed_data_cleaning <- function(Yt, Y_colnames, age, gender){
+imputed_data_cleaning <- function(Yt, Y_colnames, age, gender, transpose = T, led = NULL){
     
 
+    if(transpose){
+        #our functions take matrices, and we add age/gender (1 = F, 2 = M)
+        Y_tmp <- t(Yt) %>% 
+            as_tibble %>%
+            set_colnames(Y_colnames)
+    }
+    else{
+        Y_tmp <- Yt %>% 
+            as_tibble %>%
+            set_colnames(Y_colnames)
+    }
     
-    #our functions take matrices, and we add age/gender (1 = F, 2 = M)
-    Y_tmp <- t(Yt) %>% 
-        as_tibble %>%
-        set_colnames(Y_colnames)
     
     # if the method is amelia, age/gender are thrown out before imptuation. 
         # if this is the case, add it back in.
@@ -353,8 +233,12 @@ imputed_data_cleaning <- function(Yt, Y_colnames, age, gender){
                    Gender = gender)
         }
     
-            
-        
+    
+    # if we're interested in the led column, add it in now
+    if(!is.null(led)){
+        Y_tmp <- Y_tmp %>%
+            mutate(led = led)
+    }
 
     
     # this only does anything if the method for imputation is mice. amelia already has this done.
@@ -375,10 +259,12 @@ imputed_data_cleaning <- function(Yt, Y_colnames, age, gender){
 }
 
 
-#' filter type and impute using amelia/mice
+#' filter type and impute using amelia/mice. Removes columns with > 90% missingness
 #' type is a vector of strings, one of the levels of type
 #' empri is the argument to amelia to set ridge prior. makes it easier to converge
-filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, empri = 100){
+#' @param AD_ind/PD_ind optional flag to add ad/pd indicators to the features.
+filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, empri = 100, AD_ind = FALSE, PD_ind = FALSE, transpose = T, impute = T, replace_zeroes = T, include_led = F){
+    
     filtered <- data %>%
         filter(Type %in% types)
     
@@ -396,30 +282,51 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
     age <- filtered$Age
     gender <- filtered$Gender
     
+    if(include_led == TRUE){
+        led <- filtered$led
+    } else {
+        include_led <- NULL
+    }
+    
+    
     
     ## removing columns we don't want in the imputation
     # amelia requires all data to be roughly normal (so no metadata)
     # but mice can take anything
+    ####NH EDIT 11/19. maybe it's best to keep everything consistent..
     
     if(method == "amelia"){
         filtered_features <- filtered %>%
             dplyr::select(-one_of("Type2", "Type", "Gender", "Age", "APOE", "Batch",
                                   #"Data File",  (not found in dataset, so removed)
                                   "Index", "GBAStatus",  "Id",
-                                  "GBA_T369M", "cognitive_status"))
+                                  "GBA_T369M", "cognitive_status",
+                                  #found in panuc
+                                  "subject_id", "no_meds_reported", "led"))
     } else if(method == "mice"){
         filtered_features <- filtered %>%
             # don't need type since we have age.
-            dplyr::select(-one_of("Type2", "Type",  "Index",  "Id"))
+            #dplyr::select(-one_of("Type2", "Type",  "Index",  "Id"))
+            dplyr::select(-one_of("Type2", "Type", "Gender", "Age", "APOE", "Batch",
+                                  #"Data File",  (not found in dataset, so removed)
+                                  "Index", "GBAStatus",  "Id",
+                                  "GBA_T369M", "cognitive_status",
+                                  #found in panuc
+                                  "subject_id", "no_meds_reported", "led"))
     }
     
     
-    
-    #0 doesn't make any sense, so we replace all zeroes with NA, and remove totally NA columns and rows
+    # if 0s are still in the data and we want to replace them with NA
+    if(replace_zeroes){
+        filtered_features <- filtered_features %>%
+            mutate_all(~replace(., .==0, NA))
+    }
     Y <- filtered_features %>% 
-        mutate_all(~replace(., .==0, NA)) %>%
         #remove columns that are ALL NA
-        select_if(function(x) any(!is.na(x))) %>%
+        #select_if(function(x) any(!is.na(x))) %>%
+        # remove columns with > 90% NA
+        select_if(function(x) sum(is.na(x))/nrow(filtered_features) < .9) %>%
+        # remove columns that are
         janitor::remove_empty('rows') %>%
         # need to use model.matrix to get the factors to turn into dummies (otherwise they're treated as numeric)
             # it would be nice we if could keep the factors for mice, but it won't work because we need to transpose
@@ -435,22 +342,45 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
         str_replace_all('`', '') %>%
         str_replace_all('\\\\', '')
     
-    
-    #do imputation
-    if(method == "amelia"){
-        #empri ~ 8
-        Yt_list <- amelia(t(Y), m = num, empri = empri)$imputations
-        imputed_Y <- 1:num %>% paste0('imp', .) %>%
-            purrr::map(~imputed_data_cleaning(Yt_list[[.x]], Y_colnames = Y_colnames, age = age, gender = gender))
-    } else if (method == "mice"){
-        #need to change names on the tranposed dataset so that they aren't just numbers. v for variable
-        Yt <- t(Y) %>% set_colnames(paste0("V",colnames(.)))
+    if(impute){
         
-        # Note: mice by default removes collinear values for imputation.
-            # by setting remove.collinar = FALSE, it's ignoring their relationship
-        Yt_list <- mice(Yt, m = num, seed = 1, remove.collinear = FALSE)
-        imputed_Y <- 1:num %>% purrr::map(~imputed_data_cleaning(Yt_list %>% mice::complete(.x), Y_colnames = Y_colnames, age = age, gender = gender))
-                               
+
+        #do imputation
+        if(method == "amelia"){
+            #empri ~ 8
+            if(transpose){
+                Yt_list <- amelia(t(Y), m = num, empri = empri)$imputations
+                imputed_Y <- 1:num %>% paste0('imp', .) %>%
+                    purrr::map(~imputed_data_cleaning(Yt_list[[.x]], Y_colnames = Y_colnames, age = age, gender = gender, led = led))
+            } else{
+                Yt_list <- amelia(Y, m = num, empri = empri)$imputations
+                imputed_Y <- 1:num %>% paste0('imp', .) %>%
+                    purrr::map(~imputed_data_cleaning(Yt_list[[.x]], Y_colnames = Y_colnames, age = age, gender = gender, transpose = F, led = led))
+            }
+            
+            
+        } else if (method == "mice"){
+            if(transpose){
+                #need to change names on the tranposed dataset so that they aren't just numbers. v for variable
+                Yt <- t(Y) %>% set_colnames(paste0("V",colnames(.)))
+                # Note: mice by default removes collinear values for imputation.
+                # by setting remove.collinar = FALSE, it's ignoring their relationship
+                Yt_list <- mice(Yt, m = num, seed = 1, remove.collinear = FALSE)
+                imputed_Y <- 1:num %>% purrr::map(~imputed_data_cleaning(Yt_list %>% mice::complete(.x), Y_colnames = Y_colnames, age = age, gender = gender, led = led))
+            } else {
+                Yt <- Y %>% set_colnames(paste0("V",colnames(.)))
+                # Note: mice by default removes collinear values for imputation.
+                # by setting remove.collinar = FALSE, it's ignoring their relationship
+                Yt_list <- mice(Yt, m = num, seed = 1, remove.collinear = FALSE)
+                imputed_Y <- 1:num %>% purrr::map(~imputed_data_cleaning(Yt_list %>% mice::complete(.x), Y_colnames = Y_colnames, age = age, gender = gender, transpose = F, led = led))
+            }
+        
+                          
+        }
+    } else {
+        # this is for the odd case when we're messing with missingness and don't have any. but we still want data in the same form.
+        num <- 1
+        imputed_Y <- imputed_data_cleaning(Y, Y_colnames = Y_colnames, age = age, gender = gender, transpose = F, led = led)
     }
     
     #keep gba for potential gba analysis. GBA is only non-NA for PD
@@ -461,10 +391,20 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
             select(GBAStatus) %>%
             deframe
         message("list order is Y, type, apoe, id, gba")
-        return(1:num %>% purrr::map(~list(imputed_Y[[.x]], type, apoe, id, gba)))
+        if(impute){
+            return(1:num %>% purrr::map(~list(imputed_Y[[.x]], type, apoe, id, gba)))
+        } else {
+            return(1:num %>% purrr::map(~list(imputed_Y, type, apoe, id, gba)))
+        }
+        
     }
     message("list order is Y, type, apoe, id")
-    return(1:num %>% purrr::map(~list(imputed_Y[[.x]], type, apoe, id)))
+    if (impute){
+        return(1:num %>% purrr::map(~list(imputed_Y[[.x]], type, apoe, id)))
+    } else {
+        return(1:num %>% purrr::map(~list(imputed_Y, type, apoe, id)))
+    }
+    
 }
 
 
@@ -522,7 +462,8 @@ loo_filter_and_impute <- function(index, data, method = 'mice'){
 
 
 
-v#' Attempt 2 at loo mice
+
+#' Attempt 2 at loo mice
 #' Impute with leave one out, then do loo_cvfit_glmnet
 #' Step 1: pick observation (by index paramter)
 #' Step 2: remove age from this observation
@@ -823,10 +764,179 @@ age_metabolite_p <- function(data, metabolite, var = "Age", family = "gaussian",
 
 
 
+
+
+
+############################
+
+### Reading in Data ###
+
+############################
+set.seed(1)
+# data_path <- '~/course/ND_Metabolomics/'
+# processed_files <- dir(path = data_path, pattern="^preprocessed_gotms_data*")
+# ## Most recent file
+# load(max(file.path(data_path, processed_files[grep("-20+", processed_files)])))
+# load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"))
+
+data_path <- file.path('E:', 'Projects', 'metabolomics', 'ND_Metabolomics')
+processed_files <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_gotms_data*")
+## Most recent file
+load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])))
+load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"), verbose = T)
+
+wide_data_got_og <- subject_data %>%     
+    filter(!(Type %in% c("Other"))) %>%
+    unite("Metabolite", c("Metabolite", "Mode")) %>% 
+    mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+    dplyr::select(-one_of("Raw", "RawScaled", "Trend",
+                          "RunIndex", "Name","Data File")) %>%
+    spread(key=Metabolite, value=Abundance)
+dim(wide_data_got_og)
+
+
+wide_data_rawscaled <- subject_data %>%     
+    filter(!(Type %in% c("Other"))) %>%
+    unite("Metabolite", c("Metabolite", "Mode")) %>% 
+    mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+    dplyr::select(-one_of("Raw", "Abundance", "Trend",
+                          "RunIndex", "Name","Data File")) %>%
+    spread(key=Metabolite, value=RawScaled)
+
+
+wide_data_raw <- subject_data %>%     
+    filter(!(Type %in% c("Other"))) %>%
+    unite("Metabolite", c("Metabolite", "Mode")) %>% 
+    mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+    dplyr::select(-one_of("RawScaled", "Abundance", "Trend",
+                          "RunIndex", "Name","Data File")) %>%
+    spread(key=Metabolite, value=Raw)
+
+
+
+### code snippit from Alex for better metabolite_matching
+subject_data %>% filter(Metabolite == "176 Results") %>%
+    select(Mode) %>% table
+
+#subject_data$Metabolite %>% unique
+
+feature_names <- all_matches %>% ungroup %>%
+    dplyr::rename(MetId=Name) %>% 
+    mutate(pre_diff = abs(`Precursor Ion` - PreOrig)) %>%
+    mutate(BestMatch = ifelse(pre_diff < 0.02, Metabolite, "Unknown")) %>%
+    mutate(MetaboliteName = paste(BestMatch, PreOrig, ProdOrig, MetId, Mode, sep="_")) %>%
+    dplyr::select(-Metabolite)
+
+level_key <- feature_names$MetaboliteName
+names(level_key) <- paste(feature_names$MetId, feature_names$Mode, sep="_")
+level_key <- level_key[!duplicated(names(level_key))]
+
+### End code snippit
+
+metabolite_lookup_table <- feature_names %>% 
+    select("Name" = MetId, "Metabolite" =  MetaboliteName)
+
+
+
+
+
+
+### NOTE: For lipids, need to load in new files. the GOT subject_data df is overwritten with the below lines!!
+
+processed_files_lipids <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_lipid_data*")
+## Most recent file
+load(max(file.path(data_path, 'analysis', processed_files_lipids[grep("-20+", processed_files_lipids)])))
+
+
+# processed_files_lipids <- dir(path = data_path, pattern="^preprocessed_lipid_data*")
+# load(max(file.path(data_path, processed_files_lipids[grep("-20+", processed_files_lipids)])))
+
+
+
+wide_data_lipids_og <- subject_data %>%     
+    filter(!(Type %in% c("Other"))) %>%
+    mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+    dplyr::select(-one_of("Raw", "RawScaled", "Trend", "Name", "Mode", "RunIndex")) %>%
+    spread(key=Lipid, value=Abundance) %>%
+    as_tibble(.name_repair = 'minimal')
+
+
+
+
+### untargeted data
+processed_files_untargeted <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_untargeted_data*")
+load(max(file.path(data_path, 'analysis', processed_files_untargeted[grep("-20+", processed_files_untargeted)])), verbose = T)
+
+raw_data_untargeted <- subject_data
+
+wide_data_untargeted_og <- subject_data %>%     
+    filter(!(Type %in% c("Other"))) %>%
+    unite("Metabolite", c("Metabolite", "Mode")) %>% 
+    select(Age, Gender, APOE, Type, Metabolite, Abundance, GBAStatus, GBA_T369M, Id) %>%
+    #mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+    # dplyr::select(-one_of("Raw", "RawScaled", "Trend",
+    #                       "RunIndex", "Name", 'Id')) %>%
+    spread(key=Metabolite, value=Abundance)
+
+
+
+
+
+# Targeted data
+load(file.path(data_path, 'data', 'preprocessed_csf_data.RData'), verbose =  T)
+raw_data_targeted <- subject_data
+wide_data_targeted_og <- subject_data %>%     
+    filter(!(Type %in% c("Other"))) %>%
+    unite("Metabolite", c("Metabolite", "Mode")) %>% 
+    select(Age, Gender, APOE, Type, Metabolite, Abundance, GBAStatus, GBA_T369M, Id) %>%
+    #mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+    # dplyr::select(-one_of("Raw", "RawScaled", "Trend",
+    #                       "RunIndex", "Name", 'Id')) %>%
+    spread(key=Metabolite, value=Abundance)
+
+
+#create foldid so we can test different alphas on same sets
+#set.seed(1)
+#foldid <- sample(nrow(imputed_pd_co_y))
+
+
+
+#######################################
+
+### Coering outliers to NAs ###
+
+#######################################
+wide_data_untargeted <- wide_data_untargeted_og %>% modify_outliers(subject_data)
+wide_data_targeted <- wide_data_targeted_og %>% modify_outliers(subject_data)
+wide_data <- wide_data_got_og %>% modify_outliers(subject_data)
+wide_data_lipids <- wide_data_lipids_og %>% modify_outliers(subject_data)
+
+
+
+
+#### Misc operations ####
+
+
 #get the types in our dataset (ie AD, PD, CO, ..)
 all_types <- wide_data$Type %>% 
     unique %>%
     as.character
+
+#smaller wide_data_untargeted with columns with < .9 NA
+untargeted_columns <- wide_data_untargeted %>% 
+    map_dbl(~ sum(is.na(.x))/nrow(wide_data_untargeted) < .9) %>%
+    names
+
+# There are none!
+wide_data_untargeted_dropped <- wide_data_untargeted %>%
+    select(untargeted_columns)
+
+
+wide_data_combined <- wide_data %>%
+    #remove duplicate columns
+    select(-c(Age, Type, Gender, Batch, Index, GBAStatus, GBA_T369M, cognitive_status, APOE, Type2)) %>%
+    inner_join(wide_data_lipids, by = 'Id') 
+
 
 
 
@@ -860,12 +970,12 @@ wide_data_control_lipids <- wide_data_lipids %>%
 
 ###
 #test on a single row (useful for checking to make sure it's working)
-test_row <- wide_data_pd[5,]
+#test_row <- wide_data_pd[5,]
 #want same gender, closest age, closest batch
-wide_data_control %>%
-    filter(Gender == test_row$Gender) %>%
-    filter(abs(Age - test_row$Age) == min(abs(Age - test_row$Age))) %>%
-    filter(abs(Batch - test_row$Batch) == min(abs(Batch - test_row$Batch)))
+# wide_data_control %>%
+#     filter(Gender == test_row$Gender) %>%
+#     filter(abs(Age - test_row$Age) == min(abs(Age - test_row$Age))) %>%
+#     filter(abs(Batch - test_row$Batch) == min(abs(Batch - test_row$Batch)))
 ###
 
 #write above into a function
@@ -890,12 +1000,12 @@ find_control <- function(row_num, data, data_control){
 # apply function to get pd matched controls
     #the lapply returns a list, where each element is a row, a control match
     # bind_rows will join the 1 row list together into a df, and combine it with wide_data_pd
-wide_data_matched_pd_c <- lapply(1:nrow(wide_data_pd), function(x) find_control(x, data = wide_data_pd, data_control = wide_data)) %>% 
+wide_data_matched_pd_c <- lapply(1:nrow(wide_data_pd), function(x) find_control(x, data = wide_data_pd, data_control = wide_data_control)) %>% 
     bind_rows(wide_data_pd)
 
 
 ## do the same for ad
-wide_data_matched_ad_c <- lapply(1:nrow(wide_data_ad), function(x) find_control(x, data = wide_data_ad, data_control = wide_data)) %>%
+wide_data_matched_ad_c <- lapply(1:nrow(wide_data_ad), function(x) find_control(x, data = wide_data_ad, data_control = wide_data_control)) %>%
     bind_rows(wide_data_ad)
 
 ### do the same for lipids
