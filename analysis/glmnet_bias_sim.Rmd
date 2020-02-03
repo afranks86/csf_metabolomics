@@ -1,0 +1,122 @@
+---
+title: "glmnet_bias_simulations"
+author: "Nathan Hwangbo"
+date: "2/2/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(here)
+#source(here(tarter.R))
+```
+
+```{r}
+
+prediction_plot <- function(truth, pred, title = NULL){
+  pred_table <- tibble(truth = truth, 
+                       pred = pred)
+  ggplot(pred_table) + 
+    geom_point(aes(x = truth, y = pred)) + 
+    geom_abline(slope = 1, intercept = 0) + 
+    geom_richtext(aes(x = -Inf, y = Inf, 
+                      hjust = 0, vjust = 1, 
+                      label = paste0("R^2: ", cor(truth, pred, method = "pearson")^2 %>% round(2), 
+                                     "<br>RMSE: ",
+                                     (truth - pred)^2 %>% mean %>% sqrt %>% round(2),
+                                     "<br>MAE: ",
+                                     (truth - pred) %>% abs %>% mean %>% round(2))),
+                  size = 5
+    ) + 
+    labs(title = title)
+  
+}
+
+```
+
+
+###. Creating a simple high dim dataset
+
+We form our dataset with the following properties:
+* $p >> n$
+* Noisy data (iid random features, with $y$ being a linear combination of a few)
+
+```{r}
+#set.seed(1)
+dat <- replicate(n = 7000, rnorm(200, mean = 0, sd = 1))
+colnames(dat) <- 1:7000
+train <- dat[1:100,]
+test <- dat[101:200,]
+
+relevant_x <- sample(1:7000, size = 10, replace = FALSE)
+#random_weights <- rnorm(200, mean = 10, sd = 1)
+
+weighted_x <- dat[, relevant_x] 
+# for(i in 1:ncol(weighted_x)){
+#   weighted_x[,i] <- weighted_x[,i] * random_weights[i]
+# }
+
+y <- rowSums(weighted_x)
+y_train <- y[1:100]
+y_test <- y[101:200]
+```
+
+
+
+### Running a simple glmnet procedure
+
+```{r}
+fit <- cv.glmnet(train, y_train, family = "gaussian", alpha = 0.5)
+fit_coefs <- coef(fit, s = "lambda.1se") %>%
+  as.matrix()
+(nonzero_coefs <- fit_coefs[fit_coefs[,1] != 0,])
+noise_coefs <- names(nonzero_coefs) %>% 
+  setdiff(c(relevant_x, "(Intercept)"))
+
+pred <- predict(fit, s = "lambda.1se", newx = test)
+
+prediction_plot(y_test, pred)
+```
+
+
+
+###. Post Selection Inference
+
+####. Using another glmnet
+```{r}
+new_features <- names(nonzero_coefs) %>% 
+  setdiff("(Intercept)") %>%
+  as.numeric()
+
+post_train <- train[, new_features]
+post_test <- test[,new_features]
+post_fit <- cv.glmnet(post_train, y_train, family = "gaussian", alpha = 0.5)
+post_coefs <- coef(post_fit, s = "lambda.1se") %>%
+  as.matrix()
+(post_nonzero_coefs <- post_coefs[post_coefs[,1] != 0,] %>%
+    enframe())
+
+(post_missed_coefs <- as.character(relevant_x) %>% setdiff(post_nonzero_coefs$name))
+
+post_glmnet_pred <- predict(post_fit, s = "lambda.1se", newx = post_test)
+
+prediction_plot(y_test, post_glmnet_pred)
+```
+
+
+####. Using LM
+```{r, eval = FALSE}
+post_train_df <- post_train %>% 
+  as_tibble() %>%
+  mutate(y = y_train)
+post_lm <- lm(y ~ ., data = post_train_df)
+post_coefs_lm <- coef(post_lm)
+(post_nonzero_coefs_lm <- post_coefs_lm[post_coefs_lm != 0] %>% 
+  enframe())
+
+post_lm_pred <- predict(post_lm, newdata = as_tibble(post_test))
+prediction_plot(y_test, post_lm_pred)
+
+```
+
+
