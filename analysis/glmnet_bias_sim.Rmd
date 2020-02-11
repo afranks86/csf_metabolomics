@@ -41,22 +41,25 @@ We form our dataset with the following properties:
 * $p >> n$
 * Noisy data (iid random features, with $y$ being a linear combination of a few)
 
+In particular, this example has $y$ as a linear combination of 100 features
+
 ```{r}
 #set.seed(1)
 dat <- replicate(n = 7000, rnorm(200, mean = 0, sd = 1))
-colnames(dat) <- 1:7000
+# rename columns for convenience
+colnames(dat) <- 1:ncol(dat)
+
+# train / test split
 train <- dat[1:100,]
 test <- dat[101:200,]
 
-relevant_x <- sample(1:7000, size = 10, replace = FALSE)
-#random_weights <- rnorm(200, mean = 10, sd = 1)
+## create y as a linear combination of the data xB + \epsilon
+relevant_x <- sample(1:ncol(dat), size = 100, replace = FALSE)
+random_weights <- rnorm(100, mean = 100, sd = 100)
+epsilon <- rnorm(200, mean = 0, sd = 1)
+y <- dat[,relevant_x] %*% as.matrix(random_weights) + epsilon
 
-weighted_x <- dat[, relevant_x] 
-# for(i in 1:ncol(weighted_x)){
-#   weighted_x[,i] <- weighted_x[,i] * random_weights[i]
-# }
-
-y <- rowSums(weighted_x)
+# train/test split
 y_train <- y[1:100]
 y_test <- y[101:200]
 ```
@@ -65,11 +68,14 @@ y_test <- y[101:200]
 
 ### Running a simple glmnet procedure
 
+* somehow, this doesn't work properly! fails when $y$ is a linear combo of many predictors.
+* can change `lambda.1se` to `lambda.min`. changes results, but not by much.
 ```{r}
 fit <- cv.glmnet(train, y_train, family = "gaussian", alpha = 0.5)
 fit_coefs <- coef(fit, s = "lambda.1se") %>%
   as.matrix()
-(nonzero_coefs <- fit_coefs[fit_coefs[,1] != 0,])
+# see how many coefs are nonzero
+(nonzero_coefs <- fit_coefs[fit_coefs[,1] != 0,] %>% length)
 noise_coefs <- names(nonzero_coefs) %>% 
   setdiff(c(relevant_x, "(Intercept)"))
 
@@ -119,4 +125,24 @@ prediction_plot(y_test, post_lm_pred)
 
 ```
 
+
+In case we want to use our data. need to do imputation before any fitting.
+```{r}
+# dat <- wide_data_untargeted %>%
+#   select(-1:-7)
+# 
+# colnames(dat) <- 1:ncol(dat)
+# train <- dat[1:100,]
+# test <- dat[101:198,]
+
+
+# alt way to assign weights
+
+# weighted_x <- dat[, relevant_x] 
+# for(i in 1:ncol(weighted_x)){
+#   weighted_x[,i] <- weighted_x[,i] * random_weights[i]
+# }
+# 
+# y <- rowSums(weighted_x)
+```
 
