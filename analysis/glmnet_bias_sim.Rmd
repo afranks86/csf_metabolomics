@@ -8,12 +8,16 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(here)
+library(patchwork)
+library(glmnet)
+library(tidyverse)
+library(ggtext)
 #source(here(tarter.R))
 ```
 
 ```{r}
 
-prediction_plot <- function(truth, pred, title = NULL){
+prediction_plot <- function(truth, pred, title = NULL, num_sig, num_missed, num_noise, num_nonzero){
   pred_table <- tibble(truth = truth, 
                        pred = pred)
   ggplot(pred_table) + 
@@ -25,7 +29,13 @@ prediction_plot <- function(truth, pred, title = NULL){
                                      "<br>RMSE: ",
                                      (truth - pred)^2 %>% mean %>% sqrt %>% round(2),
                                      "<br>MAE: ",
-                                     (truth - pred) %>% abs %>% mean %>% round(2))),
+                                     (truth - pred) %>% abs %>% mean %>% round(2),
+                                     "<br># Retained: ",
+                                     num_nonzero,
+                                     "<br># Missed: ",
+                                     num_missed %>% round(2),
+                                     "<br># False Positives: ",
+                                     num_noise %>% round(2))),
                   size = 5
     ) + 
     labs(title = title)
@@ -45,7 +55,7 @@ In particular, this example has $y$ as a linear combination of 100 features
 
 ```{r}
 #set.seed(1)
-dat <- replicate(n = 7000, rnorm(200, mean = 0, sd = 1))
+dat <- replicate(n = 1000, rnorm(200, mean = 0, sd = 1))
 # rename columns for convenience
 colnames(dat) <- 1:ncol(dat)
 
@@ -53,10 +63,14 @@ colnames(dat) <- 1:ncol(dat)
 train <- dat[1:100,]
 test <- dat[101:200,]
 
+# add singular values as weights
+singular_values <- svd(train)$d 
+
 ## create y as a linear combination of the data xB + \epsilon
 relevant_x <- sample(1:ncol(dat), size = 100, replace = FALSE)
-random_weights <- rnorm(100, mean = 100, sd = 100)
-epsilon <- rnorm(200, mean = 0, sd = 1)
+# dot prod
+random_weights <- rnorm(100, mean = 1, sd = 10) * test_weights
+epsilon <- rnorm(200, mean = 0, sd = 5)
 y <- dat[,relevant_x] %*% as.matrix(random_weights) + epsilon
 
 # train/test split
@@ -131,9 +145,135 @@ In case we want to use our data. need to do imputation before any fitting.
 # dat <- wide_data_untargeted %>%
 #   select(-1:-7)
 # 
-# colnames(dat) <- 1:ncol(dat)
-# train <- dat[1:100,]
-# test <- dat[101:198,]
+#load(file = here::here("untargeted_all_amelia5.RData"))
+#load(file = here::here("imputed_c_untargeted5.RData"))
+#load(file = here::here())
+
+#imputed_untargeted <- filter_and_impute_multi(wide_data_untargeted, c('CO', 'CY', 'CM', 'AD', 'PD'), empri = 200, num = 1)
+
+
+
+sim_post_model <- function(num_sig, mu_weight = 50 / num_sig, sigma_weight = 1, mu_eps = 0, sigma_eps = 3, alpha = 0.5){
+  set.seed(1)
+  random_shuffle <- sample(1:198, size = 198, replace = F)
+  untar_dat <- imputed_untargeted[[1]][[1]][random_shuffle,]
+  # get rid of metadata columns
+  untar_dat <- untar_dat[,-which(colnames(untar_dat) %in% c("Age", "GenderM", "(Intercept)"))]
+  
+  
+  colnames(untar_dat) <- 1:ncol(untar_dat)
+  train <- untar_dat[1:100,]
+  test <- untar_dat[101:198,]
+  
+  ## create y as a linear combination of the data xB + \epsilon
+  relevant_x <- sample(1:ncol(untar_dat), size = num_sig, replace = FALSE)
+  random_weights <- rnorm(num_sig, mean = mu_weight, sd = sigma_weight)
+  epsilon <- rnorm(nrow(untar_dat), mean = mu_eps, sd = sigma_eps)
+  y <- 50 + untar_dat[,relevant_x] %*% as.matrix(random_weights) + epsilon
+  
+  # train/test split
+  y_train <- y[1:100]
+  y_test <- y[101:198]
+  
+  fit <- cv.glmnet(train, y_train, family = "gaussian", alpha = alpha, nlambda = 200)
+  fit_coefs <- coef(fit, s = "lambda.min") %>%
+    as.matrix()
+  # see how many coefs are nonzero
+  nonzero_coefs <- fit_coefs[fit_coefs[,1] != 0,] %>% 
+    names() %>% 
+    setdiff("(Intercept)") 
+  #nonzero_coefs %>% length
+  
+  noise_coefs <- nonzero_coefs %>% 
+    setdiff(c(relevant_x, "(Intercept)"))
+  # correct_coefs <- names(nonzero_coefs) %>%
+  #   intersect(relevant_x)
+  
+  round1_pred <- predict(fit, s = "lambda.min", newx = test)
+  
+  round1_pred_plot <- prediction_plot(y_test, round1_pred, 
+                                      num_sig = num_sig, 
+                                      num_nonzero = length(nonzero_coefs),
+                                      num_missed = length(setdiff(relevant_x, nonzero_coefs)), 
+                                      num_noise = length(noise_coefs),
+                                      title = "Round 1")
+  
+  # features for post selection inference.
+  new_features <- nonzero_coefs %>%
+    as.numeric()
+  
+  post_train <- train[, new_features]
+  post_test <- test[,new_features]
+  post_fit <- cv.glmnet(post_train, y_train, family = "gaussian", alpha = alpha)
+  post_coefs <- coef(post_fit, s = "lambda.min") %>%
+    as.matrix()
+  post_nonzero_coefs <- post_coefs[post_coefs[,1] != 0,] %>%
+    enframe() %>%
+    pull(name) %>%
+    setdiff("(Intercept)")
+  
+  post_noise = intersect(post_nonzero_coefs, noise_coefs)
+  post_missed_coefs <- as.character(relevant_x) %>% setdiff(post_nonzero_coefs)
+  
+  post_glmnet_pred <- predict(post_fit, s = "lambda.min", newx = post_test)
+  
+  post_pred_plot <- prediction_plot(y_test, post_glmnet_pred, 
+                                    num_sig = num_sig, 
+                                    num_nonzero = length(post_nonzero_coefs),
+                                    num_missed = length(setdiff(relevant_x, post_nonzero_coefs)),
+                                    num_noise = length(post_noise),
+                                    title = "Post Selection")
+  
+  # list(true_nonzero = relevant_x,
+  #      plot = round1_pred_plot + post_pred_plot,
+  #      round1_nonzero = nonzero_coefs,
+  #      post_nonzero = post_nonzero_coefs
+  #      )
+  list(round1_nonzero = nonzero_coefs,
+       post_nonzero = post_nonzero_coefs,
+       true_x = relevant_x,
+       y = y,
+       round1_noise = noise_coefs %>% length,
+       post_noise = post_noise %>% length,
+       plot = round1_pred_plot + post_pred_plot + plot_annotation(title = str_glue("{num_sig} Significant Predictors")),
+       results = tibble(num_sig = rep(num_sig, times = 2),
+                        round = c("round1", "post"),
+                     rmse = c((y_test - round1_pred)^2 %>% mean %>% sqrt, (y_test - post_glmnet_pred)^2 %>% mean %>% sqrt),
+                     num_nonzero = c(length(nonzero_coefs), length(post_nonzero_coefs)),
+                     num_missed = c(length(setdiff(relevant_x, nonzero_coefs)), length(setdiff(relevant_x, post_nonzero_coefs))),
+                     num_fp = c(length(noise_coefs),length(post_noise)),
+                     miss_fp_ratio = num_missed / num_fp
+                     )
+       )
+  
+}
+
+hmmm <- sim_post_model(1000, sigma_weight = 5, sigma_eps = 1)
+
+
+post_models_half <- purrr::map(seq(5,1000, 5), ~sim_post_model(.x))
+post_table_half <- purrr::map(post_models_half, ~.x$results) %>% bind_rows
+
+# post_table_half %>%
+#   pivot_wider(names_from = round, values_from = -c(round, num_sig)) %>%
+#   mutate(miss_fp_ratio_round1 = (num_missed_round1 + 1) / (num_fp_round1 + 1),
+#          miss_fp_ratio_post = (num_missed_post + 1) / (num_fp_post + 1)) %>%
+#   pivot_longer(-num_sig, names_to = c("colum", "round"), names_pattern = "(num|rmse.*)_(.*)")
+
+post_models_half[[200]]$plot
+post_models_half[[1]]$plot
+
+ggplot(post_table_half) + 
+  geom_smooth(aes(num_sig, rmse, color = round))
+
+ggplot(post_table_half) +
+  geom_smooth(aes(num_sig, num_nonzero, color = round))
+
+ggplot(post_table_half) + 
+  geom_smooth(aes(num_sig, num_fp, color = round))
+
+ggplot(post_table_half) +
+  geom_smooth(aes(num_sig, miss_fp_ratio, color = round))
 
 
 # alt way to assign weights
@@ -144,5 +284,22 @@ In case we want to use our data. need to do imputation before any fitting.
 # }
 # 
 # y <- rowSums(weighted_x)
+
+# 
+# post_models_2 <- purrr::map(seq(0, 1, 0.1), ~sim_post_model(300, alpha = .x))
+# post_table_2 <- purrr::map(post_models_2, ~.x$results) %>% bind_rows
+# 
+# post_models_2[[10]]$plot
+# post_models_2[[1]]$plot
+# 
+# ggplot(post_table_2) +
+#   geom_smooth(aes(num_sig, rmse, color = round))
+# 
+# ggplot(post_table_2) +
+#   geom_smooth(aes(num_sig, num_nonzero, color = round))
+# 
+# ggplot(post_table_2) +
+#   geom_smooth(aes(num_sig, num_fp, color = round))
+
 ```
 

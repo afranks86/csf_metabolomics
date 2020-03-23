@@ -109,7 +109,6 @@ source(here("analysis/utility.R"))
 theme_set(theme_bw(base_size = 20))
 
 
-
 ############################
 
 ### Helper Functions ###
@@ -248,8 +247,11 @@ imputed_data_cleaning <- function(Yt, Y_colnames, age, gender, transpose = T, le
                           #"Data File",  (not found in dataset, so removed)
                           "Index", "GBAStatus",  "Id",
                           "GBA_T369M", "cognitive_status")) %>% 
+        # get rid of metabolite concentration columns with age cor < 0.1
+        dplyr::select_if(function(x) !is.numeric(x) ||  abs(cor(x, Y_tmp$Age)) > .3) %>%
         #convert factors to dummmies (1 if male, 0 if female)
         model.matrix(~., .)
+    
 
     colnames(Y) <- str_replace_all(colnames(Y), '`', '') %>%
         str_replace_all('\\\\', '')
@@ -285,7 +287,7 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
     if(include_led == TRUE){
         led <- filtered$led
     } else {
-        include_led <- NULL
+        led <- NULL
     }
     
     
@@ -326,8 +328,10 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
         #select_if(function(x) any(!is.na(x))) %>%
         # remove columns with > 90% NA
         select_if(function(x) sum(is.na(x))/nrow(filtered_features) < .9) %>%
-        # remove columns that are
+        # remove rows that are totally NA
         janitor::remove_empty('rows') %>%
+        # scale the data before imputation so that imputed values don't impact scale
+        transmute_all(function(x) scale(x, center = T, scale = T)) %>%
         # need to use model.matrix to get the factors to turn into dummies (otherwise they're treated as numeric)
             # it would be nice we if could keep the factors for mice, but it won't work because we need to transpose
         # need to use model.matrix.lm to get the na.action argument to ignore na
@@ -388,7 +392,7 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
         gba <- filtered %>%
             mutate(GBAStatus = as.factor(case_when(GBA_T369M == 'CT' ~ 'CT', 
                                                    TRUE ~ GBAStatus))) %>%
-            select(GBAStatus) %>%
+            dplyr::select(GBAStatus) %>%
             deframe
         message("list order is Y, type, apoe, id, gba")
         if(impute){
@@ -658,7 +662,7 @@ fpr_tpr <- function(pred, label, label_ordering = NULL){
 # numbers are not on any kind of scale, but give some idea of relative importance\
 #metabolites is a flag for determining whether we need to map names to their metabolite name.
 importance <- function(fit, metabolites = TRUE){
-    coefficients <- coef(fit, s = 'lambda.min') %>% 
+    coefficients <- coef(fit, s = 'lambda.1se') %>% 
         as.matrix
     #order the coefficients for weak measure of importance, and remove coefs with 0 coeff
     #coefficients_sorted <- coefficients[order(abs(coefficients), decreasing = TRUE) & abs(coefficients) > 0,]

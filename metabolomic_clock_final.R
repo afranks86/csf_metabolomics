@@ -546,8 +546,9 @@ message("Targeted -------------------------------------------")
 
 imputed_c_targeted5 <- filter_and_impute_multi(wide_data_targeted, c('CO', 'CY', 'CM'))
 targeted_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_targeted5, name = "Targeted", color = NULL, imp_num = .x))
-
+#save(targeted_pred_df, file = "targeted_age_analysis_02032020.RData")
 targeted_pred_df <- imputation_df(targeted_age_analysis)
+
 
 (targeted_age_predtruth <- predtruth_plot(targeted_pred_df, name = "Targeted")) 
 ggsave(filename = "age_clock_targeted_pred.png") #14.9 x 8.21
@@ -561,6 +562,135 @@ targeted_in_all <- targeted_age_analysis %>%
   reduce(intersect) %>%
   setdiff("(Intercept)")
 
+ 
+#### wild test
+m_targeted <- wide_data_targeted %>% 
+  select_if(is.numeric) %>%
+  select(-Age)
+
+
+m_age <- wide_data_untargeted$Age
+
+m_targeted %>%
+  select_if(function(x) abs(cor(x, m_age)) > 0.3)
+
+cor(m_age, m_targeted[,1])
+for(i in 1:ncol(m_targeted)){
+  if(abs(cor(m_targeted[,i], m_age)) > 0.3){
+    m_
+  }
+}
+
+mt_untargeted <- wide_data_untargeted %>%
+  select_if(is.numeric) %>%
+  select(-Age) %>%
+  transmute_all(function(x) scale(x, center = T, scale = T) %>% Hmisc::impute()) 
+
+# mt_imp <- amelia(t(mt_untargeted), empri = 10000000)
+mt_imp <- mice(t(mt_untargeted))
+# 1:5 %>%
+#   purrr::map(~ complete(mt_imp, .x) %>%
+#                t %>%
+#                as_tibble() %>%
+mt_untargeted %>%
+  transmute_all(function(x) abs(cor(x, m_age))) %>% 
+  slice(1) %>% 
+  gather() %>% 
+  ggplot() + 
+  geom_histogram(aes(value)) #%>%
+  #cowplot::plot_grid(plotlist = .)
+
+
+
+
+
+untar_tiny <- wide_data_untargeted %>% select(setdiff(untargeted_in_at_least_one, "GenderM"), Age, Gender, Type, APOE, Id, GBA_T369M, GBAStatus)
+imp_untar_tiny <- filter_and_impute_multi(untar_tiny, c("CO", "CY", "CM"), transpose = F, empri = 200)
+untar_tiny_age_analysis <- purrr::map(1:5, ~age_control_analysis(imp_untar_tiny, name = "untargeted tiny", color = NULL, imp_num = .x, nlambda = 200))
+untar_tiny_pred_df <- imputation_df(untar_tiny_age_analysis)
+(untar_tiny_age_predtruth <- predtruth_plot(untar_tiny_pred_df, name = "untar tiny"))
+untar_tiny_avg_retained <- untar_tiny_age_analysis %>% 
+  purrr::map(~.x[[2]] %>% setdiff("(Intercept)") %>% length) %>% 
+  unlist %>% mean
+
+untar_tiny_in_all <- untar_tiny_age_analysis %>% 
+  purrr::map(~.x[[2]] %>% names) %>% 
+  reduce(intersect) %>%
+  reduce(c) %>%
+  setdiff("(Intercept)")
+
+
+
+untar_tiny_ad_amelia5 <- filter_and_impute_multi(untar_tiny, c('AD'), empri = 100)
+untar_tiny_pd_amelia5 <- filter_and_impute_multi(untar_tiny, c('PD'), empri = 100)
+untar_tiny_adpd_separate_amelia5 <- purrr::map2(untar_tiny_ad_amelia5, untar_tiny_pd_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE))
+untar_tiny_adpd_age_analysis_separate <- 1:5 %>% purrr::map(~full_model_new_data(imp_untar_tiny[[.x]], new_data = untar_tiny_adpd_separate_amelia5[[.x]], nlambda = 200))
+untar_tiny_adpd_pred_df_separate <- imputation_df(untar_tiny_adpd_age_analysis_separate)
+(untar_tiny_adpd_age_predtruth <- predtruth_plot(untar_tiny_adpd_pred_df_separate, name = "untar tiny adpd"))
+
+# match
+untar_tiny_adpd_matched_controls <- purrr::map(1:nrow(untar_tiny), ~find_control(.x, data = filter(untar_tiny, Type %in% c("AD", "PD")), 
+                                                                                           data_control = filter(untar_tiny, Type %in% c("CO", "CY", "CM")))) %>%
+  bind_rows(filter(untar_tiny, Type %in% c("AD", "PD"))) %>%
+  distinct(.keep_all = T)
+
+# imputation_df() expects a list of lists, but only uses the first element of the inner list. so we add a random "1" to the output. doesn't do anything.
+untar_tiny_c_matched_age_analysis_table <- purrr::map(untar_tiny_age_analysis, ~list(.x[[1]] %>% filter(id %in% untar_tiny_adpd_matched_controls$Id), 1))
+untar_tiny_c_matched_age_pred_df <- imputation_df(untar_tiny_c_matched_age_analysis_table)
+
+(untar_tiny_c_matched_age_predtruth <- predtruth_plot(untar_tiny_c_matched_age_pred_df, name = "untar_tiny (matched)", color = NULL))
+
+##### random n features
+
+random_n_features_analysis <- function(n){
+  untar_random_100_features <- wide_data_untargeted %>%
+    names %>%
+    setdiff(c("Age", "Gender", "Type", "APOE", "Id", "GBA_T369M", "GBAStatus")) %>%
+    base::sample(size = n, replace = F)
+  
+  untar_tiny_random <- wide_data_untargeted %>% 
+    select(untar_random_100_features, Age, Gender, Type, APOE, Id, GBA_T369M, GBAStatus)
+  
+  imp_untar_tiny_random <- filter_and_impute_multi(untar_tiny_random, c("CO", "CY", "CM"), transpose = T, empri = 200)
+  untar_tiny_random_age_analysis <- purrr::map(1:5, ~age_control_analysis(imp_untar_tiny_random, name = "untargeted tiny random 100", color = NULL, imp_num = .x, nlambda = 200))
+  untar_tiny_random_pred_df <- imputation_df(untar_tiny_random_age_analysis)
+  untar_tiny_random_age_predtruth <- predtruth_plot(untar_tiny_random_pred_df, name = paste("untar tiny", n))
+  
+  untar_tiny_random_age_predtruth
+  
+}
+
+
+random_100_features <- purrr::map(1:3, ~random_n_features_analysis(100))
+random_200_features <- purrr::map(1:3, ~random_n_features_analysis(200))
+random_500_features <- purrr::map(1:3, ~random_n_features_analysis(500))
+random_1000_features <- purrr::map(1:3, ~random_n_features_analysis(1000))
+random_2000_features <- purrr::map(1:3, ~random_n_features_analysis(2000))
+random_3000_features <- purrr::map(1:3, ~random_n_features_analysis(3000))
+
+
+cowplot::plot_grid(plotlist = random_100_features)
+cowplot::plot_grid(plotlist = random_200_features)
+cowplot::plot_grid(plotlist = random_500_features)
+cowplot::plot_grid(plotlist = random_1000_features)
+cowplot::plot_grid(plotlist = random_2000_features)
+cowplot::plot_grid(plotlist = random_3000_features)
+
+
+# match
+untar_tiny_random_adpd_matched_controls <- purrr::map(1:nrow(untar_tiny_random), ~find_control(.x, data = filter(untar_tiny_random, Type %in% c("AD", "PD")), 
+                                                                                 data_control = filter(untar_tiny_random, Type %in% c("CO", "CY", "CM")))) %>%
+  bind_rows(filter(untar_tiny_random, Type %in% c("AD", "PD"))) %>%
+  distinct(.keep_all = T)
+
+# imputation_df() expects a list of lists, but only uses the first element of the inner list. so we add a random "1" to the output. doesn't do anything.
+untar_tiny_random_c_matched_age_analysis_table <- purrr::map(untar_tiny_random_age_analysis, ~list(.x[[1]] %>% filter(id %in% untar_tiny_random_adpd_matched_controls$Id), 1))
+untar_tiny_random_c_matched_age_pred_df <- imputation_df(untar_tiny_random_c_matched_age_analysis_table)
+
+(untar_tiny_random_c_matched_age_predtruth <- predtruth_plot(untar_tiny_random_c_matched_age_pred_df, name = "untar_tiny_random (matched)", color = NULL))
+
+
+
 
 #######
 
@@ -571,8 +701,10 @@ targeted_in_all <- targeted_age_analysis %>%
 message("untargeted -------------------------------------------")
 
 imputed_c_untargeted5 <- filter_and_impute_multi(wide_data_untargeted, c('CO', 'CY', 'CM'), empri = 8)
+#save(imputed_c_untargeted5, file = "imputed_c_untargeted5_03022020")
 # lambdas were reaching the end of their sequence due to hugeness of data, so we increase nlambda from 100 to 200
 untargeted_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_untargeted5, name = "untargeted", color = NULL, imp_num = .x, nlambda = 200))
+#save(untargeted_age_analysis, file = "untargeted_age_analysis_02032020.RData")
 
 untargeted_pred_df <- imputation_df(untargeted_age_analysis)
 
@@ -586,6 +718,11 @@ untargeted_avg_retained <- untargeted_age_analysis %>%
 untargeted_in_all <- untargeted_age_analysis %>% 
   purrr::map(~.x[[2]] %>% names) %>% 
   reduce(intersect) %>%
+  setdiff("(Intercept)")
+
+untargeted_in_at_least_one <- untargeted_age_analysis %>%
+  purrr::map(~.x[[2]] %>% names) %>% 
+  reduce(c) %>%
   setdiff("(Intercept)")
 
 #plot colored by different things
@@ -1044,8 +1181,8 @@ message("Untargeted ADPD full model -------------------------------------------"
 
 # combine controls with AD/PD imputation. include indicators for AD/PD as predictors
 untargeted_all_amelia5 <- purrr::map2(imputed_c_untargeted5, untargeted_adpd_separate_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE, add_AD_ind = TRUE, add_PD_ind = TRUE))
-
-
+#
+#save(untargeted_all_amelia5, file = "untargeted_all_amelia5.RData")
 untargeted_all_age_analysis <- purrr::map(1:5, ~age_control_analysis(untargeted_all_amelia5, name = "untargeted (all)", color = NULL, imp_num = .x, nlambda = 200))
 
 untargeted_all_pred_df <- imputation_df(untargeted_all_age_analysis)
@@ -1620,6 +1757,41 @@ c_conc_rf_fullnames <- concentration_rf_plot(untargeted_univariate_c_conc_age_sc
 
 #####
 
+
+# Looking by missingness by type and Dataset
+percent_missing_by_type <- function(data, name){
+  missing <- data %>% 
+    group_by(Type) %>%
+    group_map(~sum(is.na(.x)) / prod(dim(.x)))
+  
+  tibble(
+    "source" = name,
+    "CY" = missing[[4]], 
+    "CM" = missing[[2]],
+    "CO" = missing[[3]],
+    "AD" = missing[[1]],
+    "PD" = missing[[5]]
+  )
+}
+
+data_sources <- list(wide_data, wide_data_lipids, wide_data_targeted, wide_data_untargeted)
+data_names <- list("GOT", "Lipids", "Targeted", "Untargeted")
+pct_missing_data <- purrr::map2(data_sources, data_names, ~percent_missing_by_type(.x, .y)) %>%
+  bind_rows %>%
+  gather(key = "Type", value = "pct_missing", -source) %>%
+  mutate(Type = factor(Type, levels = c("CY", "CM", "CO", "AD", "PD")))
+
+
+ggplot(pct_missing_data) + 
+  geom_col(aes(x = source, y= pct_missing, fill = Type), position = 'dodge') +
+  labs(title = "Percent Missingness by dataset by type",
+       x = "Dataset",
+       y = "Percent Missing")
+
+
+
+# Run chi squared test on missingness between the five types
+
 #get sample size by type
 n_by_type_untargeted <- wide_data_untargeted %>%
   group_by(Type) %>% 
@@ -1641,7 +1813,7 @@ missingness_by_type_untargeted_pct <- wide_data_untargeted %>%
 
 
 
-missingness_by_type_all <- reduce(missingness_by_type_untargeted_counts, inner_join, by = 'name') %>%
+missingness_by_type_all <- purrr::reduce(missingness_by_type_untargeted_counts, inner_join, by = 'name') %>%
   #set the names to show type
   set_names(c('name', paste('num_missing',levels(droplevels(wide_data_untargeted$Type)), sep = '_'))) %>%
   dplyr::filter(!(name %in% c('GBAStatus', 'cognitive_status', 'GBA_T369M'))) %>%
@@ -1656,7 +1828,8 @@ missingness_by_type_all <- reduce(missingness_by_type_untargeted_counts, inner_j
   #filter(reduce(list(pct_missing_AD, pct_missing_CM,pct_missing_CO,pct_missing_CY,pct_missing_PD), `==`)) %>%
   rowwise() %>%
   #mutate(p_value = (prop.test(x =  str_subset(names(.), 'num_missing'), n = str_subset(names(.), 'n_')))$p.value)
-  dplyr::mutate(p_value = (prop.test(x = c(num_missing_AD, num_missing_CM, num_missing_CO, num_missing_CY, num_missing_PD), n = c(n_AD,n_CM,n_CO,n_CY,n_PD)))$p.value) %>%
+  dplyr::mutate(p_value = (prop.test(x = c(num_missing_AD, num_missing_CM, num_missing_CO, num_missing_CY, num_missing_PD), 
+                                     n = c(n_AD,n_CM,n_CO,n_CY,n_PD)))$p.value) %>%
   cbind('bh_q_value' = p.adjust(.$p_value, method = 'BH')) %>%
   dplyr::filter(bh_q_value < 0.01) %>%
   gather('Type', 'pct_missing', contains('pct_missing')) %>%
@@ -1675,6 +1848,69 @@ ggplot(missingness_by_type_all, aes(pct_missing, name)) +
 
 # correlation between missingness and the significant metabolites?
 untargeted_10subset_in_all
+
+
+
+#### Fitting a series of univariate missingness ~ metabolite + Gender tests ------------------------------------
+
+#' Returns list of overall p value, p value for gender, p value for age only.
+#' @param data is must have some NA
+#' @param form is a formula for the logistic regression
+#' @param metabolite is lipid/metabolite, as a string
+missingness_metabolite_p <- function(data, form, metabolite){
+  metabolite <- sym(metabolite)
+  df <- data %>% 
+    mutate(missing = ifelse(is.na(eval(metabolite)), 1, 0))
+  
+  fit <- glm(form, data = df, family = 'binomial', maxit = 100)
+  null_fit <- glm(missing ~ 1, data = df, family = 'binomial', maxit = 100)
+  
+  #need to manually get an overall p value from the logistic regression, by comparing dispersion to null model
+  compare <- anova(fit, null_fit, test = 'Chisq')
+  
+  overall_p <- compare$`Pr(>Chi)`[2]
+  # -1 removes intercept
+  individual_p <- summary(fit)$coefficients[-1,'Pr(>|z|)'] %>% as.list
+  c('overall' = overall_p, individual_p)
+  
+}
+
+na_univar_table <- function(data){
+  missingness_some_na_names_untargeted <- data %>% 
+    #leaving only metabolites/lipids
+    dplyr::select(-one_of("Type", "Gender", "Age", "APOE", "GBAStatus", "Id", 
+                          "GBA_T369M")) %>%
+    #need at least one NA, but not all NA
+    dplyr::select_if(function(x) any(is.na(x)) & !all(is.na(x))) %>%
+    names
+  
+  form_missing_genderAge <- formula(missing~Gender + Age)
+  missingness_overall_p_values_untargeted <- purrr::map(missingness_some_na_names_untargeted, ~missingness_metabolite_p(data, form_missing_genderAge, .x)[[1]]) %>%
+    unlist
+  missingness_age_p_values_untargeted <- purrr::map(missingness_some_na_names_untargeted, ~missingness_metabolite_p(data, form_missing_genderAge, .x)[[2]]) %>%
+    unlist
+  missingness_gender_p_values_untargeted <- purrr::map(missingness_some_na_names_untargeted, ~missingness_metabolite_p(data, form_missing_genderAge, .x)[[3]]) %>%
+    unlist
+  
+  
+  #bh corrected controls for false discovery rate.
+  missingness_p_table_untargeted <- bind_cols('name' = missingness_some_na_names_untargeted, 
+                                              'og_overall_p_value' = missingness_overall_p_values_untargeted,
+                                              'og_age_p_value' = missingness_age_p_values_untargeted,
+                                              'og_gender_value' = missingness_gender_p_values_untargeted,
+                                              'bh_overall_q_value' = p.adjust(missingness_overall_p_values_untargeted, method = 'BH'),
+                                              'bh_age_q_value' = p.adjust(missingness_age_p_values_untargeted, method = 'BH'),
+                                              'bh_gender_q_value' = p.adjust(missingness_gender_p_values_untargeted, method = 'BH'))
+  
+}
+
+
+
+
+#### Fitting a missingness model with a 1/0 matrix ---------------------------------------
+
+
+
 
 
 

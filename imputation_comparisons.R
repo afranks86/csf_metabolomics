@@ -1,10 +1,10 @@
-lipids_age <- function(imp){
+lipids_age <- function(imp, method = "amelia"){
   num_controls_lipids <- wide_data_lipids %>%
     filter(Type %in% c("CY", "CM", "CO")) %>% 
     nrow
   
   
-  fitpred_lipids_separate_loo_age <- lapply(1:num_controls_lipids, function(x) impute_c_loo_cvfit_glmnet(x, wide_data_lipids, alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE, imp_num = imp))
+  fitpred_lipids_separate_loo_age <- lapply(1:num_controls_lipids, function(x) impute_c_loo_cvfit_glmnet(x, wide_data_lipids, alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE, imp_num = imp, method = method))
   
   fit_lipids_separate_loo_age <- lapply(fitpred_lipids_separate_loo_age, function(x) x[[1]])
   pred_lipids_separate_loo_age <- lapply(fitpred_lipids_separate_loo_age, function(x) x[[2]]) %>%
@@ -95,5 +95,7 @@ ggplot(lipids_df) +
   
   
 
-  
+
+
+lipids_list_mice <- list(lipids_age(1, method = "mice"), lipids_age(2, method = "mice"), lipids_age(3, method = "mice"))
 
