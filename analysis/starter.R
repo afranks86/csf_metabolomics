@@ -74,15 +74,15 @@
 library(tidyverse)
 library(ggExtra)
 library(magrittr)
-library(microbenchmark)
+library(ggridges)
+#library(microbenchmark)
 #library(mvtnorm)
 #library(mvnfast)
 #library(rstiefel)
 #library(mgCov)
-library(Amelia)
+library(Amelia) # imputation
 library(modelr)
 #library(robust)
-library(ggridges)
 library(Matrix)
 #library(car)
 #library(patchwork)
@@ -100,13 +100,19 @@ library(mice)
 library(furrr)
 library(gghighlight)
 library(ggtext)
-library(ggridges)
 library(ggforce)
 library(denoiseR)
+library(ropls)
+library(vctrs)
+library(scales)
+
 source(here("analysis/utility.R"))
 
 
-theme_set(theme_bw(base_size = 20))
+theme_set(theme_bw(base_size = 30) #+
+              #theme(axis.title.x = element_text(size = 24),
+              #      axis.title.y = element_text(size = 24))
+          )
 
 
 ############################
@@ -248,7 +254,7 @@ imputed_data_cleaning <- function(Yt, Y_colnames, age, gender, transpose = T, le
                           "Index", "GBAStatus",  "Id",
                           "GBA_T369M", "cognitive_status")) %>% 
         # get rid of metabolite concentration columns with age cor < 0.1
-        dplyr::select_if(function(x) !is.numeric(x) ||  abs(cor(x, Y_tmp$Age)) > .3) %>%
+        #dplyr::select_if(function(x) !is.numeric(x) ||  abs(cor(x, Y_tmp$Age)) > .3) %>%
         #convert factors to dummmies (1 if male, 0 if female)
         model.matrix(~., .)
     
@@ -260,13 +266,20 @@ imputed_data_cleaning <- function(Yt, Y_colnames, age, gender, transpose = T, le
 
 }
 
+#' scale column (with name) of df_to_scale by subtracting the mean and dividng sd of same col in df_for_ref 
+scale_data <- function(col_to_scale, df_for_ref, name){
+    col_for_ref <- df_for_ref %>% pull(name)
+    
+    (col_to_scale - mean(col_for_ref, na.rm = T)) / sd(col_for_ref, na.rm = T)
+}
+
 
 #' filter type and impute using amelia/mice. Removes columns with > 90% missingness
 #' type is a vector of strings, one of the levels of type
 #' empri is the argument to amelia to set ridge prior. makes it easier to converge
 #' @param AD_ind/PD_ind optional flag to add ad/pd indicators to the features.
 filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, empri = 100, AD_ind = FALSE, PD_ind = FALSE, transpose = T, impute = T, replace_zeroes = T, include_led = F){
-    
+    set.seed(1)
     filtered <- data %>%
         filter(Type %in% types)
     
@@ -323,21 +336,51 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
         filtered_features <- filtered_features %>%
             mutate_all(~replace(., .==0, NA))
     }
-    Y <- filtered_features %>% 
-        #remove columns that are ALL NA
-        #select_if(function(x) any(!is.na(x))) %>%
-        # remove columns with > 90% NA
-        select_if(function(x) sum(is.na(x))/nrow(filtered_features) < .9) %>%
-        # remove rows that are totally NA
-        janitor::remove_empty('rows') %>%
-        # scale the data before imputation so that imputed values don't impact scale
-        transmute_all(function(x) scale(x, center = T, scale = T)) %>%
-        # need to use model.matrix to get the factors to turn into dummies (otherwise they're treated as numeric)
+    
+    # we want to make sure scaling the data happens on controls, and then is applied to ad/pd
+    # so this if statement checks if we're imputing AD/PD, while making sure that at least some controls are in the data (ndistinct > 2)
+    if(all("PD" %in% types | "AD" %in% types & n_distinct(data$Type) > 2)){
+        
+        c_data <- data %>%
+            filter(Type %in% c("CO", "CY", "CM"))
+        
+        
+        Y_filtered <- filtered_features %>% 
+            #remove columns that are ALL NA
+            #select_if(function(x) any(!is.na(x))) %>%
+            # remove columns with > 50% NA
+            select_if(function(x) sum(is.na(x))/nrow(filtered_features) < .5) %>%
+            # remove rows that are totally NA
+            janitor::remove_empty('rows')
+        
+        
+        Y <- Y_filtered %>%
+            # scale each column using the same scaling done on the controls
+            map2_df(names(.), ~scale_data(.x, c_data, .y)) %>%
+            # need to use model.matrix to get the factors to turn into dummies (otherwise they're treated as numeric)
             # it would be nice we if could keep the factors for mice, but it won't work because we need to transpose
-        # need to use model.matrix.lm to get the na.action argument to ignore na
-        model.matrix.lm(~., ., na.action = "na.pass") %>%
-        # remove the intercept column for imputation (don't worry, it'll come back)
-        .[,-1]
+            # need to use model.matrix.lm to get the na.action argument to ignore na
+            model.matrix.lm(~., ., na.action = "na.pass") %>%
+            # remove the intercept column for imputation (don't worry, it'll come back)
+            .[,-1]
+    } else{
+        Y <- filtered_features %>% 
+            #remove columns that are ALL NA
+            #select_if(function(x) any(!is.na(x))) %>%
+            # remove columns with > 50% NA
+            select_if(function(x) sum(is.na(x))/nrow(filtered_features) < .5) %>%
+            # remove rows that are totally NA
+            janitor::remove_empty('rows') %>%
+            # scale the data before imputation so that imputed values don't impact scale
+            transmute_all(function(x) scale(x, center = T, scale = T)) %>%
+            # need to use model.matrix to get the factors to turn into dummies (otherwise they're treated as numeric)
+            # it would be nice we if could keep the factors for mice, but it won't work because we need to transpose
+            # need to use model.matrix.lm to get the na.action argument to ignore na
+            model.matrix.lm(~., ., na.action = "na.pass") %>%
+            # remove the intercept column for imputation (don't worry, it'll come back)
+            .[,-1]
+    }
+    
         
     
     
@@ -351,7 +394,6 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
 
         #do imputation
         if(method == "amelia"){
-            #empri ~ 8
             if(transpose){
                 Yt_list <- amelia(t(Y), m = num, empri = empri)$imputations
                 imputed_Y <- 1:num %>% paste0('imp', .) %>%
@@ -396,20 +438,23 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
             deframe
         message("list order is Y, type, apoe, id, gba")
         if(impute){
-            return(1:num %>% purrr::map(~list(imputed_Y[[.x]], type, apoe, id, gba)))
+            return(1:num %>% purrr::map(~list(Y = imputed_Y[[.x]], Type = type, APOE = apoe, ID = id, GBA = gba)))
         } else {
-            return(1:num %>% purrr::map(~list(imputed_Y, type, apoe, id, gba)))
+            return(1:num %>% purrr::map(~list(Y = imputed_Y, Type = type, APOE = apoe, ID = id, GBA = gba)))
         }
         
     }
     message("list order is Y, type, apoe, id")
     if (impute){
-        return(1:num %>% purrr::map(~list(imputed_Y[[.x]], type, apoe, id)))
+        return(1:num %>% purrr::map(~list(Y = imputed_Y[[.x]], Type = type, APOE = apoe, ID = id)))
     } else {
-        return(1:num %>% purrr::map(~list(imputed_Y, type, apoe, id)))
+        return(1:num %>% purrr::map(~list(Y = imputed_Y, Type = type, APOE = apoe, ID = id)))
     }
     
 }
+
+
+
 
 
 
@@ -591,7 +636,7 @@ loo_pred_glmnet <- function(lambda, index, features, labels, alpha, penalize_age
 
 get_full_model <- function(features, labels, alpha, penalize_age_gender = TRUE, penalize_AD_PD = TRUE, family = 'binomial', nlambda = 100){
     full_fit <- fit_glmnet(features = features, labels = labels, alpha = alpha, family = family, penalize_age_gender = penalize_age_gender, penalize_AD_PD = penalize_AD_PD, nlambda = nlambda)
-    lambda <- full_fit$lambda.min
+    lambda <- full_fit$lambda.1se
     
     list(full_fit, lambda)
 }
@@ -603,7 +648,7 @@ get_full_model <- function(features, labels, alpha, penalize_age_gender = TRUE, 
     # but even if we set the penalize tags as FALSE when the columns aren't there, everything will work (the penalize tag will be ignored)
 loo_cvfit_glmnet <- function(index, features, labels, lambda, full_fit, alpha, penalize_age_gender = TRUE, penalize_AD_PD = TRUE, family = 'binomial', nlambda = 100){
     
-    
+    set.seed(1)
     
     #features and label, leaving out one observation for training
     loo_features <- features[-index,]
@@ -765,6 +810,40 @@ age_metabolite_p <- function(data, metabolite, var = "Age", family = "gaussian",
     
 }
 
+#' Function to help process unviariate results
+#' Create table with metabolite/lipid, p value, t value, name, bh corrected p value (for conc = FALSE)
+#' Creates table with metabolite/lipid, variation explained (for conc = TRUE)
+#' (using only the first imputation)
+#' @return table with all of the variables with bh p values < 0.01
+#' @param data is a imputation list (eg imputed_c_combined5)
+#' @param imp_num is integer 1-5 (which imputation touse)
+#' @param var/family/conc are as in age_metabolite_p. 
+#' 
+bh_univariate_age <- function(data, var = "Age", family = "gaussian", conc = FALSE) {
+    df <- data[[1]][[1]] %>%
+        as_tibble() %>%
+        dplyr::select(-c('(Intercept)', GenderM)) %>%
+        mutate_at(.vars = vars(-one_of("Age", "AD_ind", "PD_ind")), .funs = ~scale(.x, center = T, scale = T))
+    
+    p_table <- df %>%
+        names %>%
+        setdiff(c("Age",var)) %>%
+        purrr::map(~age_metabolite_p(df, metabolite = .x, var = var, family = family, conc = conc)) %>%
+        purrr::reduce(rbind) %>%
+        as_tibble()
+    
+    if(conc == FALSE){
+        p_values <- p_table %>%
+            dplyr::rename('og_p_value' =  1)
+        p_table <- cbind(p_values,'bh_p_value' = p.adjust(p_values$og_p_value, method = 'BH'))
+    }
+    
+    p_table %>% 
+        dplyr::mutate(name = str_replace_all(name, '`', ''))
+    
+}
+
+
 
 
 
@@ -882,6 +961,26 @@ wide_data_untargeted_og <- subject_data %>%
     #                       "RunIndex", "Name", 'Id')) %>%
     spread(key=Metabolite, value=Abundance)
 
+wide_data_untargeted_raw <- subject_data %>%     
+    filter(!(Type %in% c("Other"))) %>%
+    unite("Metabolite", c("Metabolite", "Mode")) %>% 
+    dplyr::select(Age, Gender, APOE, Type, Metabolite, Raw, GBAStatus, GBA_T369M, Id) %>%
+    #mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+    # dplyr::select(-one_of("Raw", "Abundance", "Trend",
+    #                       "RunIndex", "Name","Data File")) %>%
+    spread(key=Metabolite, value=Raw)
+
+
+
+wide_data_untargeted_rawscaled <- subject_data %>%     
+    filter(!(Type %in% c("Other"))) %>%
+    unite("Metabolite", c("Metabolite", "Mode")) %>% 
+    dplyr::select(Age, Gender, APOE, Type, Metabolite, RawScaled, GBAStatus, GBA_T369M, Id) %>%
+    #mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+    # dplyr::select(-one_of("Raw", "Abundance", "Trend",
+    #                       "RunIndex", "Name","Data File")) %>%
+    spread(key=Metabolite, value=RawScaled)
+
 
 
 
@@ -920,20 +1019,35 @@ wide_data_lipids <- wide_data_lipids_og %>% modify_outliers(subject_data)
 
 #### Misc operations ####
 
+# get names of all the possible metadata columns in case we want to do some subsetting
+metadata_cols <- c("Type2", "Type", "Gender", "Age", "APOE", "Batch",
+                      #"Data File",  (not found in dataset, so removed)
+                      "Index", "GBAStatus",  "Id",
+                      "GBA_T369M", "cognitive_status",
+                      #found in panuc
+                      "subject_id", "no_meds_reported", "led")
+
 
 #get the types in our dataset (ie AD, PD, CO, ..)
 all_types <- wide_data$Type %>% 
     unique %>%
     as.character
 
-#smaller wide_data_untargeted with columns with < .9 NA
-untargeted_columns <- wide_data_untargeted %>% 
-    map_dbl(~ sum(is.na(.x))/nrow(wide_data_untargeted) < .9) %>%
+#smaller wide_data_untargeted with columns with < .1 NA
+untargeted_less_10perct_na_columns <- wide_data_untargeted %>% 
+    map_dbl(~ sum(is.na(.x))/nrow(wide_data_untargeted) < .1) %>%
     names
 
-# There are none!
-wide_data_untargeted_dropped <- wide_data_untargeted %>%
-    select(untargeted_columns)
+
+
+# Get a clean, processed version of the data -- ie 
+    # 1. remove features with >10% missingness
+    # 2. Center, scale the numeric features
+untargeted_c_processed <- wide_data_untargeted %>%
+    filter(Type %in% c("CO", "CY", 'CM')) %>%
+    select_if(~sum(is.na(.x))/nrow(wide_data_untargeted) < .1) %>%
+    mutate_at(vars(-any_of(metadata_cols)), ~as.vector(scale(.x, center = TRUE, scale = TRUE)))
+
 
 
 wide_data_combined <- wide_data %>%
