@@ -1,52 +1,99 @@
-# an alt to Hosmer Lemeshow
-#install.packages('heatmapFit')
-library(heatmapFit)
+source(here::here("analysis", "starter.R"))
 
-#' Do ADPD logistic regression on subset of predictors
-#' 
-#' We're concerned that our analysis might just be picking up on drugs. 
-#' We can test for this by using only a subset of predictors.
-#' The subset can be chosen explicitly (eg excluding the most significant) or randomly
-#' Note: We impute after randomizing, so we don't get leakage from other features.
-#' Note: We remove all columns that have >10% missingness before subsetting
-#' @param data is one of the wide_data_* variants from starter.R
-#' @param varname A string, as in logistic_control_analysis()
-#' @param features a string, the feature to use
-#' @param nfeatures An int. if not NULL, ignore features and select n random features.
-#' @param AD/PD/GBA_ind Chooses target var. Only one should be true.
-adpd_subset_analysis <- function(data, varname, features, nfeatures = NULL, AD_ind = FALSE, PD_ind = FALSE, GBA_ind = FALSE){
-  # get column names with <10% missing
-  colnames_less10perct <- data %>% 
-    map_dbl(~ sum(is.na(.x))/nrow(data) < .1) %>%
-    names() %>%
-    append(c("GBAStatus", "GBA_T369M"))
-  
-  if(is.null(nfeatures)){
-    # our feature set will be this intersected with features param
-    final_features <- intersect(colnames_less10perct, features)
-  } else{
-    # otherwise take a random sampling
-    final_features <- sample(colnames_less10perct, size = nfeatures)
-  }
-  
-  
-  wide_df <- data %>% select(final_features)
-  imputation <- filter_and_impute_multi(wide_df, c('CO', 'CY', 'CM', "AD", "PD"))
-  
-  
-  purrr::map(1:5, ~logistic_control_analysis(imputation, varname =varname, imp_num = .x, nlambda = 200, AD_ind = AD_ind, PD_ind = PD_ind, GBA_ind = GBA_ind))
-  
-  
-}
 
-compute_deviance_resid <- function(obs, pred){
-  sqrt(-2*(obs*log(pred) + (1-obs)*log(1-pred)))* ifelse(obs > pred,1,-1)
-}
+
+## Before we get into it, here's a quick distribution of age. could've picked any dataset -- same subjects
+age_dist_ad_pd <- ggplot(wide_data_targeted %>% collapse_controls(), aes(Age)) +
+  geom_histogram(bins = 10) +
+  facet_wrap(~Type) + 
+  labs(x = "Age",
+       y = "Count",
+       title = "Distribution of Age")
+
+ggsave("age_dist.png",
+       plot = age_dist_ad_pd,
+       path = here("plots", "adpd_figs"),
+       width= 14,
+       height = 10)
+
+
+
+
+## Missing data overview plot
+
+data_sources <- list(wide_data, wide_data_lipids, wide_data_targeted, wide_data_untargeted)
+data_names <- list("GOT", "Lipids", "Targeted", "Untargeted")
+pct_missing_data_adpd <- purrr::map2(data_sources, data_names, ~percent_missing_by_type(.x, .y)) %>%
+  bind_rows %>%
+  gather(key = "Type", value = "pct_missing", -source) %>%
+  collapse_controls()
+
+
+missingness_overview_adpd_plot <- ggplot(pct_missing_data_adpd) + 
+  geom_col(aes(x = source, y= pct_missing, fill = Type), position = 'dodge') +
+  labs(title = "Percent Missingness By Dataset",
+       x = "Dataset",
+       y = "Percent Missing")
+ggsave("missingness_overview_adpd_bar.png",
+       plot = missingness_overview_adpd_plot,
+       path = here("plots", "adpd_figs"),
+       width = 14,
+       height = 10)
+
+
+
+#### PCA ---------
+
+# note: untargeted_processed has only features with < 10% missingness, and scaled/centered features
+# note: nipals handles missing values by using null weights, so no need to impute first.
+pca_all_untargeted <- untargeted_all_processed %>% 
+  dplyr::select(-any_of(metadata_cols)) %>%
+  opls(algoC = "nipals",
+       parAsColFcVn = untargeted_c_processed$Type)
+
+
+pca_scores_all_untargeted <- pca_all_untargeted@scoreMN %>%
+  as_tibble() %>%
+  bind_cols(untargeted_all_processed %>% select(Age, "Sex" = Gender, APOE, Type, Id)) %>%
+  collapse_controls()
+
+pc1_all_var_explained <- pca_all_untargeted@modelDF["p1","R2X"] %>%
+  scales::percent()
+pc2_all_var_explained <- pca_all_untargeted@modelDF["p2","R2X"] %>%
+  scales::percent()
+
+# # look at median age for pc1 > 0 and pc1 <0
+# pca_scores_c_untargeted %>%
+#   transmute(Age, p1, 
+#             p1_greater_than_zero = p1 > 0) %>%
+#   group_by(p1_greater_than_zero) %>%
+#   summarize(p1_median_age = median(Age))
+
+pca_type_untargeted <- ggplot(pca_scores_all_untargeted, aes(p1, p2, color = Type)) + 
+  geom_point(size = 5) +
+  stat_ellipse(size = 2) +
+  labs(title = "Principal Component Analysis",
+       subtitle = "Colored by Phenotype",
+       x = str_glue("PC1 ({pc1_all_var_explained})"),
+       y = str_glue("PC2 ({pc2_all_var_explained})"))
+ggsave("pca_adpd_untar.png",
+       plot = pca_type_untargeted,
+       path = here("plots", "adpd_figs"),
+       width = 14,
+       height = 10)
+
+
+
+
+
+
 
 #### not stratifying the imputation at all
-## removing a ton of 
+## most conservative way to impute
+
 imputed_all_untargeted5 <- filter_and_impute_multi(wide_data_untargeted, c('CO', 'CY', 'CM', "AD", "PD"))
 
+imputed_all_untargeted5 <- readRDS(here("ad_pd", "imputed_all_untargeted5.Rds"))
 # saveRDS(imputed_all_untargeted5, here("ad_pd", "imputed_all_untargeted5.Rds"))
 
 # # removing all columns with >10% missingness (to help imputation)
@@ -80,33 +127,41 @@ message("Untargeted ADPD logistic -------------------------------------------")
 #                                                                                                                       add_AD_ind = TRUE, add_PD_ind = FALSE))
 # untargeted_ad_logistic <- purrr::map(1:5, ~logistic_control_analysis(untargeted_all_amelia5_ad_ind, varname ="AD_ind", imp_num = .x, nlambda = 200))
 untargeted_ad_logistic <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_untargeted5, varname ="AD_ind", imp_num = .x, nlambda = 200, AD_ind = T))
-
+untargeted_ad_logistic <- readRDS(here("ad_pd", "untargeted_ad_logistic.Rds"))
 # saveRDS(untargeted_ad_logistic, here("ad_pd", "untargeted_ad_logistic.Rds"))
 
-untargeted_ad_logistic %>%
-  purrr::map(~.x[[2]]) %>%
-  cowplot::plot_grid(plotlist = .)
+# untargeted_ad_logistic %>%
+#   purrr::map(~.x[[2]]) %>%
+#   cowplot::plot_grid(plotlist = .)
 
-untargeted_ad_logistic[[1]][[2]] + 
-  labs(title = "ROC: AD vs {Controls, AD}")
-ggsave("ad_logistic_untargeted.png")
+# untargeted_ad_logistic[[1]][[2]] + 
+#   labs(title = "ROC: AD vs {Controls, AD}")
+# ggsave("ad_logistic_untargeted.png")
 
 untargeted_ad_roc_table <- untargeted_ad_logistic %>%
   purrr::map(~.x$roc_df) %>%
   bind_rows(.id = "imp")
 
 untargeted_ad_roc_plot <- ggplot(untargeted_ad_roc_table) + 
-  geom_line(mapping = aes(fpr, tpr, group = imp)) + 
+  geom_line(mapping = aes(fpr, tpr, group = imp), lwd = 1.5) + 
   geom_abline(intercept = 0, slope = 1, linetype = 2) + 
-  theme_minimal() + 
   labs(title = "ROC: AD vs C",
-       subtitle = TeX('Untargeted ,$\\alpha = 0.5$, loo'),
+       subtitle = TeX('Untargeted'),
        x = 'False Positive Rate',
        y = 'True Positive Rate') + 
-  geom_label(x = -Inf, y = Inf, 
-             hjust = 0, vjust = 1, 
-             label = paste0('AUC:', round(mean(untargeted_ad_roc_table$auc), 3)),
-             size =12)
+  geom_text(x = Inf, y = -Inf, 
+            hjust = 1, vjust = -0.5, 
+            size = 20,# label.padding = unit(1, "lines"),
+            label = paste0('AUC:', round(mean(untargeted_ad_roc_table$auc), 3)))
+
+
+ggsave("roc_ad_untargeted.png",
+       plot = untargeted_ad_roc_plot,
+       path = here("plots", "adpd_figs"),
+       width = 14,
+       height = 10)
+
+
 
 # diagnostic plots
 heatmap.fit(untargeted_ad_logistic[[1]]$truth, pred = untargeted_ad_logistic[[1]]$pred)
@@ -153,12 +208,13 @@ intersect(untargeted_in_all, untargeted_ad_in_all)
 # untargeted_pd_logistic <- purrr::map(1:5, ~logistic_control_analysis(untargeted_all_amelia5_pd_ind, varname ="PD_ind", imp_num = .x, nlambda = 200))
 
 untargeted_pd_logistic <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_untargeted5, varname ="PD_ind", imp_num = .x, nlambda = 200, PD_ind = T))
+untargeted_pd_logistic <- readRDS(here("ad_pd", "untargeted_pd_logistic.Rds"))
 
 # saveRDS(untargeted_pd_logistic, here("ad_pd", "untargeted_pd_logistic.Rds"))
 
-untargeted_pd_logistic %>%
-  purrr::map(~.x[[2]]) %>%
-  cowplot::plot_grid(plotlist = .)
+# untargeted_pd_logistic %>%
+#   purrr::map(~.x[[2]]) %>%
+#   cowplot::plot_grid(plotlist = .)
 
 # untargeted_pd_logistic[[1]][[2]] + 
 #   labs(title = "ROC: PD vs {Controls, AD}")
@@ -169,18 +225,22 @@ untargeted_pd_roc_table <- untargeted_pd_logistic %>%
   bind_rows(.id = "imp")
 
 untargeted_pd_roc_plot <- ggplot(untargeted_pd_roc_table) + 
-  geom_line(mapping = aes(fpr, tpr, group = imp)) + 
+  geom_line(mapping = aes(fpr, tpr, group = imp), lwd = 1.5) + 
   geom_abline(intercept = 0, slope = 1, linetype = 2) + 
-  theme_minimal() + 
   labs(title = "ROC: PD vs C",
-       subtitle = TeX('Untargeted ,$\\alpha = 0.5$, loo'),
+       subtitle = TeX('Untargeted'),
        x = 'False Positive Rate',
        y = 'True Positive Rate') + 
-  geom_label(x = -Inf, y = Inf, 
-             hjust = 0, vjust = 1, 
-             label = paste0('AUC:', round(mean(untargeted_pd_roc_table$auc), 3)),
-             size =12)
+  geom_text(x = Inf, y = -Inf, 
+            hjust = 1, vjust = -0.5, 
+            size = 20,# label.padding = unit(1, "lines"),
+            label = paste0('AUC:', round(mean(untargeted_pd_roc_table$auc), 3)))
 
+ggsave("roc_pd_untargeted.png",
+       plot = untargeted_pd_roc_plot,
+       path = here("plots", "adpd_figs"),
+       width = 14,
+       height = 10)
 
 untargeted_pd_avg_retained <- untargeted_pd_logistic %>% 
   purrr::map(~.x[[1]] %>% setdiff("(Intercept)") %>% length) %>% 
@@ -233,7 +293,7 @@ message("targeted ADPD logistic -------------------------------------------")
 
 # note: not tranposed since n > p
 imputed_all_targeted5 <- filter_and_impute_multi(wide_data_targeted, c('CO', 'CY', 'CM', "AD", "PD"), transpose = F, empri = 18)
-
+imputed_all_targeted5 <- readRDS(here("ad_pd", "imputed_all_targeted5.Rds"))
 # saveRDS(imputed_all_targeted5, here("ad_pd", "imputed_all_targeted5.Rds"))
 
 # # removing all columns with >10% missingness (to help imputation)
@@ -253,7 +313,7 @@ imputed_all_targeted5 <- filter_and_impute_multi(wide_data_targeted, c('CO', 'CY
 #                                                                                                                       add_AD_ind = TRUE, add_PD_ind = FALSE))
 # targeted_ad_logistic <- purrr::map(1:5, ~logistic_control_analysis(targeted_all_amelia5_ad_ind, varname ="AD_ind", imp_num = .x, nlambda = 200))
 targeted_ad_logistic <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_targeted5, varname ="AD_ind", imp_num = .x, nlambda = 200, AD_ind = T))
-
+targeted_ad_logistic <- readRDS(here("ad_pd", "targeted_ad_logistic.Rds"))
 # saveRDS(targeted_ad_logistic, here("ad_pd", "targeted_ad_logistic.Rds"))
 
 # # compare with all
@@ -264,18 +324,22 @@ targeted_ad_roc_table <- targeted_ad_logistic %>%
   bind_rows(.id = "imp")
 
 targeted_ad_roc_plot <- ggplot(targeted_ad_roc_table) + 
-  geom_line(mapping = aes(fpr, tpr, group = imp)) + 
+  geom_line(mapping = aes(fpr, tpr, group = imp), lwd = 1.5) + 
   geom_abline(intercept = 0, slope = 1, linetype = 2) + 
-  theme_minimal() + 
   labs(title = "ROC: AD vs C",
-       subtitle = TeX('Targeted ,$\\alpha = 0.5$, loo'),
+       subtitle = TeX('Targeted'),
        x = 'False Positive Rate',
        y = 'True Positive Rate') + 
-  geom_label(x = -Inf, y = Inf, 
-             hjust = 0, vjust = 1, 
-             label = paste0('AUC:', round(mean(targeted_ad_roc_table$auc), 3)),
-             size =12)
+  geom_text(x = Inf, y = -Inf, 
+            hjust = 1, vjust = -0.5, 
+            size = 20,# label.padding = unit(1, "lines"),
+            label = paste0('AUC:', round(mean(targeted_ad_roc_table$auc), 3)))
 
+ggsave("roc_ad_targeted.png",
+       plot = targeted_ad_roc_plot,
+       path = here("plots", "adpd_figs"),
+       width = 14,
+       height = 10)
 
 # targeted_ad_logistic %>%
 #   purrr::map(~.x[[2]]) %>%
@@ -342,7 +406,7 @@ intersect(targeted_in_all, targeted_ad_in_all)
 # targeted_pd_logistic <- purrr::map(1:5, ~logistic_control_analysis(targeted_all_amelia5_pd_ind, varname ="PD_ind", imp_num = .x, nlambda = 200))
 
 targeted_pd_logistic <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_targeted5, varname ="PD_ind", imp_num = .x, nlambda = 200, PD_ind = T))
-
+targeted_pd_logistic <- readRDS(here("ad_pd", "targeted_pd_logistic.Rds"))
 # saveRDS(targeted_pd_logistic, here("ad_pd", "targeted_pd_logistic.Rds"))
 
 # targeted_pd_logistic %>%
@@ -354,17 +418,23 @@ targeted_pd_roc_table <- targeted_pd_logistic %>%
   bind_rows(.id = "imp")
 
 targeted_pd_roc_plot <- ggplot(targeted_pd_roc_table) + 
-  geom_line(mapping = aes(fpr, tpr, group = imp)) + 
+  geom_line(mapping = aes(fpr, tpr, group = imp), lwd = 1.5) + 
   geom_abline(intercept = 0, slope = 1, linetype = 2) + 
-  theme_minimal() + 
   labs(title = "ROC: PD vs C",
-       subtitle = TeX('Targeted ,$\\alpha = 0.5$, loo'),
+       subtitle = TeX('Targeted'),
        x = 'False Positive Rate',
        y = 'True Positive Rate') + 
-  geom_label(x = -Inf, y = Inf, 
-             hjust = 0, vjust = 1, 
-             label = paste0('AUC:', round(mean(targeted_pd_roc_table$auc), 3)),
-             size =12)
+  geom_text(x = Inf, y = -Inf, 
+            hjust = 1, vjust = -0.5, 
+            size = 20,# label.padding = unit(1, "lines"),
+            label = paste0('AUC:', round(mean(targeted_pd_roc_table$auc), 3)))
+
+ggsave("roc_pd_targeted.png",
+       plot = targeted_pd_roc_plot,
+       path = here("plots", "adpd_figs"),
+       width = 14,
+       height = 10)
+
 
 # targeted_pd_logistic[[1]][[2]] + 
 #   labs(title = "ROC: PD vs {Controls, AD}",
@@ -430,7 +500,7 @@ message("lipids ADPD logistic -------------------------------------------")
 
 
 imputed_all_lipids5 <- filter_and_impute_multi(wide_data_lipids, c('CO', 'CY', 'CM', "AD", "PD"), empri = 250)
-
+imputed_all_lipids5 <- readRDS(here("ad_pd", "imputed_all_lipids5.Rds"))
 # saveRDS(imputed_all_lipids5, here("ad_pd", "imputed_all_lipids5.Rds"))
 
 # 
@@ -449,7 +519,7 @@ imputed_all_lipids5 <- filter_and_impute_multi(wide_data_lipids, c('CO', 'CY', '
 
 
 lipids_ad_logistic <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_lipids5, varname ="AD_ind", imp_num = .x, nlambda = 200, AD_ind = T))
-
+lipids_ad_logistic <- readRDS(here("ad_pd", "lipids_ad_logistic.Rds"))
 # saveRDS(lipids_ad_logistic, here("ad_pd", "lipids_ad_logistic.Rds"))
 
 # lipids_ad_logistic_allmetadata <- lipids_ad_logistic
@@ -468,17 +538,22 @@ lipids_ad_roc_table <- lipids_ad_logistic %>%
   bind_rows(.id = "imp")
 
 lipids_ad_roc_plot <- ggplot(lipids_ad_roc_table) + 
-  geom_line(mapping = aes(fpr, tpr, group = imp)) + 
+  geom_line(mapping = aes(fpr, tpr, group = imp), lwd = 1.5) + 
   geom_abline(intercept = 0, slope = 1, linetype = 2) + 
-  theme_minimal() + 
   labs(title = "ROC: AD vs C",
-       subtitle = TeX('Lipids ,$\\alpha = 0.5$, loo'),
+       subtitle = TeX('Lipids'),
        x = 'False Positive Rate',
        y = 'True Positive Rate') + 
-  geom_label(x = -Inf, y = Inf, 
-             hjust = 0, vjust = 1, 
-             label = paste0('AUC:', round(mean(lipids_ad_roc_table$auc), 3)),
-             size =12)
+  geom_text(x = Inf, y = -Inf, 
+            hjust = 1, vjust = -0.5, 
+            size = 20,# label.padding = unit(1, "lines"),
+            label = paste0('AUC:', round(mean(lipids_ad_roc_table$auc), 3)))
+
+ggsave("roc_ad_lipids.png",
+       plot = lipids_ad_roc_plot,
+       path = here("plots", "adpd_figs"),
+       width = 14,
+       height = 10)
 
 
 # diagnostic plots
@@ -535,7 +610,7 @@ intersect(lipids_in_all, lipids_ad_in_all)
 # lipids_pd_logistic <- purrr::map(1:5, ~logistic_control_analysis(lipids_all_amelia5_pd_ind, varname ="PD_ind", imp_num = .x, nlambda = 200))
 
 lipids_pd_logistic <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_lipids5, varname ="PD_ind", imp_num = .x, nlambda = 200, PD_ind = T))
-
+lipids_pd_logistic <- readRDS(here("ad_pd", "lipids_pd_logistic.Rds"))
 # saveRDS(lipids_pd_logistic, here("ad_pd", "lipids_pd_logistic.Rds"))
 
 # lipids_pd_logistic %>%
@@ -552,17 +627,22 @@ lipids_pd_roc_table <- lipids_pd_logistic %>%
   bind_rows(.id = "imp")
 
 lipids_pd_roc_plot <- ggplot(lipids_pd_roc_table) + 
-  geom_line(mapping = aes(fpr, tpr, group = imp)) + 
+  geom_line(mapping = aes(fpr, tpr, group = imp), lwd = 1.5) + 
   geom_abline(intercept = 0, slope = 1, linetype = 2) + 
-  theme_minimal() + 
   labs(title = "ROC: PD vs C",
-       subtitle = TeX('Lipids ,$\\alpha = 0.5$, loo'),
+       subtitle = TeX('Lipids'),
        x = 'False Positive Rate',
        y = 'True Positive Rate') + 
-  geom_label(x = -Inf, y = Inf, 
-             hjust = 0, vjust = 1, 
-             label = paste0('AUC:', round(mean(lipids_pd_roc_table$auc), 3)),
-             size =12)
+  geom_text(x = Inf, y = -Inf, 
+            hjust = 1, vjust = -0.5, 
+            size = 20,# label.padding = unit(1, "lines"),
+            label = paste0('AUC:', round(mean(lipids_pd_roc_table$auc), 3)))
+
+ggsave("roc_pd_lipids.png",
+       plot = lipids_pd_roc_plot,
+       path = here("plots", "adpd_figs"),
+       width = 14,
+       height = 10)
 
 
 lipids_pd_coefs <- lipids_pd_logistic %>% 
@@ -614,6 +694,177 @@ intersect(lipids_ad_in_all, lipids_pd_in_all)
 intersect(lipids_in_all, lipids_pd_in_all)
 
 
+############################
+
+### AD/PD Logisitic Regression on got ###
+
+############################
+
+message("got ADPD logistic -------------------------------------------")
+
+
+imputed_all_got5 <- filter_and_impute_multi(wide_data, c('CO', 'CY', 'CM', "AD", "PD"), empri = 250)
+imputed_all_got5 <- readRDS(here("ad_pd", "imputed_all_got5.Rds"))
+# saveRDS(imputed_all_got5, here("ad_pd", "imputed_all_got5.Rds"))
+
+
+
+#### AD First -----------------------------
+# we want an AD indicator, but not a PD one
+# got_all_amelia5_ad_ind <- purrr::map2(imputed_c_got5, got_adpd_separate_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE, 
+#                                                                                                                       add_AD_ind = TRUE, add_PD_ind = FALSE))
+# got_ad_logistic <- purrr::map(1:5, ~logistic_control_analysis(got_all_amelia5_ad_ind, varname ="AD_ind", imp_num = .x, nlambda = 200))
+
+
+got_ad_logistic <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_got5, varname ="AD_ind", imp_num = .x, nlambda = 200, AD_ind = T))
+got_ad_logistic <- readRDS(here("ad_pd", "got_ad_logistic.Rds"))
+# saveRDS(got_ad_logistic, here("ad_pd", "got_ad_logistic.Rds"))
+
+
+got_ad_roc_table <- got_ad_logistic %>%
+  purrr::map(~.x$roc_df) %>%
+  bind_rows(.id = "imp")
+
+got_ad_roc_plot <- ggplot(got_ad_roc_table) + 
+  geom_line(mapping = aes(fpr, tpr, group = imp), lwd = 1.5) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+  labs(title = "ROC: AD vs C",
+       subtitle = TeX('GOT-MS'),
+       x = 'False Positive Rate',
+       y = 'True Positive Rate') + 
+  geom_text(x = Inf, y = -Inf, 
+            hjust = 1, vjust = -0.5, 
+            size = 20,# label.padding = unit(1, "lines"),
+            label = paste0('AUC:', round(mean(got_ad_roc_table$auc), 3)))
+
+ggsave("roc_ad_got.png",
+       plot = got_ad_roc_plot,
+       path = here("plots", "adpd_figs"),
+       width = 14,
+       height = 10)
+
+
+# diagnostic plots
+heatmap.fit(got_ad_logistic[[1]]$truth, pred = got_ad_logistic[[1]]$pred)
+dev_resid <- compute_deviance_resid(got_ad_logistic[[1]]$truth, pred = got_ad_logistic[[1]]$pred)
+ggplot() + geom_point(aes(x = got_ad_logistic[[1]]$pred, y = dev_resid)) +
+  labs(title = "AD (got) Residuals plot",
+       x = "Fitted Value",
+       y = "Deviance")
+
+#-- 
+
+got_ad_coefs <- got_ad_logistic %>% 
+  purrr::map(~.x[[1]] %>% enframe(value = "coef")) %>%
+  reduce(full_join, by = "name") %>%
+  rename("imp1" = 2, "imp2" = 3, "imp3" = 4, "imp4" = 5, "imp5" = 6) %>%
+  mutate_if(is.numeric, ~ifelse(is.na(.x), 0, .x)) %>%
+  rowwise() %>%
+  mutate(mean_coef = mean(c(imp1, imp2, imp3, imp4, imp5))) %>%
+  arrange(desc(abs(mean_coef)))
+
+got_ad_avg_retained <- got_ad_logistic %>% 
+  purrr::map(~.x[[1]] %>% setdiff("(Intercept)") %>% length) %>% 
+  unlist %>% mean
+
+got_ad_in_all <- got_ad_logistic %>% 
+  purrr::map(~.x[[1]] %>% names) %>% 
+  reduce(intersect) %>%
+  setdiff("(Intercept)")
+
+got_ad_in_at_least_one <- got_ad_logistic %>%
+  purrr::map(~.x[[1]] %>% names) %>% 
+  reduce(c) %>%
+  setdiff("(Intercept)")
+
+
+got_ad_retained_table <- tibble(
+  data = "GOT",
+  response = "AD",
+  avg_retained = got_ad_avg_retained,
+  num_in_all = length(got_ad_in_all),
+  num_in_any = length(got_ad_in_at_least_one)
+)
+
+
+
+
+#### PD -------------------------------------
+# we want a PD indicator, but not an AD one
+# got_all_amelia5_pd_ind <- purrr::map2(imputed_c_got5, got_adpd_separate_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE, 
+#                                                                                                                       add_AD_ind = FALSE, add_PD_ind = TRUE))
+# got_pd_logistic <- purrr::map(1:5, ~logistic_control_analysis(got_all_amelia5_pd_ind, varname ="PD_ind", imp_num = .x, nlambda = 200))
+
+got_pd_logistic <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_got5, varname ="PD_ind", imp_num = .x, nlambda = 200, PD_ind = T))
+got_pd_logistic <- readRDS(here("ad_pd", "got_pd_logistic.Rds"))
+# saveRDS(got_pd_logistic, here("ad_pd", "got_pd_logistic.Rds"))
+
+# got_pd_logistic %>%
+#   purrr::map(~.x[[2]]) %>%
+#   cowplot::plot_grid(plotlist = .)
+# 
+# got_pd_logistic[[1]][[2]] + 
+#   labs(title = "ROC: PD vs {Controls, AD}",
+#        subtitle = TeX('got ,$\\alpha = 0.5$'))
+# ggsave("pd_logistic_got.png")
+
+got_pd_roc_table <- got_pd_logistic %>%
+  purrr::map(~.x$roc_df) %>%
+  bind_rows(.id = "imp")
+
+got_pd_roc_plot <- ggplot(got_pd_roc_table) + 
+  geom_line(mapping = aes(fpr, tpr, group = imp), lwd = 1.5) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+  labs(title = "ROC: PD vs C",
+       subtitle = TeX('got'),
+       x = 'False Positive Rate',
+       y = 'True Positive Rate') + 
+  geom_text(x = Inf, y = -Inf, 
+            hjust = 1, vjust = -0.5, 
+            size = 20,# label.padding = unit(1, "lines"),
+            label = paste0('AUC:', round(mean(got_pd_roc_table$auc), 3)))
+
+ggsave("roc_pd_got.png",
+       plot = got_pd_roc_plot,
+       path = here("plots", "adpd_figs"),
+       width = 14,
+       height = 10)
+
+
+got_pd_coefs <- got_pd_logistic %>% 
+  purrr::map(~.x[[1]] %>% enframe(value = "coef")) %>%
+  reduce(full_join, by = "name") %>%
+  rename("imp1" = 2, "imp2" = 3, "imp3" = 4, "imp4" = 5, "imp5" = 6) %>%
+  mutate_if(is.numeric, ~ifelse(is.na(.x), 0, .x)) %>%
+  rowwise() %>%
+  mutate(mean_coef = mean(c(imp1, imp2, imp3, imp4, imp5))) %>%
+  arrange(desc(abs(mean_coef)))
+
+
+got_pd_avg_retained <- got_pd_logistic %>% 
+  purrr::map(~.x[[1]] %>% setdiff("(Intercept)") %>% length) %>% 
+  unlist %>% mean
+
+got_pd_in_all <- got_pd_logistic %>% 
+  purrr::map(~.x[[1]] %>% names) %>% 
+  reduce(intersect) %>%
+  setdiff("(Intercept)")
+
+got_pd_in_at_least_one <- got_pd_logistic %>%
+  purrr::map(~.x[[1]] %>% names) %>% 
+  reduce(c) %>%
+  setdiff("(Intercept)")
+
+
+got_pd_retained_table <- tibble(
+  data = "got",
+  response = "PD",
+  avg_retained = got_pd_avg_retained,
+  num_in_all = length(got_pd_in_all),
+  num_in_any = length(got_pd_in_at_least_one)
+)
+
+
 ###########################
 
 ### Univariate AD/PD Logistic Regresion on untargeted
@@ -637,7 +888,7 @@ untargeted_all_amelia5_ad_ind <- imputed_all_untargeted5 %>%
 
 
 untargeted_univar_ad_logistic <- bh_univariate_age(untargeted_all_amelia5_ad_ind, var = "AD_ind", family = "binomial", conc = FALSE)
-
+untargeted_univar_ad_logistic <- readRDS(here("ad_pd", "untargeted_univar_ad_logistic.Rds"))
 # saveRDS(untargeted_univar_ad_logistic, here("ad_pd", "untargeted_univar_ad_logistic.Rds"))
 
 # Left join because age_untargeted has less columns. pull out only significant (.05 level)
@@ -666,7 +917,7 @@ untargeted_all_amelia5_pd_ind <- imputed_all_untargeted5 %>%
 
 
 untargeted_univar_pd_logistic <- bh_univariate_age(untargeted_all_amelia5_pd_ind, var = "PD_ind", family = "binomial", conc = FALSE)
-
+untargeted_univar_pd_logistic <- readRDS(here("ad_pd", "untargeted_univar_pd_logistic.Rds"))
 # saveRDS(untargeted_univar_pd_logistic, here("ad_pd", "untargeted_univar_pd_logistic.Rds"))
 
 # Left join because age_untargeted has less columns. pull out only significant (.05 level)
@@ -675,15 +926,15 @@ mummichog_pd_untargeted <- untargeted_univar_pd_logistic %>%
   tidyr::unite(col = "Metabolite", Metabolite1, Metabolite2) %>%
   left_join(mz_retention_untargeted, by = c('Metabolite', 'Mode')) %>%
   #dplyr::filter(bh_p_value < 0.05) %>%
-  dplyr::select('mz' = `m/z`, 'rtime' = `Retention time (min)`, 'p-value' = og_p_value, 'z-score' = `z value`, Metabolite, Mode)
+  dplyr::select('mz' = `m/z`, 'rtime' = `Retention time (min)`, 'p-value' = bh_p_value, 'z-score' = `z value`, Metabolite, Mode)
 
 mummichog_pd_untargeted %>%
   dplyr::filter(Mode == 'neg') %>%
-  write_tsv('mummichog_pd_untargeted_neg.txt')
+  write_tsv(here("ad_pd", 'mummichog_pd_neg.txt'))
 
 mummichog_pd_untargeted %>%
   dplyr::filter(Mode == 'pos') %>%
-  write_tsv('mummichog_pd_untargeted_pos.txt')
+  write_tsv(here("ad_pd", 'mummichog_pd_pos.txt'))
 
 ############################
 
@@ -726,7 +977,7 @@ targeted_all_amelia5_ad_ind <- imputed_all_targeted5 %>%
 
 # Create table with bh-corrected p values
 targeted_univar_ad_logistic <- bh_univariate_age(targeted_all_amelia5_ad_ind, var = "AD_ind", family = "binomial", conc = FALSE)
-
+targeted_univar_ad_logistic <- readRDS(here("ad_pd", "targeted_univar_ad_logistic.Rds"))
 # saveRDS(targeted_univar_ad_logistic, here("ad_pd", "targeted_univar_ad_logistic.Rds"))
 
 
@@ -751,11 +1002,51 @@ targeted_all_amelia5_pd_ind <- imputed_all_targeted5 %>%
 
 # Create table with bh-corrected p values
 targeted_univar_pd_logistic <- bh_univariate_age(targeted_all_amelia5_pd_ind, var = "PD_ind", family = "binomial", conc = FALSE)
-
+targeted_univar_pd_logistic <- readRDS(here("ad_pd", "targeted_univar_pd_logistic.Rds"))
 # saveRDS(targeted_univar_pd_logistic, here("ad_pd", "targeted_univar_pd_logistic.Rds"))
 
 targeted_univar_pd_logistic %>%
   filter(bh_p_value < 0.05)
+
+
+#####################
+
+### Knockoffs
+
+##################
+
+my_glmnet_stat_binom <- function(X, X_k, y){
+  stat.glmnet_coefdiff(X, X_k, y, nlambda = 200, alpha = 0.5, family = "binomial")
+}
+
+my_lasso_stat_binom <- function(X, X_k, y){
+  stat.glmnet_coefdiff(X, X_k, y, nlambda = 200, family = "binomial")
+}
+
+
+# ad logistic
+
+ad_c_index <- which(imputed_all_targeted5[[1]]$Type != "PD")
+
+targeted_ad_c_x <- imputed_all_targeted5[[1]]$Y[ad_c_index,-which(colnames(imputed_all_targeted5[[1]]$Y) %in% c("(Intercept)"))]
+targeted_ad_c_y <- fct_collapse(fct_drop(imputed_all_targeted5[[1]]$Type[ad_c_index]), "C" = c("CO", "CM", "CY"))
+# try with glmnet
+knockoff_tar <- knockoff.filter(targeted_ad_c_x, targeted_ad_c_y, knockoffs = create.second_order, statistic = my_glmnet_stat_binom, fdr = 0.05)
+# try with lasso
+#knockoff_tar <- knockoff.filter(targeted_ad_c_x, targeted_ad_c_y,knockoffs = create.second_order, statistic = my_lasso_stat_binom, fdr = 0.05)
+
+print(knockoff_tar$selected)
+
+
+# pd logistic
+
+pd_c_index <- which(imputed_all_targeted5[[1]]$Type != "AD")
+
+targeted_pd_c_x <- imputed_all_targeted5[[1]]$Y[pd_c_index,-which(colnames(imputed_all_targeted5[[1]]$Y) %in% c("(Intercept)"))]
+targeted_pd_c_y <- fct_collapse(fct_drop(imputed_all_targeted5[[1]]$Type[pd_c_index]), "C" = c("CO", "CM", "CY"))
+knockoff_tar <- knockoff.filter(targeted_pd_c_x, targeted_pd_c_y, knockoffs = create.second_order, statistic = my_glmnet_stat_binom, fdr = 0.05)
+print(knockoff_tar$selected)
+
 
 
 
@@ -905,14 +1196,40 @@ imputed_all_pd <- purrr::map(1:5, ~append(imputed_all_pd_metadata[[.x]], list(im
 
 
 untargeted_gba_logistic <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_pd, varname ="GBA Status", imp_num = .x, nlambda = 200, GBA_ind = T))
+untargeted_gba_logistic <- readRDS(here("ad_pd", "untargeted_gba_logistic.Rds"))
+# saveRDS(untargeted_gba_logistic, here("ad_pd", "untargeted_gba_logistic.Rds"))
 
-untargeted_gba_logistic %>%
-  purrr::map(~.x[[2]]) %>%
-  cowplot::plot_grid(plotlist = .)
 
-untargeted_gba_logistic[[1]][[2]] + 
-  labs(title = "ROC: GBA carriers vs non-carriers")
-ggsave("gba_logistic_untargeted.png")
+untargeted_gba_roc_table <- untargeted_gba_logistic %>%
+  purrr::map(~.x$roc_df) %>%
+  bind_rows(.id = "imp")
+
+untargeted_gba_roc_plot <- ggplot(untargeted_gba_roc_table) + 
+  geom_line(mapping = aes(fpr, tpr, group = imp), lwd = 1.5) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+  labs(title = "ROC: GBA Carriers vs Non-Carriers",
+       subtitle = TeX('Untargeted'),
+       x = 'False Positive Rate',
+       y = 'True Positive Rate') + 
+  geom_text(x = Inf, y = -Inf, 
+            hjust = 1, vjust = -0.5, 
+            size = 20,# label.padding = unit(1, "lines"),
+            label = paste0('AUC:', round(mean(untargeted_gba_roc_table$auc), 3)))
+
+ggsave("roc_gba_untargeted.png",
+       plot = untargeted_gba_roc_plot,
+       path = here("plots", "adpd_figs"),
+       width = 14,
+       height = 10)
+
+
+# untargeted_gba_logistic %>%
+#   purrr::map(~.x[[2]]) %>%
+#   cowplot::plot_grid(plotlist = .)
+# 
+# untargeted_gba_logistic[[1]][[2]] + 
+#   labs(title = "ROC: GBA carriers vs non-carriers")
+# ggsave("gba_logistic_untargeted.png")
 
 
 untargeted_gba_avg_retained <- untargeted_gba_logistic %>% 
@@ -930,24 +1247,51 @@ untargeted_gba_in_all <- untargeted_gba_logistic %>%
 ## GBA logistic, targeted
 #######
 # isolating just the PD subjects
-targeted_imputed_less10perct_pd_index <- which(imputed_less10perct_targeted[[1]][[2]] == "PD")
-targeted_imputed_less10perct_pd_features <- purrr::map(imputed_less10perct_targeted, ~.x[[1]][targeted_imputed_less10perct_pd_index,])
-targeted_imputed_less10perct_pd_metadata <- purrr::map(1:5, function(x) purrr::map(2:length(imputed_less10perct_targeted), function(y) imputed_less10perct_targeted[[x]][[y]][targeted_imputed_less10perct_pd_index]))
+targeted_imputed_all_pd_index <- which(imputed_all_targeted5[[1]][[2]] == "PD")
+targeted_imputed_all_pd_features <- purrr::map(imputed_all_targeted5, ~.x[[1]][targeted_imputed_all_pd_index,])
+targeted_imputed_all_pd_metadata <- purrr::map(1:5, function(x) purrr::map(2:length(imputed_all_targeted5), function(y) imputed_all_targeted5[[x]][[y]][targeted_imputed_all_pd_index]))
 
 # get data in form of filter_and_impute_multi output
-targeted_imputed_less10perct_pd <- purrr::map(1:5, ~append(targeted_imputed_less10perct_pd_metadata[[.x]], list(targeted_imputed_less10perct_pd_features[[.x]]), after = 0))
+targeted_imputed_all_pd <- purrr::map(1:5, ~append(targeted_imputed_all_pd_metadata[[.x]], list(targeted_imputed_all_pd_features[[.x]]), after = 0))
 
 
-targeted_gba_logistic <- purrr::map(1:5, ~logistic_control_analysis(targeted_imputed_less10perct_pd, varname ="GBA Status", imp_num = .x, nlambda = 200, GBA_ind = T))
+targeted_gba_logistic <- purrr::map(1:5, ~logistic_control_analysis(targeted_imputed_all_pd, varname ="GBA Status", imp_num = .x, nlambda = 200, GBA_ind = T))
+targeted_gba_logistic <- readRDS(here("ad_pd", "targeted_gba_logistic.Rds"))
+# saveRDS(targeted_gba_logistic, here("ad_pd", "targeted_gba_logistic.Rds"))
 
-targeted_gba_logistic %>%
-  purrr::map(~.x[[2]]) %>%
-  cowplot::plot_grid(plotlist = .)
 
-targeted_gba_logistic[[1]][[2]] + 
-  labs(title = "ROC: GBA carriers vs non-carriers",
-       subtitle = TeX('Targeted ,$\\alpha = 0.5$'))
-ggsave("gba_logistic_targeted.png")
+targeted_gba_roc_table <- targeted_gba_logistic %>%
+  purrr::map(~.x$roc_df) %>%
+  bind_rows(.id = "imp")
+
+targeted_gba_roc_plot <- ggplot(targeted_gba_roc_table) + 
+  geom_line(mapping = aes(fpr, tpr, group = imp), lwd = 1.5) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+  labs(title = "ROC: GBA Carriers vs Non-Carriers",
+       subtitle = TeX('Targeted'),
+       x = 'False Positive Rate',
+       y = 'True Positive Rate') + 
+  geom_text(x = Inf, y = -Inf, 
+            hjust = 1, vjust = -0.5, 
+            size = 20,# label.padding = unit(1, "lines"),
+            label = paste0('AUC:', round(mean(targeted_gba_roc_table$auc), 3)))
+
+ggsave("roc_gba_targeted.png",
+       plot = targeted_gba_roc_plot,
+       path = here("plots", "adpd_figs"),
+       width = 14,
+       height = 10)
+
+
+
+# targeted_gba_logistic %>%
+#   purrr::map(~.x[[2]]) %>%
+#   cowplot::plot_grid(plotlist = .)
+# 
+# targeted_gba_logistic[[1]][[2]] + 
+#   labs(title = "ROC: GBA carriers vs non-carriers",
+#        subtitle = TeX('Targeted ,$\\alpha = 0.5$'))
+# ggsave("gba_logistic_targeted.png")
 
 targeted_gba_coefs <- targeted_gba_logistic %>% 
   purrr::map(~.x[[1]] %>% enframe(value = "coef")) %>%
@@ -975,11 +1319,13 @@ targeted_gba_in_all <- targeted_gba_logistic %>%
 ### MSEA, GBA
 #####
 
-targeted_all_amelia5_gba_ind <- imputed_less10perct_targeted %>%
-  purrr::map(~cbind(.x[[1]], "GBA_ind" = ifelse(imputed_less10perct_targeted[[1]][[5]] %in% c("Pathogenic Carrier", "CT", "E326K Carrier"), 1, 0)) %>% list())
+targeted_all_amelia5_gba_ind <- imputed_all_targeted5 %>%
+  purrr::map(~cbind(.x[[1]], "GBA_ind" = ifelse(imputed_all_targeted5[[1]][[5]] %in% c("Pathogenic Carrier", "CT", "E326K Carrier"), 1, 0)) %>% list())
 
 # Create table with bh-corrected p values
 targeted_univar_gba_logistic <- bh_univariate_age(targeted_all_amelia5_gba_ind, var = "GBA_ind", family = "binomial", conc = FALSE)
+targeted_univar_gba_logistic <- readRDS(here("ad_pd", "targeted_univar_gba_logistic.Rds"))
+# saveRDS(targeted_univar_gba_logistic, here("ad_pd", "targeted_univar_gba_logistic.Rds"))
 
 
 # using bh p < -0.05
@@ -1047,15 +1393,40 @@ lipids_imputed_pd <- purrr::map(1:5, ~append(lipids_imputed_pd_metadata[[.x]], l
 
 
 lipids_gba_logistic <- purrr::map(1:5, ~logistic_control_analysis(lipids_imputed_pd, varname ="GBA Status", imp_num = .x, nlambda = 200, GBA_ind = T))
+lipids_gba_logistic <- readRDS(here("ad_pd", "lipids_gba_logistic.Rds"))
+# saveRDS(lipids_gba_logistic, here("ad_pd", "lipids_gba_logistic.Rds"))
 
-lipids_gba_logistic %>%
-  purrr::map(~.x[[2]]) %>%
-  cowplot::plot_grid(plotlist = .)
 
-lipids_gba_logistic[[1]][[2]] + 
-  labs(title = "ROC: GBA carriers vs non-carriers",
-       subtitle = TeX('Lipids ,$\\alpha = 0.5$'))
-ggsave("gba_logistic_lipids.png")
+lipids_gba_roc_table <- lipids_gba_logistic %>%
+  purrr::map(~.x$roc_df) %>%
+  bind_rows(.id = "imp")
+
+lipids_gba_roc_plot <- ggplot(lipids_gba_roc_table) + 
+  geom_line(mapping = aes(fpr, tpr, group = imp), lwd = 1.5) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+  labs(title = "ROC: GBA Carriers vs Non-Carriers",
+       subtitle = TeX('Lipids'),
+       x = 'False Positive Rate',
+       y = 'True Positive Rate') + 
+  geom_text(x = Inf, y = -Inf, 
+            hjust = 1, vjust = -0.5, 
+            size = 20,# label.padding = unit(1, "lines"),
+            label = paste0('AUC:', round(mean(lipids_gba_roc_table$auc), 3)))
+
+ggsave("roc_gba_lipids.png",
+       plot = lipids_gba_roc_plot,
+       path = here("plots", "adpd_figs"),
+       width = 14,
+       height = 10)
+
+# lipids_gba_logistic %>%
+#   purrr::map(~.x[[2]]) %>%
+#   cowplot::plot_grid(plotlist = .)
+# 
+# lipids_gba_logistic[[1]][[2]] + 
+#   labs(title = "ROC: GBA carriers vs non-carriers",
+#        subtitle = TeX('Lipids ,$\\alpha = 0.5$'))
+# ggsave("gba_logistic_lipids.png")
 
 
 lipids_gba_coefs <- lipids_gba_logistic %>% 
@@ -1088,22 +1459,49 @@ lipids_gba_in_all <- lipids_gba_logistic %>%
 wide_data_untargeted %>% 
   mutate(APOE4 = APOE %>% 
            as.character %>% 
-           str_detect("4")) %>% 
+           str_detect("4"),
+         Type = fct_collapse(Type, "Control" = c("CO", "CM", "CY"))) %>% 
   count(APOE4, Type, sort = T) %>%
   ggplot() +
   geom_col(aes(Type, n, fill = APOE4), position = "dodge")
 
 untargeted_apoe_logistic <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_untargeted5, varname ="APOE_ind", imp_num = .x, nlambda = 200, APOE4_ind = T))
+untargeted_apoe_logistic <- readRDS(here("ad_pd", "untargeted_apoe_logistic.Rds"))
+# saveRDS(untargeted_apoe_logistic, here("ad_pd", "untargeted_apoe_logistic.Rds"))
 
-untargeted_apoe_logistic %>%
-  purrr::map(~.x[[2]]) %>%
-  cowplot::plot_grid(plotlist = .)
 
-untargeted_apoe_logistic[[1]][[2]] + 
+untargeted_apoe_roc_table <- untargeted_apoe_logistic %>%
+  purrr::map(~.x$roc_df) %>%
+  bind_rows(.id = "imp")
+
+untargeted_apoe_roc_plot <- ggplot(untargeted_apoe_roc_table) + 
+  geom_line(mapping = aes(fpr, tpr, group = imp), lwd = 1.5) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2) + 
   labs(title = "ROC: APOE4",
-       subtitle = "Targeted: Controls, AD, PD",
-       size = 12)
-ggsave("apoe_logistic_untargeted.png")
+       subtitle = TeX('Untargeted'),
+       x = 'False Positive Rate',
+       y = 'True Positive Rate') + 
+  geom_text(x = Inf, y = -Inf, 
+            hjust = 1, vjust = -0.5, 
+            size = 20,# label.padding = unit(1, "lines"),
+            label = paste0('AUC:', round(mean(untargeted_apoe_roc_table$auc), 3)))
+
+ggsave("roc_apoe_untargeted.png",
+       plot = untargeted_apoe_roc_plot,
+       path = here("plots", "adpd_figs"),
+       width = 14,
+       height = 10)
+
+# 
+# untargeted_apoe_logistic %>%
+#   purrr::map(~.x[[2]]) %>%
+#   cowplot::plot_grid(plotlist = .)
+# 
+# untargeted_apoe_logistic[[1]][[2]] + 
+#   labs(title = "ROC: APOE4",
+#        subtitle = "Targeted: Controls, AD, PD",
+#        size = 12)
+# ggsave("apoe_logistic_untargeted.png")
 
 
 # diagnostic plots
@@ -1138,15 +1536,42 @@ intersect(untargeted_in_all, untargeted_apoe_in_all)
 
 targeted_apoe_logistic <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_targeted5, varname ="APOE_ind", imp_num = .x, nlambda = 200, APOE4_ind = T))
 
-targeted_apoe_logistic %>%
-  purrr::map(~.x[[2]]) %>%
-  cowplot::plot_grid(plotlist = .)
+targeted_apoe_logistic <- readRDS(here("ad_pd", "targeted_apoe_logistic.Rds"))
+# saveRDS(targeted_apoe_logistic, here("ad_pd", "targeted_apoe_logistic.Rds"))
 
-targeted_apoe_logistic[[1]][[2]] + 
+
+targeted_apoe_roc_table <- targeted_apoe_logistic %>%
+  purrr::map(~.x$roc_df) %>%
+  bind_rows(.id = "imp")
+
+targeted_apoe_roc_plot <- ggplot(targeted_apoe_roc_table) + 
+  geom_line(mapping = aes(fpr, tpr, group = imp), lwd = 1.5) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2) + 
   labs(title = "ROC: APOE4",
-       subtitle = "Targeted: Controls, AD, PD",
-       size = 12)
-ggsave("apoe_logistic_targeted.png")
+       subtitle = TeX('Targeted'),
+       x = 'False Positive Rate',
+       y = 'True Positive Rate') + 
+  geom_text(x = Inf, y = -Inf, 
+            hjust = 1, vjust = -0.5, 
+            size = 20,# label.padding = unit(1, "lines"),
+            label = paste0('AUC:', round(mean(targeted_apoe_roc_table$auc), 3)))
+
+ggsave("roc_apoe_targeted.png",
+       plot = targeted_apoe_roc_plot,
+       path = here("plots", "adpd_figs"),
+       width = 14,
+       height = 10)
+
+
+# targeted_apoe_logistic %>%
+#   purrr::map(~.x[[2]]) %>%
+#   cowplot::plot_grid(plotlist = .)
+# 
+# targeted_apoe_logistic[[1]][[2]] + 
+#   labs(title = "ROC: APOE4",
+#        subtitle = "Targeted: Controls, AD, PD",
+#        size = 12)
+# ggsave("apoe_logistic_targeted.png")
 
 
 # diagnostic plots
@@ -1179,6 +1604,33 @@ intersect(targeted_in_all, targeted_apoe_in_all)
 #################
 
 lipids_apoe_logistic <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_lipids5, varname ="APOE_ind", imp_num = .x, nlambda = 200, APOE4_ind = T))
+
+lipids_apoe_logistic <- readRDS(here("ad_pd", "lipids_apoe_logistic.Rds"))
+# saveRDS(lipids_apoe_logistic, here("ad_pd", "lipids_apoe_logistic.Rds"))
+
+
+lipids_apoe_roc_table <- lipids_apoe_logistic %>%
+  purrr::map(~.x$roc_df) %>%
+  bind_rows(.id = "imp")
+
+lipids_apoe_roc_plot <- ggplot(lipids_apoe_roc_table) + 
+  geom_line(mapping = aes(fpr, tpr, group = imp), lwd = 1.5) + 
+  geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+  labs(title = "ROC: APOE4",
+       subtitle = TeX('Lipids'),
+       x = 'False Positive Rate',
+       y = 'True Positive Rate') + 
+  geom_text(x = Inf, y = -Inf, 
+            hjust = 1, vjust = -0.5, 
+            size = 20,# label.padding = unit(1, "lines"),
+            label = paste0('AUC:', round(mean(lipids_apoe_roc_table$auc), 3)))
+
+ggsave("roc_apoe_lipids.png",
+       plot = lipids_apoe_roc_plot,
+       path = here("plots", "adpd_figs"),
+       width = 14,
+       height = 10)
+
 
 
 lipids_apoe_logistic %>%
@@ -1316,6 +1768,9 @@ untargeted_missing_ADPD <- wide_data_untargeted %>%
             "Id")) %>%
   purrr::map(~univar_missing_logistic(.x))
     
+untargeted_missing_ADPD <- readRDS(here("ad_pd", "untargeted_missing_ADPD.Rds"))
+# saveRDS(untargeted_missing_ADPD, here("ad_pd", "untargeted_missing_ADPD.Rds"))
+
 
 untargeted_missing_adpd_sig_names <- untargeted_missing_ADPD %>% purrr::map(~.x[[1]]) %>%
   bind_rows() %>%
@@ -1357,16 +1812,22 @@ ggplot(missingness_by_type_untargeted_sig_pct, aes(pct_missing, name)) +
        y = "Name")  
 
 
-ggplot(missingness_by_type_untargeted_sig_pct, aes(name, pct_missing)) +
-  geom_density(aes(fill = Type), position = "dodge", width = 0.5) + 
+untar_missingness_adpd_plot <- ggplot(missingness_by_type_untargeted_sig_pct, aes(fct_reorder(name, pct_missing), pct_missing)) +
+  geom_col(aes(fill = fct_relevel(Type, "AD", after = 1)), position = "dodge", width = 0.75) + 
   #scale_color_manual(labels = c("CY", "CM", "CO", "AD", "PD"), values = c("lightskyblue", "dodgerblue", "blue", "darkgreen", "purple")) +
   #theme(axis.text.x = element_text(angle= 90, hjust =1)) + 
   theme(axis.text.x = element_blank()) + 
   labs(title = 'Percent Missingness by Type',
-       subtitle = 'Untargeted, filtered using univar logistic regression, BH q < 0.05',
+       subtitle = 'Untargeted, FDR < 0.05',
        y = "Percent Missing",
-       x = "Name")  
+       x = "Name",
+       fill = "Type")  
 
+ggsave("untar_missingness_adpd.png",
+       plot = untar_missingness_adpd_plot,
+       path = here("plots", "adpd_figs"),
+       width = 20,
+       height = 10)
 
 #### outlier analysis
 # looking at outlier seen in the full control trained model fit on ADPD
@@ -1459,7 +1920,7 @@ wide_data_lipids_na_ind <- wide_data_lipids %>%
 
 # now impute the rest of the missingness. note the extra replace_zeroes = F argument since we changed zeroes to be informative in the missing columns
 imputed_all_untargeted_naind5 <- filter_and_impute_multi(wide_data_untargeted_na_ind, types = c('CO', 'CY', 'CM', "AD", "PD"), empri = 20, replace_zeroes = FALSE)
-imputed_all_lipids_naind5 <- filter_and_impute_multi(wide_data_lipids_na_ind, types = c('CO', 'CY', 'CM', "AD", "PD"), empri = 100, replace_zeroes = FALSE)
+imputed_all_lipids_naind5 <- filter_and_impute_multi(wide_data_lipids_na_ind, types = c('CO', 'CY', 'CM', "AD", "PD"), empri = 200, replace_zeroes = FALSE)
 
 
 ### Untargeted, AD ----------------
