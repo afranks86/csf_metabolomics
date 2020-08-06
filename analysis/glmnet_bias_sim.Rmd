@@ -45,10 +45,12 @@ prediction_plot <- function(truth, pred, title = NULL, num_sig, num_missed, num_
                                      num_missed %>% round(2),
                                      "<br># False Positives: ",
                                      num_noise %>% round(2))),
-                  size = 5
+                  size = 10,
+                  label.size = 1
     ) +
     labs(title = title) + 
-    expand_limits(x = 0, y = 0)
+    expand_limits(x = 15, y = c(15,100)) + 
+    theme(axis.text = element_text(size = 20))
   
 }
 
@@ -209,7 +211,8 @@ sim_post_model <- function(data = imputed_untargeted, num_sig,
                                       num_nonzero = length(nonzero_coefs),
                                       num_missed = length(setdiff(relevant_x, nonzero_coefs)), 
                                       num_noise = length(noise_coefs),
-                                      title = "Original Model") + expand_limits(x = 0, y = 0) + 
+                                      title = "Original Model") + 
+    expand_limits(x = 0, y = 0) + 
     labs(x = "Truth", y = "Pred")
   
   # features for post selection inference.
@@ -236,7 +239,8 @@ sim_post_model <- function(data = imputed_untargeted, num_sig,
                                     num_nonzero = length(post_nonzero_coefs),
                                     num_missed = length(setdiff(relevant_x, post_nonzero_coefs)),
                                     num_noise = length(post_noise),
-                                    title = "Post Selection")+ expand_limits(x = 0, y = 0) + 
+                                    title = "Post Selection") + 
+    expand_limits(x = 15, y = c(15,100)) + 
     labs(x = "Truth", y = "Pred")
   
   # list(true_nonzero = relevant_x,

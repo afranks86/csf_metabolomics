@@ -377,7 +377,10 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
         
         Y_filtered <- filtered_features %>% 
             #remove columns that are ALL NA
-            #select_if(function(x) any(!is.na(x))) %>%
+            # select_if(function(x) any(!is.na(x))) %>%
+            # change columns with >50% NA to missingness indicators
+            # mutate_if(function(x) sum(is.na(x))/nrow(filtered_features) > .5,
+            #           ~ifelse(is.na(.x), 1, 0)) %>%
             # remove columns with > 50% NA
             select_if(function(x) sum(is.na(x))/nrow(filtered_features) < .5) %>%
             # remove rows that are totally NA
@@ -397,6 +400,8 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
         Y <- filtered_features %>% 
             #remove columns that are ALL NA
             #select_if(function(x) any(!is.na(x))) %>%
+            # mutate_if(function(x) sum(is.na(x))/nrow(filtered_features) > .5,
+            #           ~ifelse(is.na(.x), 1, 0)) %>%
             # remove columns with > 50% NA
             select_if(function(x) sum(is.na(x))/nrow(filtered_features) < .5) %>%
             # remove rows that are totally NA
@@ -608,38 +613,38 @@ fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, pena
     return(fit)
 }
 
-# function to fit glmnet on n-1 observations and predict on 1, and do n times.
-# to use when you have a single lambda value you want to use (ie min lambda on full dataset)
-# index is the one observation to remove
-# only pass in binomial or gaussian
-# DEPRECATED!! I leave this around for the times we do EDA with it in gotms_age, lipids_glmnet, ect..
-#https://stats.stackexchange.com/questions/304440/building-final-model-in-glmnet-after-cross-validation
-loo_pred_glmnet <- function(lambda, index, features, labels, alpha, penalize_age_gender = TRUE, family = 'binomial'){
-    #features and label, leaving out one observation for training
-    loo_features <- features[-index,]
-    loo_labels <- labels[-index]
-    
-    #features and labels on the held out observation
-    
-    new_features <- features[index,] %>% matrix(nrow = 1, dimnames = list('', colnames(loo_features) ))
-    new_label <- labels[index]
-    
-    #set penalty factors. (1 for each is default)
-    p_factors <- rep(1, ncol(loo_features))
-    #set age/gender pfactors to 0 if penalize_age_gender flag is true. (assumes age/gender is very important)
-    if(penalize_age_gender == FALSE){
-        age_gender_index <- which(colnames(loo_features) %in% c('Age', 'GenderM'))
-        p_factors[age_gender_index] <- 0
-    }
-    
-    #documentation says we should avoid passing in single value of lambda. how else to do?
-    #fit on n-1
-    fit <- glmnet(loo_features, loo_labels, family = family, lambda = lambda, alpha = alpha, standardize = TRUE, penalty.factor = p_factors, gruoped = FALSE)
-    
-    #predict on 1
-    pred <- predict(fit, newx = new_features, type = 'response', s = lambda)
-    return(pred)
-}
+# # function to fit glmnet on n-1 observations and predict on 1, and do n times.
+# # to use when you have a single lambda value you want to use (ie min lambda on full dataset)
+# # index is the one observation to remove
+# # only pass in binomial or gaussian
+# # DEPRECATED!! I leave this around for the times we do EDA with it in gotms_age, lipids_glmnet, ect..
+# #https://stats.stackexchange.com/questions/304440/building-final-model-in-glmnet-after-cross-validation
+# loo_pred_glmnet <- function(lambda, index, features, labels, alpha, penalize_age_gender = TRUE, family = 'binomial'){
+#     #features and label, leaving out one observation for training
+#     loo_features <- features[-index,]
+#     loo_labels <- labels[-index]
+#     
+#     #features and labels on the held out observation
+#     
+#     new_features <- features[index,] %>% matrix(nrow = 1, dimnames = list('', colnames(loo_features) ))
+#     new_label <- labels[index]
+#     
+#     #set penalty factors. (1 for each is default)
+#     p_factors <- rep(1, ncol(loo_features))
+#     #set age/gender pfactors to 0 if penalize_age_gender flag is true. (assumes age/gender is very important)
+#     if(penalize_age_gender == FALSE){
+#         age_gender_index <- which(colnames(loo_features) %in% c('Age', 'GenderM'))
+#         p_factors[age_gender_index] <- 0
+#     }
+#     
+#     #documentation says we should avoid passing in single value of lambda. how else to do?
+#     #fit on n-1
+#     fit <- glmnet(loo_features, loo_labels, family = family, lambda = lambda, alpha = alpha, standardize = TRUE, penalty.factor = p_factors, gruoped = FALSE)
+#     
+#     #predict on 1
+#     pred <- predict(fit, newx = new_features, type = 'response', s = lambda)
+#     return(pred)
+# }
 
 # # alternative to loo_pred_glmnet
 # # does loocv cross validation on each fit (With n-1 obs) and returns the fit. 
@@ -722,12 +727,17 @@ loo_cvfit_glmnet <- function(index, features, labels, lambda, full_fit, alpha, p
 
 #function to return fpr, tpr given prediction and true label
 #label ordering goes c(negative class, positive class)
-fpr_tpr <- function(pred, label, label_ordering = NULL){
+#' @param pred are predictions
+#' @param label is the true values
+#' @param y is the metric on y axis of desired plot (fpr for roc)
+#' @param x is the metric on x axis of desired plot (fpr for roc)
+#' Can also make precision recall curve by letting x = rec (or tpr), y = prec (or ppv)
+fpr_tpr <- function(pred, label, y = 'tpr', x = 'fpr', label_ordering = NULL){
     rocpred <- ROCR::prediction(pred, label, label.ordering = label_ordering)
-    rocfpr_tpr <- ROCR::performance(rocpred, measure = 'tpr', x.measure = 'fpr')
+    rocfpr_tpr <- ROCR::performance(rocpred, measure = y, x.measure = x)
     rocauc <- ROCR::performance(rocpred, measure = 'auc')
-    return(tibble(fpr = deframe(rocfpr_tpr@x.values), 
-                  tpr = deframe(rocfpr_tpr@y.values),
+    return(tibble(x = deframe(rocfpr_tpr@x.values), 
+                  y = deframe(rocfpr_tpr@y.values),
                   auc = as.numeric(rocauc@y.values)))
 }
 
@@ -793,10 +803,11 @@ importance_consolidated_loo <- function(retained){
 
 #' function to do logistic glmnet with "varname" as predictorr
 #' @parm varname is the target variable, if it is in the predictor matrix (so pretty much just gender... I should probably fix this LOL)
+#' @types a string vector of which types to keep (some subset of AD, PD, CO, CY, CM)
 #' NOTE: if genderM is not varname, then it will be included as a predictor in the model
 #' AD/PD/GBA flags take precedent over varname when determining the target var
 #' ie if AD_ind is TRUE, then the only purpose of varname is to set plot names
-logistic_control_analysis <- function(imputations, varname = "GenderM", imp_num = 1, nlambda = 100, AD_ind = FALSE, PD_ind = FALSE, GBA_ind = FALSE, APOE4_ind = FALSE){
+logistic_control_analysis <- function(imputations, varname = "GenderM", imp_num = 1, nlambda = 100, AD_ind = FALSE, PD_ind = FALSE, GBA_ind = FALSE, APOE4_ind = FALSE, types = NULL){
     
     imputed_c <- imputations[[imp_num]]
     imputed_c_Y <- imputed_c[[1]]
@@ -804,6 +815,13 @@ logistic_control_analysis <- function(imputations, varname = "GenderM", imp_num 
     imputed_c_apoe <- imputed_c[[3]]
     imputed_c_gender <- imputed_c_Y[,"GenderM"]
     
+    if(!is.null(types)){
+        types_index <- which(imputed_c_type %in% types)
+        imputed_c_Y <- imputed_c_Y[types_index,]
+        imputed_c_type <- imputed_c_type[types_index]
+        imputed_c_apoe <- imputed_c_apoe[types_index]
+        imputed_c_gender <- imputed_c_gender[types_index]
+    }
     
     
     if(AD_ind & PD_ind){
@@ -865,19 +883,40 @@ logistic_control_analysis <- function(imputations, varname = "GenderM", imp_num 
         map_dbl(~median(.x, na.rm = T))
     
     
+    # get ROC curve
     roc_c_target_loo <- fpr_tpr(pred_c_loo_target, imputed_c_target)
-    roc_target_plot <- ggplot(roc_c_target_loo) + 
-        geom_line(mapping = aes(fpr, tpr)) + 
-        geom_abline(intercept = 0, slope = 1, linetype = 2) + 
-        theme_minimal() + 
-        labs(title = paste0("ROC: ", varname,  "vs C"),
-             subtitle = TeX('Untargeted ,$\\alpha = 0.5$, loo'),
-             x = 'False Positive Rate',
-             y = 'True Positive Rate') + 
-        geom_label(x = -Inf, y = Inf, hjust = 0, vjust = 1, label = paste0('AUC:', round(roc_c_target_loo$auc[1], 3)),
-                   size =12)
+    # roc_target_plot <- ggplot(roc_c_target_loo) + 
+    #     geom_line(mapping = aes(x, y)) + 
+    #     geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+    #     theme_minimal() + 
+    #     labs(title = paste0("ROC: ", varname,  "vs C"),
+    #          subtitle = TeX('Untargeted ,$\\alpha = 0.5$, loo'),
+    #          x = 'False Positive Rate',
+    #          y = 'True Positive Rate') + 
+    #     geom_label(x = -Inf, y = Inf, hjust = 0, vjust = 1, label = paste0('AUC:', round(roc_c_target_loo$auc[1], 3)),
+    #                size =12)
     
-    return(list(nonzero = importance_c_loo_median_target, roc_plot = roc_target_plot, fit = fit_c_loo_target, truth = imputed_c_target, pred =pred_c_loo_target, roc_df = roc_c_target_loo)) 
+    # get precision recall curve
+    precision_recall <- fpr_tpr(pred_c_loo_target, imputed_c_target, x = "rec", y = "prec") %>%
+        mutate(pos_class_rate = mean(imputed_c_target))
+    # precision_recall_plot <- ggplot(precision_recall) + 
+    #     geom_line(mapping = aes(x, y)) + 
+    #     #geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+    #     theme_minimal() + 
+    #     labs(title = paste0("Precision Recall: ", varname,  "vs C"),
+    #          subtitle = TeX('Untargeted ,$\\alpha = 0.5$, loo'),
+    #          x = 'Recall',
+    #          y = 'Precision') 
+    #     #geom_label(x = -Inf, y = Inf, hjust = 0, vjust = 1, label = paste0('AUC:', round(roc_c_target_loo$auc[1], 3)),
+    #     #           size =12)
+    # 
+    return(list(nonzero = importance_c_loo_median_target, 
+                #roc_plot = roc_target_plot, 
+                fit = fit_c_loo_target, 
+                truth = imputed_c_target, 
+                pred =pred_c_loo_target, 
+                roc_df = roc_c_target_loo,
+                pr_df = precision_recall)) 
 }
 
 
@@ -890,7 +929,7 @@ logistic_control_analysis <- function(imputations, varname = "GenderM", imp_num 
 #' @param imp_num imputation number. 1-5
 #' 
 #' @return median importance, shapiro test, results table, predtruth plot
-age_control_analysis <- function(imputations, target = "Age", name, color = NULL, imp_num = 1, nlambda = 100, ad_indicator = FALSE, pd_indicator = FALSE){
+age_control_analysis <- function(imputations, target = "Age", name, color = NULL, imp_num = 1, nlambda = 100, ad_indicator = FALSE, pd_indicator = FALSE, map_got = TRUE){
     
     if(!is.null(color)){
         color <- sym(color)
@@ -943,8 +982,8 @@ age_control_analysis <- function(imputations, target = "Age", name, color = NULL
     #fit used to get lambda
     cv_fits <- lapply(fitpred_c_loo_age, function(x) x[[3]])
     
-    #some measure of variable importance
-    importance_c_loo_age <- lapply(fit_c_loo_age, function(x) importance(x))
+    #some measure of variable importance. metabolites = TRUE tries to map GOT to names
+    importance_c_loo_age <- lapply(fit_c_loo_age, function(x) importance(x, metabolites = map_got))
     
     importance_c_loo_median_age <- importance_c_loo_age %>% 
         purrr::map(~importance_consolidated_loo(.x)) %>%
@@ -1087,7 +1126,7 @@ predtruth_plot <- function(df, pred_name = "imp_avg", name, color = NULL, errorb
                  x = 'True Age',
                  y = 'Predicted Age') + 
             geom_abline(intercept = 0, slope = 1) + 
-            expand_limits(x = 0, y = c(0, 100)) + 
+            expand_limits(x = 15, y = c(15, 100)) + 
             geom_richtext(aes(x = box_pos$x, y = box_pos$y, hjust = box_pos$hjust, vjust = box_pos$vjust, label = paste0("R^2: ", cor(truth, !!pred_name, method = "pearson")^2 %>% round(2), 
                                                                                                                          "<br>RMSE: ", (truth - !!pred_name)^2 %>% mean %>% sqrt %>% round(2), " (",rmse_null,")", 
                                                                                                                          "<br>MAE: ", (truth - !!pred_name) %>% abs %>% mean %>% round(2), " (",mae_null,")")),
@@ -1102,7 +1141,7 @@ predtruth_plot <- function(df, pred_name = "imp_avg", name, color = NULL, errorb
                  x = 'True Age',
                  y = 'Predicted Age') + 
             geom_abline(intercept = 0, slope = 1) + 
-            expand_limits(x = 0, y = c(0, 100)) + 
+            expand_limits(x = 15, y = c(15, 100)) + 
             geom_richtext(aes(x = box_pos$x, y = box_pos$y, hjust = box_pos$hjust, vjust = box_pos$vjust, label = paste0("R^2: ", cor(truth, !!pred_name, method = "pearson")^2 %>% round(2), 
                                                                                                                          "<br>RMSE: ", (truth - !!pred_name)^2 %>% mean %>% sqrt %>% round(2), " (",rmse_null,")", 
                                                                                                                          "<br>MAE: ", (truth - !!pred_name) %>% abs %>% mean %>% round(2), " (",mae_null,")")),
@@ -1209,8 +1248,8 @@ age_metabolite_p <- function(data, metabolite, var = "Age", family = "gaussian",
 #' @param imp_num is integer 1-5 (which imputation touse)
 #' @param var/family/conc are as in age_metabolite_p. 
 #' 
-bh_univariate_age <- function(data, var = "Age", family = "gaussian", conc = FALSE) {
-    df <- data[[1]][[1]] %>%
+bh_univariate_age <- function(data, var = "Age", family = "gaussian", conc = FALSE, imp_num = 1) {
+    df <- data[[imp_num]][[1]] %>%
         as_tibble() %>%
         dplyr::select(-c('(Intercept)', GenderM)) %>%
         mutate_at(.vars = vars(-any_of(c("Age", "AD_ind", "PD_ind", "GBA_ind"))), .funs = ~scale(.x, center = T, scale = T))
@@ -1276,6 +1315,27 @@ adpd_subset_analysis <- function(data, varname, features, nfeatures = NULL, AD_i
 
 compute_deviance_resid <- function(obs, pred){
     sqrt(-2*(obs*log(pred) + (1-obs)*log(1-pred)))* ifelse(obs > pred,1,-1)
+}
+
+#' Quick function to recreate mummichog pathway output
+#' path is the path to the mummichog output file
+mummichog_plot <- function(path){
+    if(!file.exists(path)){
+        stop("path does not exist")
+    }
+    pathway_table <- read_tsv(path) %>%
+        mutate(neg_log10_p = -log10(`p-value`),
+               pathway = fct_reorder(pathway, neg_log10_p)) %>%
+        filter(overlap_size > 0) %>%
+        top_n(10, `neg_log10_p`)
+    
+    ggplot(pathway_table) +
+        geom_col(aes(pathway, neg_log10_p)) + 
+        geom_hline(yintercept = -log10(0.05), lty = "dashed") +
+        labs(y = TeX("-log_{10} $p$-values (BH corrected)"), 
+             x = "") + 
+        theme(axis.text.y = element_text(size = rel(1.5))) + 
+        coord_flip() 
 }
 
 

@@ -32,8 +32,10 @@ ggsave("age_dist_c.png",
 # subset the data to get rid of metadata and columns with > 10% NA
 # note: untargeted_processed has only features with < 10% missingness, and scaled/centered features
 # note: nipals handles missing values by using null weights, so no need to impute first.
-pca_c_untargeted <- untargeted_c_processed %>% 
-  dplyr::select(-any_of(metadata_cols)) %>%
+pca_c_untargeted_x <- untargeted_c_processed %>% 
+  dplyr::select(-any_of(metadata_cols))
+
+pca_c_untargeted <-  pca_c_untargeted_x %>%
   opls(algoC = "nipals",
        parAsColFcVn = untargeted_c_processed$Gender)
 
@@ -48,6 +50,10 @@ pca_scores_c_untargeted <- pca_c_untargeted@scoreMN %>%
 pc1_var_explained <- pca_c_untargeted@modelDF["p1","R2X"] %>%
   scales::percent()
 pc2_var_explained <- pca_c_untargeted@modelDF["p2","R2X"] %>%
+  scales::percent()
+pc3_var_explained <- pca_c_untargeted@modelDF["p3","R2X"] %>%
+  scales::percent()
+pc4_var_explained <- pca_c_untargeted@modelDF["p4","R2X"] %>%
   scales::percent()
 
 # look at median age for pc1 > 0 and pc1 <0
@@ -130,6 +136,50 @@ ggsave("plsda_sex_untar.png",
        width = 14,
        height = 10)
 
+
+
+## compute first pc, do plsda in null space of transofmration matrix ------
+
+x_c_nullpc1 <- pca_c_untargeted_x - pca_c_untargeted@scoreMN[,'p1'] %*% t(pca_c_untargeted@loadingMN[,'p1'])
+plsda_c_untargeted_nullpc1 <- x_c_nullpc1 %>%
+  opls(y = untargeted_c_processed$Gender, algoC = "nipals", predI = 2)
+
+plsda_c_untargeted_nullpc1 <- readRDS(here("aging_output_files", "plsda_c_untargeted_nullpc1.Rds"))
+# saveRDS(plsda_c_untargeted_nullpc1, here("aging_output_files", "plsda_c_untargeted_nullpc1.Rds"))
+
+
+
+plsda_null_pc1_varx_explained <- plsda_c_untargeted_nullpc1@modelDF["p1","R2X"] %>%
+  scales::percent()
+plsda_null_pc2_varx_explained <- plsda_c_untargeted_nullpc1@modelDF["p2","R2X"] %>%
+  scales::percent()
+
+
+plsda_scores_c_untargeted_nullpc1 <- plsda_c_untargeted_nullpc1@scoreMN %>%
+  as_tibble() %>%
+  bind_cols(untargeted_c_processed %>% select(Age, "Sex" = Gender, APOE, Type, Id))
+
+pca_plsda_scores_c_untargeted <- pca_scores_c_untargeted %>%
+  select("p1_pca" = p1, Id) %>%
+  inner_join(plsda_scores_c_untargeted_nullpc1, by = "Id") %>%
+  select(-p2) %>%
+  rename("p1_plsda" = p1)
+
+
+pca_plsda_untar <- ggplot(pca_plsda_scores_c_untargeted, aes(p1_pca, p1_plsda, color = Sex)) + 
+  geom_point(aes(alpha = Age), size = 5) +
+  stat_ellipse(size = 2) +
+  labs(title = "PCA/PLS-DA",
+       x = str_glue("PCA: PC1 ({pc1_var_explained})"),
+       y = str_glue("PLSDA: PC2 ({plsda_null_pc1_varx_explained})")) + 
+  scale_color_viridis_d() +
+  scale_fill_viridis_c()
+
+ggsave("pca_plsda_untar.png",
+       plot = pca_plsda_untar,
+       path = here("plots", "aging_figs"),
+       width = 14,
+       height = 10)
 
 
 ######################################################################
@@ -339,82 +389,6 @@ lipids_pred_df %>%
 ### Lipids: Mice, loo
 
 ########
-
-
-
-
-
-
-########
-
-### Combined GOT + lipids
-
-########
-
-message("Combined GOT/lipids -------------------------------------------")
-
-#' Helper functions to combine the imputed lipids/GOT data
-#' @param got_imp is a single element of filter_and_impute_multi(data = wide_data)
-#' @param lipid_imp is a single element of filter_and_impute_multi(data = wide_data_lipids)
-combine_got_lipids <- function(got_imp, lipid_imp){
-  # add the id columns to make the join easier
-  imputed_c_got_separate_withid <- got_imp[[1]] %>% 
-    as_tibble() %>%
-    mutate(id = got_imp[[4]])
-  
-  # we only need to track apoe/gender/age once
-  imputed_c_lipids_separate_withid <- lipid_imp[[1]] %>%
-    as_tibble() %>%
-    dplyr::select(-c(Age, GenderM, `(Intercept)`)) %>%
-    dplyr::mutate(id = lipid_imp[[4]], 
-                  apoe = lipid_imp[[3]],
-                  type = lipid_imp[[2]])
-  
-  # join
-  imputed_c_combined_separate_df <- imputed_c_got_separate_withid %>%
-    inner_join(imputed_c_lipids_separate_withid, by = 'id') %>%
-    dplyr::select(-c(id))
-  
-  # transform into matrix
-  Y <- imputed_c_combined_separate_df %>%
-    dplyr::select(-c(apoe, type)) %>%
-    as.matrix()
-  
-  type <- imputed_c_combined_separate_df$type %>% as.factor()
-  apoe <- imputed_c_combined_separate_df$apoe %>% as.factor()
-  id <- imputed_c_got_separate_withid$id
-  
-  message("list order is Y, type, apoe, id")
-  return(list(Y, type, apoe, id))
-}
-
-
-
-imputed_c_combined_amelia5 <- purrr::map2(imputed_c_got5, imputed_c_lipids5, ~combine_got_lipids(.x, .y))
-combined_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_combined_amelia5, name = "Combined GOT + Lipids", color = NULL, imp_num = .x))
-
-combined_pred_df <- imputation_df(combined_age_analysis)
-
-(combined_age_predtruth <- predtruth_plot(combined_pred_df, name = "Combined GOT + Lipids"))
-Sys.sleep(5)
-ggsave(filename = "age_clock_combined_pred.png")
-
-
-
-
-
-combined_avg_retained <- combined_age_analysis %>% 
-  purrr::map(~.x[[2]] %>% setdiff("(Intercept)") %>% length) %>% 
-  unlist %>% mean
-
-combined_in_all <- combined_age_analysis %>% 
-  purrr::map(~.x[[2]] %>% names) %>% 
-  reduce(intersect) %>%
-  setdiff("(Intercept)")
-
-
-
-
 
 ########
 
@@ -674,6 +648,118 @@ predtruth_plot(untargeted_pred_df, color = "apoe4", errorbar = FALSE, name = "Un
 
 
 
+########
+
+### Combined Profiles
+
+########
+
+message("Combined GOT/lipids -------------------------------------------")
+
+#' Helper functions to combine the imputed lipids/GOT/targeted/untargeted data
+#' @param got_imp is a single element of filter_and_impute_multi(data = wide_data)
+#' @param lipid_imp is a single element of filter_and_impute_multi(data = wide_data_lipids). this is the only one required
+combine_got_lipids <- function(lipid_imp, got_imp = NULL, targeted_imp = NULL, untargeted_imp = NULL){
+  
+  
+  # we only need to track apoe/gender/age once
+  imputed_c_lipids_separate_withid <- lipid_imp[[1]] %>%
+    as_tibble() %>%
+    dplyr::select(-c(Age, GenderM, `(Intercept)`)) %>%
+    dplyr::mutate(id = lipid_imp[[4]], 
+                  apoe = lipid_imp[[3]],
+                  type = lipid_imp[[2]])
+  
+  if(!is.null(got_imp)){
+    # add the id columns to make the join easier
+    imputed_c_got_separate_withid <- got_imp[[1]] %>% 
+      as_tibble() %>%
+      mutate(id = got_imp[[4]])  
+    
+    imputed_c_combined_separate_df <- imputed_c_lipids_separate_withid %>%
+      inner_join(imputed_c_got_separate_withid, by = 'id') 
+  }
+  
+  if(!is.null(targeted_imp)){
+    imputed_c_targeted_separate_withid <- targeted_imp[[1]] %>% 
+      as_tibble() %>%
+      dplyr::select(-c(Age, GenderM, `(Intercept)`)) %>%
+      mutate(id = targeted_imp[[4]])  
+    
+    imputed_c_combined_separate_df <- imputed_c_combined_separate_df %>%
+      inner_join(imputed_c_targeted_separate_withid, by = "id")
+  }
+  
+  if(!is.null(untargeted_imp)){
+    imputed_c_untargeted_separate_withid <- untargeted_imp[[1]] %>%
+      as_tibble() %>%
+      dplyr::select(-c(Age, GenderM, `(Intercept)`)) %>%
+      mutate(id = untargeted_imp[[4]])
+    
+    # join
+    imputed_c_combined_separate_df <- imputed_c_combined_separate_df %>%
+      inner_join(imputed_c_untargeted_separate_withid, by = "id")
+    
+  }
+  
+  imputed_c_combined_separate_df <- imputed_c_combined_separate_df %>%
+    dplyr::select(-c(id))
+  
+  
+  # transform into matrix
+  Y <- imputed_c_combined_separate_df %>%
+    dplyr::select(-c(apoe, type)) %>%
+    as.matrix()
+  
+  type <- imputed_c_combined_separate_df$type %>% as.factor()
+  apoe <- imputed_c_combined_separate_df$apoe %>% as.factor()
+  id <- imputed_c_got_separate_withid$id
+  
+  message("list order is Y, type, apoe, id")
+  return(list(Y, type, apoe, id))
+}
+
+
+
+imputed_c_combined_amelia5 <- purrr::pmap(list(imputed_c_got5, imputed_c_lipids5, imputed_c_targeted5, imputed_c_untargeted5), ~combine_got_lipids(..1, ..2, ..3, ..4))
+combined_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_combined_amelia5, name = "Combined Profiles", color = NULL, imp_num = .x))
+
+combined_pred_df <- imputation_df(combined_age_analysis)
+
+(combined_age_predtruth <- predtruth_plot(combined_pred_df, name = "Combined Profiles"))
+ggsave(filename = "age_clock_combined_pred.png", 
+       plot = combined_age_predtruth,
+       path = here("plots", "aging_figs"), 
+       width = 14, height = 10)
+
+combined_avg_retained <- combined_age_analysis %>% 
+  purrr::map(~.x[[2]] %>% setdiff("(Intercept)") %>% length) %>% 
+  unlist %>% mean
+
+combined_in_all <- combined_age_analysis %>% 
+  purrr::map(~.x[[2]] %>% names) %>% 
+  reduce(intersect) %>%
+  setdiff("(Intercept)")
+
+
+## Correlation table suggests that Untargeted and Lipids are pretty far apart. try a model combining only these two
+imputed_c_untar_lipids_amelia5 <- purrr::map2(imputed_c_lipids5, imputed_c_untargeted5, ~combine_got_lipids(.x, .y))
+untar_lipids_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_untar_lipids_amelia5, name = "Untargeted & Lipid Profiles", color = NULL, imp_num = .x))
+
+untar_lipids_pred_df <- imputation_df(untar_lipids_age_analysis)
+
+(untar_lipids_age_predtruth <- predtruth_plot(untar_lipids_pred_df, name = "Untargeted & Lipid Profiles"))
+ggsave(filename = "age_clock_untar_lipids_pred.png", 
+       plot = untar_lipids_age_predtruth,
+       path = here("plots", "aging_figs"), 
+       width = 14, height = 10)
+
+
+
+
+
+
+
 ######################
 
 ### Post selection inference
@@ -747,6 +833,10 @@ imputed_c_untargeted_rawscaled5 <- filter_and_impute_multi(wide_data_untargeted_
 # lambdas were reaching the end of their sequence due to hugeness of data, so we increase nlambda from 100 to 200
 untargeted_rawscaled_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_untargeted_rawscaled5, name = "Untargeted, Raw Scaled", color = NULL, imp_num = .x, nlambda = 200))
 #save(untargeted_rawscaled_age_analysis, file = "untargeted_rawscaled_age_analysis_02032020.RData")
+
+imputed_c_untargeted_rawscaled5 <- readRDS(here("aging_output_files", "imputed_c_untargeted_rawscaled5.Rds"))
+untargeted_rawscaled_age_analysis <- readRDS(here("aging_output_files", "untargeted_rawscaled_age_analysis.Rds"))
+
 
 # saveRDS(imputed_c_untargeted_rawscaled5, here("aging_output_files", "imputed_c_untargeted_rawscaled5.Rds"))
 # saveRDS(untargeted_rawscaled_age_analysis, here("aging_output_files", "untargeted_rawscaled_age_analysis.Rds"))
@@ -956,7 +1046,10 @@ retained_table <- read_csv(here("aging_output_files", "retained_table.csv"))
 retained_metabolites_plot <- ggplot(retained_table, 
                                     aes(data, num_metabolites, fill = stat, label = pct_of_total)) + 
   geom_col(position = "dodge") + 
-  ggrepel::geom_text_repel(position = position_dodge(width = 0.9), size = 5, vjust = -0.5, direction = "y") + 
+  ggrepel::geom_text_repel(position = position_dodge(width = 0.9), size = 8, 
+                           vjust = -0.5, direction = "y",
+                           segment.size = 0,
+                           segment.alpha = 0) + 
   labs(title = "Nonzero Features over Imputations",
        x = "Data Source",
        y = "# of Metabolites") + 
@@ -969,7 +1062,7 @@ retained_metabolites_plot <- ggplot(retained_table,
 ggsave("retained_metabolites_bar.png",
        plot = retained_metabolites_plot, 
        path = here("plots", "aging_figs"),
-       width = 14,
+       width = 18,
        height = 10)
 
  ########################
@@ -978,20 +1071,39 @@ ggsave("retained_metabolites_bar.png",
 
 #########################
 
+# the residuals between models will be positively correlated because of regularization bias (not mean 0)
+# here, we detrend the residuals against true age to better understand the correlation.
+
+# note: these lm's are equiv to replacing the lm with lm(imp_avg ~ truth) directly
 resid_corr_df <- select(got_pred_df, id, truth, "got" = imp_avg) %>%
   inner_join(select(lipids_pred_df, id, "lipids" = imp_avg), by = "id") %>%
   inner_join(select(targeted_pred_df, id, "targeted" =  imp_avg), by = "id") %>%
   inner_join(select(untargeted_pred_df, id, "untargeted" = imp_avg), by = "id") %>%
-  mutate(got = truth - got,
-         lipids = truth - lipids,
-         targeted = truth - targeted,
-         untargeted = truth - untargeted
-         ) %>%
-  select(-c(id, truth)) %>%
-  cor(method = "spearman") %>%
-  round(2)
+  transmute(Targeted = resid(lm((truth - targeted) ~ truth, data = .)),
+            GOT = resid(lm((truth - got) ~ truth, data = .)),
+            Untargeted = resid(lm((truth - untargeted) ~ truth, data = .)),
+            Lipids = resid(lm((truth - lipids) ~ truth, data = .))
+            ) 
 
-write.csv(resid_corr_df, here("aging_tables", "resid_corr_matrix.csv"))
+# correlation test
+resid_corr_df %>%
+  summarize(lipid_got = (cor.test(GOT, Lipids, method = 'spearman'))$p.value,
+         lipid_targeted = (cor.test(Lipids, Targeted, method = 'spearman'))$p.value,
+         lipid_untargeted = (cor.test(Lipids, Untargeted, method = 'spearman'))$p.value,
+         got_targeted = (cor.test(GOT, Targeted, method = 'spearman'))$p.value,
+         got_untargeted = (cor.test(GOT, Untargeted, method = 'spearman'))$p.value,
+         targeted_untargeted = (cor.test(Targeted, Untargeted, method = 'spearman'))$p.value
+         ) %>%
+  pivot_longer(everything(), 
+               names_to = "pair", 
+               values_to = "p_raw") %>%
+  mutate(p_bh = p.adjust(p_raw, method = 'BH'))
+
+resid_corr_matrix <- resid_corr_df %>%
+  cor(method = "spearman") %>%
+  round(2) 
+
+write.csv(resid_corr_matrix, here("aging_tables", "resid_corr_matrix.csv"))
 
 bind_rows("GOT" = got_pred_df, "Lipids" = lipids_pred_df, 
           "Targeted" = targeted_pred_df, "Untargeted" = untargeted_pred_df, 
@@ -1082,41 +1194,22 @@ mummichog_untargeted %>%
 # mummichog 2 command: `mummichog -f {input_file} -o {output_name} -c 0.05 -m {neg/pos}`
 
 
-#' Quick function to recreate mummichog pathway output
-#' path is the path to the mummichog output file
-mummichog_plot <- function(path){
-  if(!file.exists(path)){
-    stop("path does not exist")
-  }
-  pathway_table <- read_tsv(path) %>%
-    mutate(neg_log10_p = -log10(`p-value`),
-           pathway = fct_reorder(pathway, neg_log10_p)) %>%
-    top_n(10, `neg_log10_p`)
-  
-  ggplot(pathway_table) +
-    geom_col(aes(pathway, neg_log10_p)) + 
-    geom_hline(yintercept = -log10(0.05), lty = "dashed") +
-    labs(y = TeX("-log_{10} $p$-values (BH corrected)"), 
-         x = "") + 
-    theme(axis.text.y = element_text(size = rel(1.25))) + 
-    coord_flip() 
-}
 
 mummichog_neg_plot <- mummichog_plot(here("aging_output_files", "1591847203.643466.06-10-2020_negResults", "tables", "mcg_pathwayanalysis_06-10-2020_negResults.tsv")) +
   labs(title = "Negative Mode")
 ggsave("mummichog_neg.png",
        plot = mummichog_neg_plot, 
        path = here("plots", "aging_figs"),
-       width = 14,
-       height = 10)
+       width = 20,
+       height = 14)
 
 mummichog_pos_plot <- mummichog_plot(here("aging_output_files", "1591847290.3476467.06-10-2020_posResults", "tables", "mcg_pathwayanalysis_06-10-2020_posResults.tsv")) +
   labs(title = "Positive Mode")
 ggsave("mummichog_pos.png",
        plot = mummichog_pos_plot, 
        path = here("plots", "aging_figs"),
-       width = 18,
-       height = 10)
+       width = 20,
+       height = 14)
 
 
 ## GOT-MS ----------------------------------------
@@ -1313,6 +1406,8 @@ untargeted_pd_amelia5 <- filter_and_impute_multi(wide_data_untargeted, c('PD'), 
 untargeted_adpd_separate_amelia5 <- purrr::map2(untargeted_ad_amelia5, untargeted_pd_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE))
 
 untargeted_adpd_age_analysis_separate <- 1:5 %>% purrr::map(~full_model_new_data(imputed_c_untargeted5[[.x]], new_data = untargeted_adpd_separate_amelia5[[.x]], nlambda = 200))
+
+untargeted_adpd_separate_amelia5 <- readRDS(here("aging_output_files", "untargeted_adpd_separate_amelia5.Rds"))
 untargeted_adpd_age_analysis_separate <- readRDS(here("aging_output_files", "untargeted_adpd_age_analysis_separate.Rds"))
 
 # saveRDS(untargeted_adpd_separate_amelia5, here("aging_output_files", "untargeted_adpd_separate_amelia5.Rds"))
@@ -1648,7 +1743,7 @@ imputed_c_male_untargeted5 <- imputed_c_untargeted5 %>%
     x
   })
 male_untargeted_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_male_untargeted5, name = "male_untargeted", color = NULL, imp_num = .x, nlambda = 200))
-
+male_untargeted_age_analysis <- readRDS( here("aging_output_files", "male_untargeted_age_analysis.Rds"))
 # saveRDS(male_untargeted_age_analysis, here("aging_output_files", "male_untargeted_age_analysis.Rds"))
 
 
@@ -1694,7 +1789,7 @@ imputed_c_female_untargeted5 <- imputed_c_untargeted5 %>%
     x
   })
 female_untargeted_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_female_untargeted5, name = "female_untargeted", color = NULL, imp_num = .x, nlambda = 200))
-
+female_untargeted_age_analysis <- readRDS(here("aging_output_files", "female_untargeted_age_analysis.Rds"))
 # saveRDS(female_untargeted_age_analysis, here("aging_output_files", "female_untargeted_age_analysis.Rds"))
 
 female_untargeted_pred_df <- imputation_df(female_untargeted_age_analysis)
@@ -2021,7 +2116,10 @@ msea_smpdb <- read_csv(here("aging_tables", "msea_ora_SMPDB_result.csv")) %>%
   mutate(bh_p = p.adjust(`Raw p`, method = "BH"),
          set = fct_reorder(X1, hits/total)) %>%
   filter(total > 2) %>%
-  top_n(10, hits/total)
+  top_n(10, hits/total) #%>%
+  #select("Set" = X1, "Total" = total, "Expected" = expected, "Hits" = hits)
+
+write_csv(msea_smpdb, here("aging_tables", "msea_SMPDB_result_top10.csv"))
 
 msea_smpdb_plot <- ggplot(msea_smpdb) + 
   geom_col(aes(set, hits/total)) + 
@@ -2045,7 +2143,9 @@ msea_csf <- read_csv(here("aging_tables", "msea_ora_csf_result.csv")) %>%
   mutate(bh_p = p.adjust(`Raw p`, method = "BH"),
          set = fct_reorder(X1, hits/total)) %>%
   filter(total >= 2) %>%
-  top_n(10, hits/total)
+  top_n(10, hits/total) #%>%
+  # select("Set" = X1, "Total" = total, "Expected" = expected, "Hits" = hits)
+write_csv(msea_csf, here("aging_tables", "msea_csf_result_top10.csv"))
 
 msea_csf_plot <- ggplot(msea_csf) + 
   geom_col(aes(set, hits/total)) + 
@@ -2337,7 +2437,8 @@ missingness_overview_plot <- ggplot(pct_missing_data) +
        x = "Dataset",
        y = "Percent Missing",
        fill = "Age") + 
-  scale_fill_viridis_d()
+  scale_fill_viridis_d() + 
+  theme(legend.text = element_text(size = 30))
 ggsave("missingness_overview_bar.png",
        plot = missingness_overview_plot,
        path = here("plots", "aging_figs"),
@@ -2510,10 +2611,16 @@ untargeted_c_na <- wide_data_untargeted %>%
   as.matrix()
   
 
-untargeted_c_na_full_model <- get_full_model(features= untargeted_c_na, untargeted_c_age, alpha = 0.5, family = "gaussian", penalize_AD_PD = FALSE, penalize_age_gender = FALSE)
+untargeted_c_na_full_model <- get_full_model(features= untargeted_c_na, untargeted_c_age, 
+                                             alpha = 0.5, family = "gaussian", 
+                                             penalize_AD_PD = FALSE, penalize_age_gender = FALSE)
 # Note: If AD_ind, PD_ind are missing from the dataset, the flag penalize_AD_Pd doesn't do anything
-untargeted_c_na_fitpred <- lapply(1:nrow(untargeted_c_na), function(x) loo_cvfit_glmnet(x, untargeted_c_na, untargeted_c_age, lambda = untargeted_c_na_full_model[[2]], full_fit = untargeted_c_na_full_model[[1]],
-                                                                                         alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE, penalize_AD_PD = FALSE))
+untargeted_c_na_fitpred <- lapply(1:nrow(untargeted_c_na), function(x) loo_cvfit_glmnet(x, untargeted_c_na, untargeted_c_age, 
+                                                                                        lambda = untargeted_c_na_full_model[[2]], 
+                                                                                        full_fit = untargeted_c_na_full_model[[1]],
+                                                                                        alpha = 0.5, family = 'gaussian', 
+                                                                                        penalize_age_gender = FALSE, penalize_AD_PD = FALSE)
+                                  )
 
 untargeted_c_na_fitpred <- readRDS(here("aging_output_files", "untargeted_c_na_fitpred.Rds"))
 # saveRDS(untargeted_c_na_fitpred, here("aging_output_files", "untargeted_c_na_fitpred.Rds"))
@@ -2534,7 +2641,7 @@ missingness_matrix_predtruth <- ggplot(tibble(truth = untargeted_c_age,
        x = 'True Age',
        y = 'Predicted Age') +
   geom_abline(intercept = 0, slope = 1) +
-  expand_limits(x = 0, y = 0) +
+  expand_limits(x = 15, y = c(15, 100)) +
   geom_richtext(aes(x = -Inf, y = Inf, hjust = 0, vjust = 1, label = paste0("R^2: ", cor(truth, pred, method = "pearson")^2 %>% round(2),
                                                                             "<br>RMSE: ", (truth - pred)^2 %>% mean %>% sqrt %>% round(2), " (",untar_rmse_null,")",
                                                                             "<br>MAE: ", (truth - pred) %>% abs %>% mean %>% round(2), " (",untar_mae_null,")")),
@@ -2545,6 +2652,71 @@ ggsave("missingness_matrix_predtruth.png",
        path = here("plots", "aging_figs"),
        width = 14,
        height = 10)
+
+
+
+#### Lipids missingness matrix ---------------------------------------
+
+# get just the age of controls. 
+# it's a little lazy of me to split up the features and response without an id col
+# I'm basically relying on the fact that filter() will act in a consistent way, so ordering is preserved
+lipids_c_age <- wide_data_lipids %>% 
+  filter(Type %in% c("CO", "CM", "CY")) %>%
+  pull(Age)
+
+# get the features
+lipids_c_na <- wide_data_lipids %>%
+  filter(Type %in% c("CO", "CM", "CY")) %>%
+  select(-any_of(metadata_cols)) %>% 
+  mutate_all(~ifelse(is.na(.x), 1, 0)) %>%
+  as.matrix()
+
+# look at the distribution of columsn
+count(enframe(colMeans(lipids_c_na)), value, sort = T)
+
+lipids_c_na_full_model <- get_full_model(features= lipids_c_na, lipids_c_age, alpha = 0.5, family = "gaussian", penalize_AD_PD = FALSE, penalize_age_gender = FALSE, nlambda = 200)
+# Note: If AD_ind, PD_ind are missing from the dataset, the flag penalize_AD_Pd doesn't do anything
+lipids_c_na_fitpred <- lapply(1:nrow(lipids_c_na), function(x) loo_cvfit_glmnet(x, lipids_c_na, lipids_c_age, lambda = lipids_c_na_full_model[[2]], full_fit = lipids_c_na_full_model[[1]],
+                                                                                        alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE, penalize_AD_PD = FALSE, nlambda = 200))
+
+lipids_c_na_fitpred <- readRDS(here("aging_output_files", "lipids_c_na_fitpred.Rds"))
+# saveRDS(lipids_c_na_fitpred, here("aging_output_files", "lipids_c_na_fitpred.Rds"))
+
+lipids_c_na_pred <- lapply(lipids_c_na_fitpred, function(x) x[[2]]) %>% unlist
+
+# get mean metrics for the plot
+lipids_null_pred <- mean(lipids_c_age) %>% rep(times = length(lipids_c_age))
+lipids_rmse_null <- (lipids_c_age - lipids_null_pred)^2 %>% mean %>% sqrt %>% round(2)
+lipids_mae_null <- (lipids_c_age - lipids_null_pred) %>% abs %>% mean %>% round(2)
+
+missingness_matrix_lipids_predtruth <- ggplot(tibble(truth = lipids_c_age, 
+                                              pred = lipids_c_na_pred)
+) +
+  geom_point(aes(truth, pred), size = 2.5, position = position_dodge(width = .2)) +
+  labs(title = paste0('Control: True vs Predicted Age'),
+       subtitle = paste0("Missingness Matrix"),
+       x = 'True Age',
+       y = 'Predicted Age') +
+  geom_abline(intercept = 0, slope = 1) +
+  expand_limits(x = 15, y = c(15, 100)) +
+  geom_richtext(aes(x = -Inf, y = Inf, hjust = 0, vjust = 1, label = paste0("R^2: ", cor(truth, pred, method = "pearson")^2 %>% round(2),
+                                                                            "<br>RMSE: ", (truth - pred)^2 %>% mean %>% sqrt %>% round(2), " (",lipids_rmse_null,")",
+                                                                            "<br>MAE: ", (truth - pred) %>% abs %>% mean %>% round(2), " (",lipids_mae_null,")")),
+                size = 12)
+
+ggsave("missingness_matrix_lipids_predtruth.png",
+       plot = missingness_matrix_lipids_predtruth,
+       path = here("plots", "aging_figs"),
+       width = 14,
+       height = 10)
+
+
+
+
+
+
+
+
 
 #sink(type="message")
 #close(error_log)
