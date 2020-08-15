@@ -16,7 +16,6 @@ source(here::here("analysis", "starter.R"))
 # fit model
 
 
-
 #' Fit an elastic net model
 #' @param imp_num is an integer, one of 1:length(imps)
 #' @param imps is the output of filter_and_imput_multi()
@@ -35,6 +34,7 @@ train_reduced_model <- function(imp_num, imps, target = "Age",
                                 penalize_AD_PD = T,
                                 types
                                 ){
+  message(str_glue('imp_num is {imp_num}'))
   imputed_c <- imps[[imp_num]]
   imputed_c_Y <- imputed_c[[1]]
   imputed_c_type <- imputed_c[[2]]
@@ -105,13 +105,13 @@ train_reduced_model <- function(imp_num, imps, target = "Age",
     p_factors[ad_pd_index] <- 0
   }
   
+  fit <- cv.glmnet(imputed_c_features, imputed_c_target, 
+                  family = family, alpha = alpha, 
+                  standardize = TRUE, penalty.factor = p_factors, 
+                  nlambda = nlambda, weights = weights
+                  )
   
-  
-  list(fit = cv.glmnet(imputed_c_features, imputed_c_target, 
-                   family = family, alpha = alpha, 
-                   standardize = TRUE, penalty.factor = p_factors, 
-                   nlambda = nlambda, weights = weights
-                   ),
+  list(fit = fit,
        feature_order = colnames(imputed_c_features)
        )
 }
@@ -175,7 +175,7 @@ reduced_fit <- function(index, data, target = 'Age',
     future_map2_dfc(names(.), ~scale_data(.x, train_used, .y)) %>%
     model.matrix(~., .)
   
-  train_imps <- try(filter_and_impute_multi(train_reduced, types, scale = T, empri = empri0))
+  train_imps <- try(filter_and_impute_multi(train_reduced, types, scale = T, empri = empri0), silent = T)
   while(class(train_imps) == "try-error"){
     empri0 <- empri0 + 5
     train_imps <- try(
@@ -256,14 +256,17 @@ reduced_age_analysis <- function(data){
 
 
 
-reduced_logistic_analysis <- function(data, target = 'GenderM', AD_ind = F, PD_ind = F, GBA_ind = F, APOE4_ind = F){
+reduced_logistic_analysis <- function(data, target = 'GenderM', AD_ind = F, PD_ind = F, GBA_ind = F, APOE4_ind = F, types){
   set.seed(1)
   
   data_reduced <- furrr::future_map(1:nrow(data), ~reduced_fit(.x, data, 
                                                                family = 'binomial', target = target,
                                                                AD_ind = AD_ind, PD_ind = PD_ind,
-                                                               GBA_ind = GBA_ind, APOE4_ind = APOE4_ind
+                                                               GBA_ind = GBA_ind, APOE4_ind = APOE4_ind,
+                                                               types = types
                                                                ))
+  
+  
   reduced_pred_df <- data_reduced %>%
     purrr::map_df(~.x$pred) %>%
     rowwise() %>%
@@ -272,27 +275,36 @@ reduced_logistic_analysis <- function(data, target = 'GenderM', AD_ind = F, PD_i
            imp_max = max(c_across(starts_with('imp')))
     ) %>%
     ungroup() %>%
-    rename_with(~str_to_lower(.x), everything()) %>%
-    rename("truth" = target)
+    rename("truth" = target) %>%
+    rename_with(~str_to_lower(.x), -contains('_ind'))
+    
   
-  roc_c_target_loo <- fpr_tpr(imp_avg, truth)
-  precision_recall <- fpr_tpr(imp_avg, truth, x = "rec", y = "prec") %>%
-    mutate(pos_class_rate = mean(truth))
+  roc_mean <- fpr_tpr(reduced_pred_df$imp_avg, reduced_pred_df$truth)
+  pr_mean <- fpr_tpr(reduced_pred_df$imp_avg, reduced_pred_df$truth, x = "rec", y = "prec") %>%
+    mutate(pos_class_rate = mean(reduced_pred_df$truth))
   
-  roc_c_target_loo <- fpr_tpr(imp_min, truth)
-  precision_recall <- fpr_tpr(imp_min, truth, x = "rec", y = "prec") %>%
-    mutate(pos_class_rate = mean(truth))
+  roc_min <- fpr_tpr(reduced_pred_df$imp_min, reduced_pred_df$truth)
+  pr_min <- fpr_tpr(reduced_pred_df$imp_min, reduced_pred_df$truth, x = "rec", y = "prec") %>%
+    mutate(pos_class_rate = mean(reduced_pred_df$truth))
   
-  roc_c_target_loo <- fpr_tpr(imp_max, truth)
-  precision_recall <- fpr_tpr(imp_max, truth, x = "rec", y = "prec") %>%
-    mutate(pos_class_rate = mean(truth))
+  roc_max <- fpr_tpr(reduced_pred_df$imp_max, reduced_pred_df$truth)
+  pr_max <- fpr_tpr(reduced_pred_df$imp_max, reduced_pred_df$truth, x = "rec", y = "prec") %>%
+    mutate(pos_class_rate = mean(reduced_pred_df$truth))
   
+  roc_df <- bind_rows("mean" = roc_mean,
+                      "max" = roc_max,
+                      "min" = roc_min,
+                      .id = "imp")
+  
+  pr_df <- bind_rows("mean" = pr_mean,
+                      "max" = pr_max,
+                      "min" = pr_min,
+                      .id = "imp")
   
   list(fit_binom = data_reduced,
-       pred = pred,
-       truth = truth,
-       roc_df = roc_c_target_loo,
-       pr_df = precision_recall
+       predtruth_df = reduced_pred_df,
+       roc_df = roc_df,
+       pr_df = pr_df
        )
   
 }
@@ -353,9 +365,47 @@ lipids_retained <- retained_over_fits(lipids_reduced)
 
 ####
 
-reduced_logistic_analysis(target ="AD_ind", AD_ind = T, 
-                          types = c("AD", "CO", "CM", "CY")
-                          )
+targeted_ad_reduced <- reduced_logistic_analysis(data = wide_data_targeted, 
+                                                 target ="AD_ind", AD_ind = T, 
+                                                 types = c("AD", "CO", "CM", "CY")
+                                                 )
+got_ad_reduced <- reduced_logistic_analysis(data = wide_data, 
+                                            target ="AD_ind", AD_ind = T, 
+                                            types = c("AD", "CO", "CM", "CY")
+)
+untargeted_ad_reduced <- reduced_logistic_analysis(data = wide_data_untargeted, 
+                                                 target ="AD_ind", AD_ind = T, 
+                                                 types = c("AD", "CO", "CM", "CY")
+                                                 )
+
+
+lipids_ad_reduced <- reduced_logistic_analysis(data = wide_data_lipids, 
+                                            target ="AD_ind", AD_ind = T, 
+                                            types = c("AD", "CO", "CM", "CY")
+                                            )
+
+
+####
+
+targeted_pd_reduced <- reduced_logistic_analysis(data = wide_data_targeted, 
+                                                 target ="PD_ind", PD_ind = T, 
+                                                 types = c("PD", "CO", "CM", "CY")
+                                                 )
+got_pd_reduced <- reduced_logistic_analysis(data = wide_data, 
+                                            target ="PD_ind", PD_ind = T, 
+                                            types = c("PD", "CO", "CM", "CY")
+)
+
+
+untargeted_pd_reduced <- reduced_logistic_analysis(data = wide_data_untargeted, 
+                                                 target ="PD_ind", PD_ind = T, 
+                                                 types = c("PD", "CO", "CM", "CY")
+                                                 )
+lipids_pd_reduced <- reduced_logistic_analysis(data = wide_data_lipids, 
+                                                 target ="PD_ind", PD_ind = T, 
+                                                 types = c("PD", "CO", "CM", "CY")
+                                               )
+
 
 
   
