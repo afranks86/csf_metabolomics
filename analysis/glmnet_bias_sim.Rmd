@@ -28,10 +28,9 @@ prediction_plot <- function(truth, pred, title = NULL, num_sig, num_missed, num_
   pred_table <- tibble(truth = truth, 
                        pred = pred)
   ggplot(pred_table) + 
-    geom_point(aes(x = truth, y = pred)) + 
+    geom_point(aes(x = truth, y = pred), size = 4.5) + 
     geom_abline(slope = 1, intercept = 0) +  
     xlim(c(min_value, max_value)) + 
-    ylim(c(min_value, max_value)) + 
     geom_richtext(aes(x = -Inf, y = Inf, 
                       hjust = 0, vjust = 1, 
                       label = paste0("R^2: ", cor(truth, pred, method = "pearson")^2 %>% round(2), 
@@ -49,7 +48,7 @@ prediction_plot <- function(truth, pred, title = NULL, num_sig, num_missed, num_
                   label.size = 1
     ) +
     labs(title = title) + 
-    expand_limits(x = 15, y = c(15,100)) + 
+    expand_limits(x = 15, y = c(25,80)) + 
     theme(axis.text = element_text(size = 20))
   
 }
@@ -211,8 +210,7 @@ sim_post_model <- function(data = imputed_untargeted, num_sig,
                                       num_nonzero = length(nonzero_coefs),
                                       num_missed = length(setdiff(relevant_x, nonzero_coefs)), 
                                       num_noise = length(noise_coefs),
-                                      title = "Original Model") + 
-    expand_limits(x = 0, y = 0) + 
+                                      title = "Original Model") +
     labs(x = "Truth", y = "Pred")
   
   # features for post selection inference.
@@ -239,8 +237,7 @@ sim_post_model <- function(data = imputed_untargeted, num_sig,
                                     num_nonzero = length(post_nonzero_coefs),
                                     num_missed = length(setdiff(relevant_x, post_nonzero_coefs)),
                                     num_noise = length(post_noise),
-                                    title = "Post Selection") + 
-    expand_limits(x = 15, y = c(15,100)) + 
+                                    title = "Post Selection") +
     labs(x = "Truth", y = "Pred")
   
   # list(true_nonzero = relevant_x,
@@ -287,7 +284,7 @@ high_eps$plot
 
 # Takeaway: Regularization bias can occur when the number of true predictors is very large -- that is, when age is impacted by many metabolites in a small way.
 reg_bias_bad1 <- sim_post_model(imputed_untargeted, 1000, sigma_weight = .01, sigma_eps = 5, mu_weight = .01)$plot
-reg_bias_bad1
+saveRDS(reg_bias_bad1, file = here('aging_output_files', 'reg_bias_bad1'))
 ggsave("reg_bias.png",
        plot = reg_bias_bad1,
        path = here("plots", "aging_figs"),
@@ -297,6 +294,7 @@ ggsave("reg_bias.png",
 # Takeaway: Even in the situation where # true predictors < p and strong signal, elastic net not guaranteed to pick up true signal. This makes post selection dangerous, especially for inference.
 post_select_bad2 <- sim_post_model(imputed_untargeted, 100, sigma_weight = .5, sigma_eps = 1, mu_weight =.5)$plot
 post_select_bad2
+saveRDS(post_select_bad2, file = here('aging_output_files', 'post_select_bad2'))
 ggsave("post_select.png",
        plot = post_select_bad2,
        path = here("plots", "aging_figs"),

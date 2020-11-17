@@ -97,7 +97,6 @@ library(gridExtra)
 library(gbm3)
 library(MetaboAnalystR)
 library(mice)
-library(furrr)
 library(gghighlight)
 library(ggtext)
 library(ggforce)
@@ -109,7 +108,11 @@ library(scales)
 #install.packages('heatmapFit')
 library(heatmapFit)
 library(knockoff)
-
+library(furrr)
+library(progressr)
+library(snow)
+#plan(multisession, workers = 2)
+cluster_amelia <- makeSOCKcluster(c("localhost", "localhost", "localhost", "localhost"))
 
 source(here("analysis/utility.R"))
 
@@ -279,12 +282,10 @@ imputed_data_cleaning <- function(Yt, Y_colnames, age, gender, transpose = T, le
     # this only does anything if the method for imputation is mice. amelia already has this done.
     # it keep only features and target
     Y <- Y_tmp %>% 
-        dplyr::select(-one_of("Type2", "Type", "APOE23", "APOE24", "APOE33", "Batch",
+        dplyr::select(-any_of(c("Type2", "Type", "APOE23", "APOE24", "APOE33", "Batch",
                           #"Data File",  (not found in dataset, so removed)
                           "Index", "GBAStatus",  "Id",
-                          "GBA_T369M", "cognitive_status")) %>% 
-        # get rid of metabolite concentration columns with age cor < 0.1
-        #dplyr::select_if(function(x) !is.numeric(x) ||  abs(cor(x, Y_tmp$Age)) > .3) %>%
+                          "GBA_T369M", "cognitive_status"))) %>% 
         #convert factors to dummmies (1 if male, 0 if female)
         model.matrix(~., .)
     
@@ -296,9 +297,36 @@ imputed_data_cleaning <- function(Yt, Y_colnames, age, gender, transpose = T, le
 
 }
 
+#' check if a vector is numeric binary (specifically, if it only contains 1 or 0)
+#' 
+is_binary <- function(vec){
+    all(sort(unique(vec)) %in% c(0,1))
+}
+
 #' scale column (with name) of df_to_scale by subtracting the mean and dividng sd of same col in df_for_ref 
 scale_data <- function(col_to_scale, df_for_ref, name){
+    
+    metadata_cols <- c("Type2", "Type", "Gender", "Age", "APOE", "Batch", "Index", 
+                       "GBAStatus", "Id", "GBA_T369M", "cognitive_status", "subject_id", 
+                       "no_meds_reported", "led", "GenderM")
+    # if it's metadata, return the original column without any changes.
+    if(name %in% metadata_cols){
+        return(col_to_scale)
+    }
+    
     col_for_ref <- df_for_ref %>% pull(name)
+    
+    # we need at least 2 observations in the ref col to get a standard deviation
+    # so if the whole column has < 2 observations in df_for_ref, then return the original column without any changes
+    if(sum(!is.na(col_for_ref)) < 2){
+        return(col_to_scale)
+    }
+    
+    # if the columns is binary (contains only 1 or 0), don't scale
+    if(is_binary(col_for_ref)){
+        return(col_to_scale)
+    }
+        
     
     (col_to_scale - mean(col_for_ref, na.rm = T)) / sd(col_for_ref, na.rm = T)
 }
@@ -308,7 +336,7 @@ scale_data <- function(col_to_scale, df_for_ref, name){
 #' type is a vector of strings, one of the levels of type
 #' empri is the argument to amelia to set ridge prior. makes it easier to converge
 #' @param AD_ind/PD_ind optional flag to add ad/pd indicators to the features.
-filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, empri = 100, AD_ind = FALSE, PD_ind = FALSE, transpose = T, impute = T, replace_zeroes = T, include_led = F){
+filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, empri = 100, AD_ind = FALSE, PD_ind = FALSE, transpose = T, impute = T, replace_zeroes = T, include_led = F, scale = T){
     set.seed(1)
     filtered <- data %>%
         filter(Type %in% types)
@@ -342,29 +370,29 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
     
     if(method == "amelia"){
         filtered_features <- filtered %>%
-            dplyr::select(-one_of("Type2", "Type", "Gender", "Age", "APOE", "Batch",
+            dplyr::select(-any_of(c("Type2", "Type", "Gender", "Age", "APOE", "Batch",
                                   #"Data File",  (not found in dataset, so removed)
                                   "Index", "GBAStatus",  "Id",
                                   "GBA_T369M", "cognitive_status",
                                   #found in panuc
-                                  "subject_id", "no_meds_reported", "led"))
+                                  "subject_id", "no_meds_reported", "led")))
     } else if(method == "mice"){
         filtered_features <- filtered %>%
             # don't need type since we have age.
             #dplyr::select(-one_of("Type2", "Type",  "Index",  "Id"))
-            dplyr::select(-one_of("Type2", "Type", "Gender", "Age", "APOE", "Batch",
+            dplyr::select(-any_of(c("Type2", "Type", "Gender", "Age", "APOE", "Batch",
                                   #"Data File",  (not found in dataset, so removed)
                                   "Index", "GBAStatus",  "Id",
                                   "GBA_T369M", "cognitive_status",
                                   #found in panuc
-                                  "subject_id", "no_meds_reported", "led"))
+                                  "subject_id", "no_meds_reported", "led")))
     }
     
     
-    # if 0s are still in the data and we want to replace them with NA
+    # if 0s are still in the data and we want to replace them with NA (if it's not binary var)
     if(replace_zeroes){
         filtered_features <- filtered_features %>%
-            mutate_all(~replace(., .==0, NA))
+            mutate_if(~!is_binary(.x), function(x) replace(x, x==0, NA))
     }
     
     # we want to make sure scaling the data happens on controls, and then is applied to ad/pd
@@ -389,7 +417,8 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
         
         Y <- Y_filtered %>%
             # scale each column using the same scaling done on the controls
-            map2_df(names(.), ~scale_data(.x, c_data, .y)) %>%
+            #furrr::future_map2_dfc(names(.), ~scale_data(.x, c_data, .y)) %>%
+            purrr::map2_dfc(names(.), ~scale_data(.x, c_data, .y)) %>%
             # need to use model.matrix to get the factors to turn into dummies (otherwise they're treated as numeric)
             # it would be nice we if could keep the factors for mice, but it won't work because we need to transpose
             # need to use model.matrix.lm to get the na.action argument to ignore na
@@ -397,7 +426,15 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
             # remove the intercept column for imputation (don't worry, it'll come back)
             .[,-1]
     } else{
-        Y <- filtered_features %>% 
+        
+        Y <- filtered_features
+        if(scale){
+            # scale the data before imputation so that imputed values don't impact scale
+            Y <- Y %>% 
+                mutate_if(~!is_binary(.x), function(x) scale(x, center = T, scale = T))
+        }
+        
+        Y <- Y %>% 
             #remove columns that are ALL NA
             #select_if(function(x) any(!is.na(x))) %>%
             # mutate_if(function(x) sum(is.na(x))/nrow(filtered_features) > .5,
@@ -406,14 +443,14 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
             select_if(function(x) sum(is.na(x))/nrow(filtered_features) < .5) %>%
             # remove rows that are totally NA
             janitor::remove_empty('rows') %>%
-            # scale the data before imputation so that imputed values don't impact scale
-            transmute_all(function(x) scale(x, center = T, scale = T)) %>%
             # need to use model.matrix to get the factors to turn into dummies (otherwise they're treated as numeric)
             # it would be nice we if could keep the factors for mice, but it won't work because we need to transpose
             # need to use model.matrix.lm to get the na.action argument to ignore na
             model.matrix.lm(~., ., na.action = "na.pass") %>%
             # remove the intercept column for imputation (don't worry, it'll come back)
             .[,-1]
+        
+        
     }
     
         
@@ -430,11 +467,11 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
         #do imputation
         if(method == "amelia"){
             if(transpose){
-                Yt_list <- amelia(t(Y), m = num, empri = empri)$imputations
+                Yt_list <- amelia(t(Y), m = num, empri = empri, p2s = 0, parallel = 'snow', ncpus = 4, cl = cluster_amelia)$imputations
                 imputed_Y <- 1:num %>% paste0('imp', .) %>%
                     purrr::map(~imputed_data_cleaning(Yt_list[[.x]], Y_colnames = Y_colnames, age = age, gender = gender, led = led))
             } else{
-                Yt_list <- amelia(Y, m = num, empri = empri)$imputations
+                Yt_list <- amelia(Y, m = num, empri = empri, p2s = 0, parallel = 'snow', ncpus = 4, cl = cluster_amelia)$imputations
                 imputed_Y <- 1:num %>% paste0('imp', .) %>%
                     purrr::map(~imputed_data_cleaning(Yt_list[[.x]], Y_colnames = Y_colnames, age = age, gender = gender, transpose = F, led = led))
             }
@@ -447,13 +484,13 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
                 # Note: mice by default removes collinear values for imputation.
                 # by setting remove.collinar = FALSE, it's ignoring their relationship
                 Yt_list <- mice(Yt, m = num, seed = 1, remove.collinear = FALSE)
-                imputed_Y <- 1:num %>% purrr::map(~imputed_data_cleaning(Yt_list %>% mice::complete(.x), Y_colnames = Y_colnames, age = age, gender = gender, led = led))
+                imputed_Y <- 1:num %>% furrr::future_map(~imputed_data_cleaning(Yt_list %>% mice::complete(.x), Y_colnames = Y_colnames, age = age, gender = gender, led = led))
             } else {
                 Yt <- Y %>% set_colnames(paste0("V",colnames(.)))
                 # Note: mice by default removes collinear values for imputation.
                 # by setting remove.collinar = FALSE, it's ignoring their relationship
                 Yt_list <- mice(Yt, m = num, seed = 1, remove.collinear = FALSE)
-                imputed_Y <- 1:num %>% purrr::map(~imputed_data_cleaning(Yt_list %>% mice::complete(.x), Y_colnames = Y_colnames, age = age, gender = gender, transpose = F, led = led))
+                imputed_Y <- 1:num %>% furrr::future_map(~imputed_data_cleaning(Yt_list %>% mice::complete(.x), Y_colnames = Y_colnames, age = age, gender = gender, transpose = F, led = led))
             }
         
                           
@@ -581,10 +618,16 @@ loo_filter_impute_fitpred <- function(index, data, method = "mice"){
 
 #does loocv for logistic regression, using deviance loss by default (check?), eval at different elastic net alphas
 #if penalize_age_gender is false, set penalty coeff to 0
-fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, penalize_AD_PD = TRUE, family= 'binomial', nlambda = 100){
+fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, penalize_AD_PD = TRUE, family= 'binomial', nlambda = 200, weights = rep(1, length(labels) - 1)){
     set.seed(1)
     #set foldid so that same folds every time (it's loocv so it's just an ordering)
     foldid <- sample(nrow(features))
+    if(family == "binomial"){
+        # calculate what fraction of the total each class has
+        freq_frac <- table(labels)/length(labels)
+        # assign 1 - that value to a "weights" vector
+        weights <- 1 - freq_frac[as.character(labels)]    
+    }
     
     #set penalty factors. (1 for each is default)
     p_factors <- rep(1, ncol(features))
@@ -597,17 +640,11 @@ fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, pena
         ad_pd_index <- which(colnames(features) %in% c("AD_ind", "PD_ind"))
         p_factors[ad_pd_index] <- 0
     }
-    #grouped = false is already enforced for small folds. I'm just writing it explicitly to avoid the warning.
-    if(family == 'binomial'){
-        fit <- cv.glmnet(features, labels, family = 'binomial', nlambda = nlambda, 
-                         type.measure = 'deviance', nfolds = nrow(features),
-                         foldid = foldid, alpha = alpha, standardize = TRUE, penalty.factor = p_factors, grouped = FALSE)
-    } else if(family == 'gaussian'){
-        fit <- cv.glmnet(features, labels, family = 'gaussian', nlambda = nlambda,
-                         type.measure = 'mse', nfolds = nrow(features),
-                         foldid = foldid, alpha = alpha, standardize = TRUE, penalty.factor = p_factors, grouped = FALSE)
-        
-    }
+    
+    
+    fit <- cv.glmnet(features, labels, family = family, alpha = alpha, standardize = TRUE, penalty.factor = p_factors, 
+                     nlambda = nlambda, weights = weights)
+
     
     
     return(fit)
@@ -669,25 +706,47 @@ fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, pena
 #     return(list(fit, pred))
 # }
 
-get_full_model <- function(features, labels, alpha, penalize_age_gender = TRUE, penalize_AD_PD = TRUE, family = 'binomial', nlambda = 100){
-    full_fit <- fit_glmnet(features = features, labels = labels, alpha = alpha, family = family, penalize_age_gender = penalize_age_gender, penalize_AD_PD = penalize_AD_PD, nlambda = nlambda)
-    lambda <- full_fit$lambda.1se
+#' quick function to adapt the filter_and_impute_multi() output format to work with fit_glmnet()
+#' @param imps is the output of filter_and_impute_multi()
+#' @param imp_num is an integer, one of 1:length(imps)
+full_age_model_from_imputed <- function(imp_num, imps){
+    full_matrix <- imps[[imp_num]][[1]]
+    age_index <- which(colnames(full_matrix) == 'Age')
+    features <- full_matrix[,-age_index]
+    target <- full_matrix[,age_index]
     
-    list(full_fit, lambda)
+    fit_glmnet(features, target, 
+               alpha = 0.5, penalize_age_gender = FALSE, family = 'gaussian')
+    
 }
+
+# get_full_model <- function(features, labels, alpha, penalize_age_gender = TRUE, penalize_AD_PD = TRUE, family = 'binomial', nlambda = 100){
+#     full_fit <- fit_glmnet(features = features, labels = labels, alpha = alpha, family = family, penalize_age_gender = penalize_age_gender, penalize_AD_PD = penalize_AD_PD, nlambda = nlambda)
+#     lambda <- full_fit$lambda.1se
+#     
+#     list(full_fit, lambda)
+# }
     
 # Fit a model on the full data to find lambda, and use that lambda for leave one out.
 #' This deprecates loo_pred_glmnet
 # we set penalize_age_gender/penalize_ADPD to be TRUE by default just so it's guaranteed to work with data that doesn't have these columns
     # but whenever these columns are present, the arguments should be false.
     # but even if we set the penalize tags as FALSE when the columns aren't there, everything will work (the penalize tag will be ignored)
-loo_cvfit_glmnet <- function(index, features, labels, lambda, full_fit, alpha, penalize_age_gender = TRUE, penalize_AD_PD = TRUE, family = 'binomial', nlambda = 100){
+loo_cvfit_glmnet <- function(index, features, labels, lambda = NULL, full_fit = NULL, alpha, penalize_age_gender = TRUE, penalize_AD_PD = TRUE, family = 'binomial', nlambda = 100, weights = rep(1, length(labels) - 1), post_select = FALSE){
     
     set.seed(1)
-    
+
     #features and label, leaving out one observation for training
     loo_features <- features[-index,]
     loo_labels <- labels[-index]
+    
+    if(family == "binomial"){
+        # calculate what fraction of the total each class has
+        freq_frac <- table(loo_labels)/length(loo_labels)
+        # assign 1 - that value to a "weights" vector
+        weights <- 1 - freq_frac[as.character(loo_labels)]    
+    }
+    
     
     #features and labels on the held out observation
     
@@ -708,10 +767,14 @@ loo_cvfit_glmnet <- function(index, features, labels, lambda, full_fit, alpha, p
     
     #documentation says we should avoid passing in single value of lambda. how else to do?
     #fit on n-1
-    fit <- glmnet(loo_features, loo_labels, family = family, lambda = lambda, alpha = alpha, standardize = TRUE, penalty.factor = p_factors)
+    # fit <- glmnet(loo_features, loo_labels, family = family, lambda = lambda, alpha = alpha, standardize = TRUE, penalty.factor = p_factors)
+    fit <- cv.glmnet(loo_features, loo_labels, family = family, alpha = alpha, standardize = TRUE, penalty.factor = p_factors, 
+                     nlambda = nlambda, weights = weights)
+    
+    
     
     #predict on 1
-    pred <- predict(fit, newx = new_features, type = 'response', s = lambda)
+    pred <- predict(fit, newx = new_features, type = 'response', s = "lambda.min")
     return(list(fit,pred, "cvfit" = full_fit))
 }
 
@@ -735,7 +798,14 @@ loo_cvfit_glmnet <- function(index, features, labels, lambda, full_fit, alpha, p
 fpr_tpr <- function(pred, label, y = 'tpr', x = 'fpr', label_ordering = NULL){
     rocpred <- ROCR::prediction(pred, label, label.ordering = label_ordering)
     rocfpr_tpr <- ROCR::performance(rocpred, measure = y, x.measure = x)
-    rocauc <- ROCR::performance(rocpred, measure = 'auc')
+    
+    # if plotting roc, get auc. if plotting precision-recall, get roprc
+    if(y == 'tpr'){
+        rocauc <- ROCR::performance(rocpred, measure = 'auc')
+    } else{
+        rocauc <- ROCR::performance(rocpred, measure = 'aucpr')
+    }
+    
     return(tibble(x = deframe(rocfpr_tpr@x.values), 
                   y = deframe(rocfpr_tpr@y.values),
                   auc = as.numeric(rocauc@y.values)))
@@ -747,7 +817,7 @@ fpr_tpr <- function(pred, label, y = 'tpr', x = 'fpr', label_ordering = NULL){
 # numbers are not on any kind of scale, but give some idea of relative importance\
 #metabolites is a flag for determining whether we need to map names to their metabolite name.
 importance <- function(fit, metabolites = TRUE){
-    coefficients <- coef(fit, s = 'lambda.1se') %>% 
+    coefficients <- coef(fit, s = 'lambda.min') %>% 
         as.matrix
     #order the coefficients for weak measure of importance, and remove coefs with 0 coeff
     #coefficients_sorted <- coefficients[order(abs(coefficients), decreasing = TRUE) & abs(coefficients) > 0,]
@@ -791,6 +861,35 @@ importance_consolidated_loo <- function(retained){
         spread(name, value)
 }
 
+#' Quick function to get a table of mean coefficients of a full model
+#' @param full_model is output of map(1:5, logistic_control_analysis, ...) with flag full_model = T
+get_importance_tables <- function(full_model){
+    # if the imputation number is not 5, then full_model is a single instance of logistic_control_analysis().
+    if(length(full_model) != 5){
+        importance_table <- importance(full_model) %>% 
+            enframe(value = "Coef") %>%
+            arrange(desc(abs(Coef))) %>%
+            filter(Coef != 0) %>%
+            select('Name' = name, Coef)
+    } else{
+        importance_table <- full_model %>% 
+            purrr::map(~importance(.x) %>% enframe(value = "coef")) %>%
+            reduce(full_join, by = "name") %>%
+            rename("imp1" = 2, "imp2" = 3, "imp3" = 4, "imp4" = 5, "imp5" = 6) %>%
+            mutate_if(is.numeric, ~ifelse(is.na(.x), 0, .x)) %>%
+            rowwise() %>%
+            mutate(name = str_replace_all(name, "_pos|_neg", ""),
+                   mean_coef = mean(c(imp1, imp2, imp3, imp4, imp5)) %>% round(2),
+                   median_coef = median(c(imp1, imp2, imp3, imp4, imp5))) %>%
+            arrange(desc(abs(mean_coef))) %>%
+            select("Name" = name, "Avg Coef" = mean_coef) %>%
+            ungroup() %>%
+            filter(`Avg Coef` != 0)
+    }
+    return(importance_table)
+}
+
+
 
 
 #########################################################
@@ -807,7 +906,7 @@ importance_consolidated_loo <- function(retained){
 #' NOTE: if genderM is not varname, then it will be included as a predictor in the model
 #' AD/PD/GBA flags take precedent over varname when determining the target var
 #' ie if AD_ind is TRUE, then the only purpose of varname is to set plot names
-logistic_control_analysis <- function(imputations, varname = "GenderM", imp_num = 1, nlambda = 100, AD_ind = FALSE, PD_ind = FALSE, GBA_ind = FALSE, APOE4_ind = FALSE, types = NULL){
+logistic_control_analysis <- function(imputations, varname = "GenderM", imp_num = 1, nlambda = 100, AD_ind = FALSE, PD_ind = FALSE, GBA_ind = FALSE, APOE4_ind = FALSE, types = NULL, full_model = FALSE, penalize_age_gender = F){
     
     imputed_c <- imputations[[imp_num]]
     imputed_c_Y <- imputed_c[[1]]
@@ -833,6 +932,7 @@ logistic_control_analysis <- function(imputations, varname = "GenderM", imp_num 
     } else if(PD_ind){
         imputed_c_target <- ifelse(imputed_c_type == "PD", 1,0)
     } else if(GBA_ind){
+        
         imputed_c_gba <- imputed_c[[5]]
         imputed_c_target <- ifelse(imputed_c_gba %in% c('E326K Carrier', 'Pathogenic Carrier', 'CT'), 1, 0)
     } else if(APOE4_ind){
@@ -864,9 +964,18 @@ logistic_control_analysis <- function(imputations, varname = "GenderM", imp_num 
     #turn type into a dummy var (multiple columns. AD is the redundant column (chosen))
     imputed_c_features_target <- model.matrix(~., imputed_c_features_target_tmp)
     
-    full_model <- get_full_model(features= imputed_c_features_target, imputed_c_target, alpha = 0.5, family = "binomial", penalize_AD_PD = FALSE, penalize_age_gender = FALSE, nlambda = nlambda)
-    fitpred_c_loo_target <- lapply(1:nrow(imputed_c_features_target), function(x) loo_cvfit_glmnet(x, imputed_c_features_target, imputed_c_target, lambda = full_model[[2]], full_fit = full_model[[1]],
-                                                                                                   alpha = 0.5, family = 'binomial', penalize_age_gender = FALSE, nlambda = nlambda))
+    if(full_model){
+        full_fit <- fit_glmnet(features = imputed_c_features_target, labels = imputed_c_target, 
+                               alpha = 0.5, family = 'binomial', 
+                               penalize_age_gender = penalize_age_gender, 
+                               nlambda = nlambda)
+        return(full_fit)
+    }
+    
+    #full_model <- get_full_model(features= imputed_c_features_target, imputed_c_target, alpha = 0.5, family = "binomial", penalize_AD_PD = FALSE, penalize_age_gender = FALSE, nlambda = nlambda)
+    fitpred_c_loo_target <- lapply(1:nrow(imputed_c_features_target), function(x) loo_cvfit_glmnet(x, imputed_c_features_target, imputed_c_target, 
+                                                                                                   alpha = 0.5, family = 'binomial', penalize_age_gender = penalize_age_gender, 
+                                                                                                   nlambda = nlambda))
     
     fit_c_loo_target <- lapply(fitpred_c_loo_target, function(x) x[[1]])
     pred_c_loo_target <- lapply(fitpred_c_loo_target, function(x) x[[2]]) %>%
@@ -929,7 +1038,7 @@ logistic_control_analysis <- function(imputations, varname = "GenderM", imp_num 
 #' @param imp_num imputation number. 1-5
 #' 
 #' @return median importance, shapiro test, results table, predtruth plot
-age_control_analysis <- function(imputations, target = "Age", name, color = NULL, imp_num = 1, nlambda = 100, ad_indicator = FALSE, pd_indicator = FALSE, map_got = TRUE){
+age_control_analysis <- function(imputations, target = "Age", name, color = NULL, imp_num = 1, nlambda = 100, ad_indicator = FALSE, pd_indicator = FALSE, map_got = TRUE, post_select = FALSE){
     
     if(!is.null(color)){
         color <- sym(color)
@@ -950,7 +1059,8 @@ age_control_analysis <- function(imputations, target = "Age", name, color = NULL
         as_tibble %>%
         #mutate(Type = imputed_c_type) %>%
         #1/8select(-Age)
-        select(-!!sym(target))
+        # we'll add back in intercept in model.matrix below
+        select(-all_of(c(target, "(Intercept)")))
     
     if(ad_indicator == TRUE){
         imputed_c_features_age_tmp <- imputed_c_features_age_tmp %>%
@@ -970,10 +1080,13 @@ age_control_analysis <- function(imputations, target = "Age", name, color = NULL
     imputed_c_features_age <- model.matrix(~., imputed_c_features_age_tmp)
     
     
-    full_model <- get_full_model(features= imputed_c_features_age, imputed_c_age, alpha = 0.5, family = "gaussian", penalize_AD_PD = FALSE, penalize_age_gender = FALSE, nlambda = nlambda)
+    #full_model <- get_full_model(features= imputed_c_features_age, imputed_c_age, alpha = 0.5, family = "gaussian", penalize_AD_PD = FALSE, penalize_age_gender = FALSE, nlambda = nlambda)
     # Note: If AD_ind, PD_ind are missing from the dataset, the flag penalize_AD_Pd doesn't do anything
-    fitpred_c_loo_age <- lapply(1:nrow(imputed_c_features_age), function(x) loo_cvfit_glmnet(x, imputed_c_features_age, imputed_c_age, lambda = full_model[[2]], full_fit = full_model[[1]],
-                                                                                             alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE, penalize_AD_PD = FALSE, nlambda = nlambda))
+    # fitpred_c_loo_age <- lapply(1:nrow(imputed_c_features_age), function(x) loo_cvfit_glmnet(x, imputed_c_features_age, imputed_c_age, lambda = full_model[[2]], full_fit = full_model[[1]],
+    #                                                                                          alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE, penalize_AD_PD = FALSE, nlambda = nlambda))
+    fitpred_c_loo_age <- lapply(1:nrow(imputed_c_features_age), function(x) loo_cvfit_glmnet(x, imputed_c_features_age, imputed_c_age, alpha = 0.5, 
+                                                                                             family = 'gaussian', penalize_age_gender = FALSE, penalize_AD_PD = FALSE, nlambda = nlambda, post_select = post_select))
+    
     
     fit_c_loo_age <- lapply(fitpred_c_loo_age, function(x) x[[1]])
     pred_c_loo_age <- lapply(fitpred_c_loo_age, function(x) x[[2]]) %>%
@@ -1117,34 +1230,39 @@ predtruth_plot <- function(df, pred_name = "imp_avg", name, color = NULL, errorb
     mae_null <- (df$truth - null_pred) %>% abs %>% mean %>% round(2)
     
     if(errorbar){
+        # need to manually keep width constant. ow error bar length is determined by number of points at that x
+        df <- df %>%
+            group_by(truth) %>%
+            mutate(width = 2 * n()) %>%
+            ungroup()
+        
         ggplot(df) + 
-            geom_point(aes(truth, !!pred_name, color = !!color, group = id), size = 2.5, position = position_dodge(width = .2)) + 
-            geom_errorbar(aes(x = truth, ymin = imp_min, ymax = imp_max, group = id), alpha = 0.5, position = position_dodge(width = .2), width= 0.9) + 
+            geom_errorbar(aes(x = truth, ymin = imp_min, ymax = imp_max, group = id, width = width), position = position_dodge(.3),  alpha = 0.7, size = 1) + 
+            geom_point(aes(truth, !!pred_name, color = !!color, group = id), size = 4.5, position = position_dodge(.3)) +
             scale_color_viridis_d() +
-            labs(title = paste0(name, ': True vs Predicted Age'),
-                 #subtitle = paste0(data_name, " averaged over 5 imputations, alpha = 0.5, loo"),
-                 x = 'True Age',
+            labs(title = name,
+                 x = 'Chronological Age',
                  y = 'Predicted Age') + 
             geom_abline(intercept = 0, slope = 1) + 
             expand_limits(x = 15, y = c(15, 100)) + 
             geom_richtext(aes(x = box_pos$x, y = box_pos$y, hjust = box_pos$hjust, vjust = box_pos$vjust, label = paste0("R^2: ", cor(truth, !!pred_name, method = "pearson")^2 %>% round(2), 
-                                                                                                                         "<br>RMSE: ", (truth - !!pred_name)^2 %>% mean %>% sqrt %>% round(2), " (",rmse_null,")", 
-                                                                                                                         "<br>MAE: ", (truth - !!pred_name) %>% abs %>% mean %>% round(2), " (",mae_null,")")),
+                                                                                                                         "<br>RMSE: ", (truth - !!pred_name)^2 %>% mean %>% sqrt %>% round(2), " [",rmse_null,"]", 
+                                                                                                                         "<br>MAE: ", (truth - !!pred_name) %>% abs %>% mean %>% round(2), " [",mae_null,"]")),
                           size = 12)
     } else {
         # same as above, but just without errorbar
         ggplot(df) + 
-            geom_point(aes(truth, !!pred_name, color = !!color), size = 2.5, position = position_dodge(width = .2)) + 
+            geom_point(aes(truth, !!pred_name, color = !!color), size = 4.5, position = position_dodge(width = .2)) + 
             scale_color_viridis_d() +
-            labs(title = paste0(data_name, ': True vs Predicted Age'),
-                 subtitle = paste0(name, " averaged over 5 imputations, alpha = 0.5, loo"),
-                 x = 'True Age',
+            labs(title = name,
+                 #subtitle = paste0(name, " averaged over 5 imputations, alpha = 0.5, loo"),
+                 x = 'Chronological Age',
                  y = 'Predicted Age') + 
             geom_abline(intercept = 0, slope = 1) + 
             expand_limits(x = 15, y = c(15, 100)) + 
             geom_richtext(aes(x = box_pos$x, y = box_pos$y, hjust = box_pos$hjust, vjust = box_pos$vjust, label = paste0("R^2: ", cor(truth, !!pred_name, method = "pearson")^2 %>% round(2), 
-                                                                                                                         "<br>RMSE: ", (truth - !!pred_name)^2 %>% mean %>% sqrt %>% round(2), " (",rmse_null,")", 
-                                                                                                                         "<br>MAE: ", (truth - !!pred_name) %>% abs %>% mean %>% round(2), " (",mae_null,")")),
+                                                                                                                         "<br>RMSE: ", (truth - !!pred_name)^2 %>% mean %>% sqrt %>% round(2), " [",rmse_null,"]", 
+                                                                                                                         "<br>MAE: ", (truth - !!pred_name) %>% abs %>% mean %>% round(2), " [",mae_null,"]")),
                           size = 12)
     }
     
@@ -1247,12 +1365,22 @@ age_metabolite_p <- function(data, metabolite, var = "Age", family = "gaussian",
 #' @param data is a imputation list (eg imputed_c_combined5)
 #' @param imp_num is integer 1-5 (which imputation touse)
 #' @param var/family/conc are as in age_metabolite_p. 
+#' @param types_index is a numeric vector of the row indices associated with the types of interest (eg if we're trying to classify pd against controls, types_index would the index of all PD and controls)
 #' 
-bh_univariate_age <- function(data, var = "Age", family = "gaussian", conc = FALSE, imp_num = 1) {
-    df <- data[[imp_num]][[1]] %>%
-        as_tibble() %>%
-        dplyr::select(-c('(Intercept)', GenderM)) %>%
-        mutate_at(.vars = vars(-any_of(c("Age", "AD_ind", "PD_ind", "GBA_ind"))), .funs = ~scale(.x, center = T, scale = T))
+bh_univariate_age <- function(data, var = "Age", family = "gaussian", conc = FALSE, imp_num = 1, scale = F, types_index) {
+    if(scale){
+        df <- data[[imp_num]][[1]] %>%
+            as_tibble() %>%
+            dplyr::slice(types_index) %>%
+            dplyr::select(-any_of(c('(Intercept)', 'GenderM'))) %>%
+            mutate_at(.vars = vars(-any_of(c("Age", "AD_ind", "PD_ind", "GBA_ind"))), .funs = ~scale(.x, center = T, scale = T))
+    } else{
+        df <- data[[imp_num]][[1]] %>%
+            as_tibble() %>%
+            slice(types_index) %>%
+            dplyr::select(-any_of(c('(Intercept)', 'GenderM')))
+    }
+    
     
     p_table <- df %>%
         names %>%
@@ -1334,7 +1462,7 @@ mummichog_plot <- function(path){
         geom_hline(yintercept = -log10(0.05), lty = "dashed") +
         labs(y = TeX("-log_{10} $p$-values (BH corrected)"), 
              x = "") + 
-        theme(axis.text.y = element_text(size = rel(1.5))) + 
+        theme(axis.text.y = element_text(size = rel(1.75))) + 
         coord_flip() 
 }
 
@@ -1550,6 +1678,32 @@ wide_data_combined <- wide_data %>%
     inner_join(wide_data_lipids, by = 'Id') 
 
 
+#### PANUC data
+panuc_data <- readxl::read_xlsx(file.path(data_path, 'data', 'PANUC', 'panuc-0133-2019_07_09.xlsx'))
+
+wide_data_targeted_panuc <- panuc_data %>% 
+    select(Id = subject_id, led, no_meds_reported) %>%
+    inner_join(wide_data_targeted, by = "Id") %>%
+    #drop na for now  (8 obs)
+    filter(!is.na(led))
+
+wide_data_untargeted_panuc <- panuc_data %>% 
+    select(Id = subject_id, led, no_meds_reported) %>%
+    inner_join(wide_data_untargeted, by = "Id") %>%
+    #drop na for now  (8 obs)
+    filter(!is.na(led))
+
+wide_data_panuc <- panuc_data %>% 
+    select(Id = subject_id, led, no_meds_reported) %>%
+    inner_join(wide_data, by = "Id") %>%
+    #drop na for now  (8 obs)
+    filter(!is.na(led))
+
+wide_data_lipids_panuc <- panuc_data %>% 
+    select(Id = subject_id, led, no_meds_reported) %>%
+    inner_join(wide_data_lipids, by = "Id") %>%
+    #drop na for now  (8 obs)
+    filter(!is.na(led))
 
 
 
@@ -1626,7 +1780,16 @@ wide_data_lipids_matched_pd_c <- lapply(1:nrow(wide_data_pd_lipids), function(x)
 wide_data_lipids_matched_ad_c <- lapply(1:nrow(wide_data_ad_lipids), function(x) find_control(x, wide_data_ad_lipids, wide_data_lipids)) %>%
     bind_rows(wide_data_ad_lipids)
  
+# versions of the data where abundances are replaced with missingness indicators (0 if missing, 1 if present)
 
+wide_data_targeted_naind <- wide_data_targeted %>%
+    mutate(across(-any_of(metadata_cols), ~ifelse(is.na(.x), 0, 1)))
+wide_data_got_naind <- wide_data %>%
+    mutate(across(-any_of(metadata_cols), ~ifelse(is.na(.x), 0, 1)))
+wide_data_lipids_naind <- wide_data_lipids %>%
+    mutate(across(-any_of(metadata_cols), ~ifelse(is.na(.x), 0, 1)))
+wide_data_untargeted_naind <- wide_data_untargeted %>%
+    mutate(across(-any_of(metadata_cols), ~ifelse(is.na(.x), 0, 1)))
 
 
                            

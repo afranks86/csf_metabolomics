@@ -1,6 +1,105 @@
 source(here::here("analysis", "starter.R"))
 
 
+library(CCA)
+
+
+## descriptive summary table
+panuc_data <- read_csv('E:/Projects/metabolomics/ND_Metabolomics/data/PANUC/panuc.csv')
+ad_c_tracking <- read_csv('E:/Projects/metabolomics/ND_Metabolomics/data/ADTracking.csv') %>%
+  select(LPAge, Sex = Gender, Type = PrimaryDx, OnsetAge) %>%
+  mutate(Type = fct_collapse(Type,'Control' = c('CO', 'CY', 'CM')))
+pd_tracking <- read_csv('E:/Projects/metabolomics/ND_Metabolomics/data/PDTracking.csv') %>%
+  left_join(panuc_data, by = c('PaNUCID' = 'subject_id')) %>%
+  select(LPAge = AgeAtDraw, Sex, Type = `Disease Diagnosis`, cognitive_status, OnsetAge = ageatonset) %>%
+  filter(Type == 'PD') %>%
+  mutate(Sex = case_when(
+    Sex == 'Female' ~ "F",
+    Sex == 'Male' ~ 'M',
+    TRUE ~ Sex
+    )
+  )
+
+summary_subject_info <- ad_c_tracking %>%
+  bind_rows(pd_tracking) %>%
+  mutate(Type = fct_relevel(Type, 'Control', after = 0L)) %>%
+  group_by(Type) %>%
+  summarize(
+    num_subjects = n(),
+    num_female = sum(Sex == "F"),
+    min_LPage = min(LPAge), mean_LPage = mean(LPAge), max_LPage = max(LPAge),
+    min_OnsetAge = min(OnsetAge), mean_OnsetAge = mean(OnsetAge), max_OnsetAge = max(OnsetAge),
+    has_dementia = sum(cognitive_status == 'Dementia'),
+    no_cognitive_impairment = sum(cognitive_status == 'No cognitive impairment')
+  ) %>%
+  mutate(across(-c('Type', 'num_subjects'), ~round(.x, digits = 2))) %>%
+  transmute(Type, num_subjects,
+            num_female,
+            LPAge = str_glue('{mean_LPage} [{min_LPage}, {max_LPage}]'),
+            OnsetAge = str_glue('{mean_OnsetAge} [{min_OnsetAge}, {max_OnsetAge}]'),
+            has_dementia,
+            no_cognitive_impairment)
+
+write_csv(summary_subject_info, path = here('ad_pd', 'summary_subject_info.csv'))
+
+
+# transpose
+tar_c_index <- which(imputed_all_targeted5[[1]][[2]] %in% c("CO", "CM", "CY")) %>%
+  sample(size = 56)
+tar_c <- imputed_all_targeted5[[1]][[1]][tar_c_index,]
+
+tar_ad_index <- which(imputed_all_targeted5[[1]][[2]] == "AD") %>%
+  sample(size = 56)
+tar_ad <- imputed_all_targeted5[[1]][[1]][tar_ad_index,]
+
+tar_pd_index <- which(imputed_all_targeted5[[1]][[2]] == "PD")
+tar_pd <- imputed_all_targeted5[[1]][[1]][tar_pd_index,]
+
+cca_lambda_c_ad <- estim.regul(tar_c, tar_ad, plt = T)
+cca_ad_c <- rcc(tar_c, tar_ad, cca_lambda_c_ad$lambda1, cca_lambda_c_ad$lambda2)
+plt.cc(cca_ad_c)
+ggplot(tibble(cor = cca_ad_c$cor) %>% rownames_to_column() %>% slice(1:10)) + 
+  geom_col(aes(rowname, cor))
+
+cca_lambda_c_pd <- estim.regul(tar_c, tar_pd, plt = T)
+cca_c_pd <- rcc(tar_c, tar_pd, cca_lambda_c_pd$lambda1, cca_lambda_c_pd$lambda2)
+plt.cc(cca_c_pd)
+ggplot(tibble(cor = cca_c_pd$cor) %>% rownames_to_column() %>% slice(1:10)) + 
+  geom_col(aes(rowname, cor))
+
+
+cca_lambda_ad_pd <- estim.regul(tar_ad, tar_pd, plt = T)
+cca_ad_pd <- rcc(tar_ad, tar_pd, cca_lambda_ad_pd$lambda1, cca_lambda_ad_pd$lambda2)
+plt.cc(cca_ad_pd)
+ggplot(tibble(cor = cca_ad_c$cor) %>% rownames_to_column() %>% slice(1:10)) + 
+  geom_col(aes(rowname, cor))
+
+
+
+got_c_index <- which(imputed_all_got5[[1]][[2]] %in% c("CO", "CM", "CY")) %>%
+  sample(size = 56)
+got_c <- imputed_all_got5[[1]][[1]][got_c_index,]
+
+got_ad_index <- which(imputed_all_got5[[1]][[2]] == "AD") %>%
+  sample(size = 56)
+got_ad <- imputed_all_got5[[1]][[1]][got_ad_index,]
+
+got_pd_index <- which(imputed_all_got5[[1]][[2]] == "PD")
+got_pd <- imputed_all_got5[[1]][[1]][got_pd_index,]
+
+got_cca_lambda_c_ad <- estim.regul(got_c, got_ad, plt = T)
+got_cca_ad_c <- rcc(got_c, got_ad, got_cca_lambda_c_ad$lambda1, got_cca_lambda_c_ad$lambda2)
+
+got_cca_lambda_c_pd <- estim.regul(got_c, got_pd, plt = T)
+got_cca_c_pd <- rcc(got_c, got_pd, got_cca_lambda_c_pd$lambda1, got_cca_lambda_c_pd$lambda2)
+
+got_cca_lambda_ad_pd <- estim.regul(got_ad, got_pd, plt = T)
+got_cca_ad_pd <- rcc(got_ad, got_pd, got_cca_lambda_ad_pd$lambda1, got_cca_lambda_ad_pd$lambda2)
+plt.cc(cca_ad_pd)
+
+
+# lda multiclass? 
+# cca on ad/control, project control data onto first few components.
 
 ## Before we get into it, here's a quick distribution of age. could've picked any dataset -- same subjects
 age_dist_ad_pd <- ggplot(wide_data_targeted %>% collapse_controls(), aes(Age)) +
@@ -51,8 +150,7 @@ pca_untargeted_x <- untargeted_all_processed %>%
   dplyr::select(-any_of(metadata_cols)) 
 
 pca_all_untargeted <- pca_untargeted_x %>%
-  opls(algoC = "nipals",
-       parAsColFcVn = untargeted_c_processed$Type)
+  opls(algoC = "nipals")
 
 
 pca_scores_all_untargeted <- pca_all_untargeted@scoreMN %>%
@@ -86,8 +184,39 @@ ggsave("pca_adpd_untar.png",
        height = 10)
 
 
+### PLS-DA on phenotype
+
+plsda_all_untargeted <- opls(pca_untargeted_x, algoC = "nipals",
+       y = as.character(collapse_controls(untargeted_all_processed)$Type), predI = 2)
+
+plsda_all_untargeted <- readRDS(here("aging_output_files", "plsda_all_untargeted.Rds"))
+# saveRDS(plsda_all_untargeted, here("aging_output_files", "plsda_all_untargeted.Rds"))
+
+plsda_pc1_varx_explained <- plsda_all_untargeted@modelDF["p1","R2X"] %>%
+  scales::percent()
+plsda_pc2_varx_explained <- plsda_c_untargeted@modelDF["p2","R2X"] %>%
+  scales::percent()
 
 
+plsda_scores_all_untargeted <- plsda_all_untargeted@scoreMN %>%
+  as_tibble() %>%
+  bind_cols(untargeted_all_processed %>% select(Age, "Sex" = Gender, APOE, Type, Id)) %>%
+  collapse_controls()
+
+plsda_type_untargeted <- ggplot(plsda_scores_all_untargeted, aes(p1, p2, color = Type)) + 
+  geom_point(size = 5) +
+  stat_ellipse(size = 2) +
+  labs(title = "Partial Least Squares Discriminant Analysis",
+       subtitle = "by phenotype",
+       x = str_glue("PC1 ({plsda_pc1_varx_explained})"),
+       y = str_glue("PC2 ({plsda_pc2_varx_explained})")) + 
+  scale_color_viridis_d()
+
+ggsave("plsda_type_untar.png",
+       plot = plsda_type_untargeted,
+       path = here("plots", "adpd_figs"),
+       width = 14,
+       height = 10)
 
 
 #### not stratifying the imputation at all
@@ -785,37 +914,6 @@ ggplot() + geom_point(aes(x = lipids_pd_logistic[[1]]$pred, y = dev_resid_pd)) +
 
 
 
-targeted_coef_table <- targeted_age_analysis %>%
-  purrr::imap(~enframe(.x[[2]], value = str_glue("coef{.y}"))) %>%
-  reduce(~full_join(.x, .y, by = "name")) %>%
-  rowwise() %>%
-  transmute(name = str_replace_all(name, "_pos|_neg", ""),
-            avgCoef = mean(c(coef1, coef2, coef3, coef4, coef5), na.rm = TRUE) %>% round(1)
-  ) %>%
-  ungroup() %>%
-  arrange(desc(abs(avgCoef))) %>%
-  filter(name != "(Intercept)")
-
-# write separate tables for positive and negative coefs
-targeted_coef_table %>%
-  filter(avgCoef > 0) %>%
-  write_csv(here("aging_tables", "pos_coef_table_targeted.csv"))
-
-targeted_coef_table %>%
-  filter(avgCoef < 0) %>%
-  write_csv(here("aging_tables", "neg_coef_table_targeted.csv"))
-
-
-
-
-
-
-
-
-
-
-
-
 
 # relationship between retained pd and retained ad?
 intersect(lipids_ad_in_all, lipids_pd_in_all)
@@ -1004,6 +1102,278 @@ got_pd_retained_table <- tibble(
 
 ###########################
 
+# Get full models for coefs
+
+############################
+
+targeted_pd_full <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_targeted5, varname ="PD_ind", imp_num = .x, nlambda = 200, PD_ind = T, types = c("CO", "CM", "CY", "PD"), full_model = T))
+targeted_ad_full <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_targeted5, varname ="AD_ind", imp_num = .x, nlambda = 200, AD_ind = T, types = c("CO", "CM", "CY", "AD"), full_model = T))
+lipids_pd_full <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_lipids5, varname ="PD_ind", imp_num = .x, nlambda = 200, PD_ind = T, types = c("CO", "CM", "CY", "PD"), full_model = T))
+lipids_ad_full <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_lipids5, varname ="AD_ind", imp_num = .x, nlambda = 200, AD_ind = T, types = c("CO", "CM", "CY", "AD"), full_model = T))
+
+targeted_adpd_full <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_targeted5, varname ="AD_ind", imp_num = .x, nlambda = 200, AD_ind = T, types = c("PD", "AD"), full_model = T))
+lipids_adpd_full <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_lipids5, varname ="AD_ind", imp_num = .x, nlambda = 200, AD_ind = T, types = c("PD", "AD"), full_model = T))
+
+
+untargeted_pd_full <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_untargeted5, varname ="PD_ind", imp_num = .x, nlambda = 200, PD_ind = T, types = c("CO", "CM", "CY", "PD"), full_model = T))
+
+saveRDS(targeted_pd_full, file = here('ad_pd', 'targeted_pd_full.Rds'))
+saveRDS(targeted_ad_full, file = here('ad_pd', 'targeted_ad_full.Rds'))
+saveRDS(lipids_pd_full, file = here('ad_pd', 'lipids_pd_full.Rds'))
+saveRDS(lipids_ad_full, file = here('ad_pd', 'lipids_ad_full.Rds'))
+
+saveRDS(targeted_adpd_full, file = here('ad_pd', 'targeted_adpd_full.Rds'))
+saveRDS(lipids_adpd_full, file = here('ad_pd', 'lipids_adpd_full.Rds'))
+
+saveRDS(untargeted_pd_full, file = here('ad_pd', 'untargeted_pd_full.Rds'))
+
+
+
+
+full_targeted_ad_coefs <- get_importance_tables(targeted_ad_full)
+
+# write separate tables for positive and negative coefs
+full_targeted_ad_coefs %>%
+  filter(`Avg Coef` > 0) %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_csv(here("ad_pd", "pos_coef_table_targeted_ad.csv"))
+
+full_targeted_ad_coefs %>%
+  filter(`Avg Coef` < 0) %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_csv(here("ad_pd", "neg_coef_table_targeted_ad.csv"))
+
+full_targeted_ad_coefs %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  mutate(name = Name %>% str_to_lower() %>% str_trim(),
+         mapped_name = case_when(
+           #https://pubchem.ncbi.nlm.nih.gov/compound/12-Ketolithocholic-acid
+           name == "3\\?-hydroxy-12 ketolithocholic acid" ~ "12-Ketodeoxycholic acid",
+           #https://www.ebi.ac.uk/chebi/searchId.do?chebiId=CHEBI:27726 / https://www.genome.jp/dbget-bin/www_bget?cpd:C06560
+           name == "2-chloro-4,6-diamino-1,3,5-triazine" ~ "Deisopropyldeethylatrazine",
+           #http://www.hmdb.ca/metabolites/HMDB0006029
+           name == "acetyl-l-glutamine" ~ "N-Acetylglutamine",
+           #https://pubchem.ncbi.nlm.nih.gov/compound/Acetylornithine
+           name == "acetylornithine" ~  "N-Acetylornithine",
+           #https://pubchem.ncbi.nlm.nih.gov/compound/5-Aminovaleric-acid
+           name == "amino valerate" ~ "5-Aminopentanoic acid",
+           #https://pubchem.ncbi.nlm.nih.gov/compound/N_N-dimethylarginine
+           name == "dimethylarginine" ~ "Asymmetric dimethylarginine",
+           #https://pubchem.ncbi.nlm.nih.gov/compound/1826
+           name == "hiaa" ~ 	"5-Hydroxyindoleacetic acid",
+           TRUE ~ name)) %>%
+  select(mapped_name) %>%
+  write_tsv(here("ad_pd", "msea_ad_names_multivar_sig.txt"))
+
+
+full_targeted_pd_coefs <- get_importance_tables(targeted_pd_full)
+# write separate tables for positive and negative coefs
+full_targeted_pd_coefs %>%
+  filter(`Avg Coef` > 0) %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_csv(here("ad_pd", "pos_coef_table_targeted_pd.csv"))
+
+full_targeted_pd_coefs %>%
+  filter(`Avg Coef` < 0) %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_csv(here("ad_pd", "neg_coef_table_targeted_pd.csv"))
+
+full_targeted_pd_coefs %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  mutate(name = Name %>% str_to_lower() %>% str_trim(),
+         mapped_name = case_when(
+           #https://pubchem.ncbi.nlm.nih.gov/compound/12-Ketolithocholic-acid
+           name == "3\\?-hydroxy-12 ketolithocholic acid" ~ "12-Ketodeoxycholic acid",
+           #https://www.ebi.ac.uk/chebi/searchId.do?chebiId=CHEBI:27726 / https://www.genome.jp/dbget-bin/www_bget?cpd:C06560
+           name == "2-chloro-4,6-diamino-1,3,5-triazine" ~ "Deisopropyldeethylatrazine",
+           #http://www.hmdb.ca/metabolites/HMDB0006029
+           name == "acetyl-l-glutamine" ~ "N-Acetylglutamine",
+           #https://pubchem.ncbi.nlm.nih.gov/compound/Acetylornithine
+           name == "acetylornithine" ~  "N-Acetylornithine",
+           #https://pubchem.ncbi.nlm.nih.gov/compound/5-Aminovaleric-acid
+           name == "amino valerate" ~ "5-Aminopentanoic acid",
+           #https://pubchem.ncbi.nlm.nih.gov/compound/N_N-dimethylarginine
+           name == "dimethylarginine" ~ "Asymmetric dimethylarginine",
+           #https://pubchem.ncbi.nlm.nih.gov/compound/1826
+           name == "hiaa" ~ 	"5-Hydroxyindoleacetic acid",
+           TRUE ~ name)) %>%
+  select(mapped_name) %>%
+  write_tsv(here("ad_pd", "msea_pd_names_multivar_sig.txt"))
+
+#
+full_lipids_ad_coefs <- get_importance_tables(lipids_ad_full)
+
+# write separate tables for positive and negative coefs
+full_lipids_ad_coefs %>%
+  filter(`Avg Coef` > 0) %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_csv(here("ad_pd", "pos_coef_table_lipids_ad.csv"))
+
+full_lipids_ad_coefs %>%
+  filter(`Avg Coef` < 0) %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_csv(here("ad_pd", "neg_coef_table_lipids_ad.csv"))
+
+
+full_lipids_pd_coefs <- get_importance_tables(lipids_pd_full)
+# write separate tables for positive and negative coefs
+full_lipids_pd_coefs %>%
+  filter(`Avg Coef` > 0) %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_csv(here("ad_pd", "pos_coef_table_lipids_pd.csv"))
+
+full_lipids_pd_coefs %>%
+  filter(`Avg Coef` < 0) %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_csv(here("ad_pd", "neg_coef_table_lipids_pd.csv"))
+
+
+### ad vs pd
+full_targeted_adpd_coefs <- get_importance_tables(targeted_adpd_full)
+
+# write separate tables for positive and negative coefs
+full_targeted_adpd_coefs %>%
+  filter(`Avg Coef` > 0) %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_csv(here("ad_pd", "pos_coef_table_targeted_adpd.csv"))
+
+full_targeted_adpd_coefs %>%
+  filter(`Avg Coef` < 0) %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_csv(here("ad_pd", "neg_coef_table_targeted_adpd.csv"))
+
+full_targeted_adpd_coefs %>%
+  filter(Name %in% c("(Intercept)", "Age", "GenderM"))
+
+# lipids
+full_lipids_adpd_coefs <- get_importance_tables(lipids_adpd_full)
+
+full_lipids_adpd_coefs %>%
+  filter(`Avg Coef` > 0) %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_csv(here("ad_pd", "pos_coef_table_lipids_adpd.csv"))
+
+full_lipids_adpd_coefs %>%
+  filter(`Avg Coef` < 0) %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_csv(here("ad_pd", "neg_coef_table_lipids_adpd.csv"))
+
+full_lipids_adpd_coefs %>%
+  filter(Name %in% c("(Intercept)", "Age", "GenderM"))
+
+#### full na indicator models
+
+# get na_indicator data in form suitable for logistic_analysis function. doesn't actually impute anything
+all_targeted_naind <- filter_and_impute_multi(wide_data_targeted_naind, c('CO', 'CY', 'CM', "AD", "PD"), transpose = F, impute =F)
+all_targeted_naind <- readRDS(here("ad_pd", "all_targeted_naind.Rds"))
+# saveRDS(all_targeted_naind, here("ad_pd", "all_targeted_naind.Rds"))
+
+all_lipids_naind <- filter_and_impute_multi(wide_data_lipids_naind, c('CO', 'CY', 'CM', "AD", "PD"), transpose = F, impute =F)
+all_lipids_naind <- readRDS(here("ad_pd", "all_lipids_naind.Rds"))
+# saveRDS(all_lipids_naind, here("ad_pd", "all_lipids_naind.Rds"))
+
+all_untargeted_naind <- filter_and_impute_multi(wide_data_untargeted_naind, c('CO', 'CY', 'CM', "AD", "PD"), transpose = F, impute =F)
+all_untargeted_naind <- readRDS(here("ad_pd", "all_untargeted_naind.Rds"))
+# saveRDS(all_untargeted_naind, here("ad_pd", "all_untargeted_naind.Rds"))
+
+
+targeted_pd_full_naind <- logistic_control_analysis(all_targeted_naind, varname ="PD_ind", imp_num = 1, nlambda = 200, PD_ind = T, types = c("CO", "CM", "CY", "PD"), full_model = T)
+targeted_ad_full_naind <- logistic_control_analysis(all_targeted_naind, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("CO", "CM", "CY", "AD"), full_model = T)
+lipids_pd_full_naind <- logistic_control_analysis(all_lipids_naind, varname ="PD_ind", imp_num = 1, nlambda = 200, PD_ind = T, types = c("CO", "CM", "CY", "PD"), full_model = T)
+lipids_ad_full_naind <- logistic_control_analysis(all_lipids_naind, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("CO", "CM", "CY", "AD"), full_model = T)
+
+targeted_adpd_full_naind <- logistic_control_analysis(all_targeted_naind, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("PD", "AD"), full_model = T)
+lipids_adpd_full_naind <- logistic_control_analysis(all_lipids_naind, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("PD", "AD"), full_model = T)
+
+untargeted_pd_full_naind <- logistic_control_analysis(all_untargeted_naind, varname ="PD_ind", imp_num = 1, nlambda = 200, PD_ind = T, types = c("CO", "CM", "CY", "PD"), full_model = T)
+
+saveRDS(targeted_pd_full_naind, file = here('ad_pd', 'targeted_pd_full_naind.Rds'))
+saveRDS(targeted_ad_full_naind, file = here('ad_pd', 'targeted_ad_full_naind.Rds'))
+saveRDS(lipids_pd_full_naind, file = here('ad_pd', 'lipids_pd_full_naind.Rds'))
+saveRDS(lipids_ad_full_naind, file = here('ad_pd', 'lipids_ad_full_naind.Rds'))
+saveRDS(targeted_adpd_full_naind, file = here('ad_pd', 'targeted_adpd_full_naind.Rds'))
+saveRDS(lipids_adpd_full_naind, file = here('ad_pd', 'lipids_adpd_full_naind.Rds'))
+
+saveRDS(untargeted_pd_full_naind, file = here('ad_pd', 'untargeted_pd_full_naind.Rds'))
+
+get_importance_tables(lipids_pd_full_naind) %>%
+  mutate(Coef = round(Coef, digits = 2),
+         Name = str_replace_all(Name, "_pos|_neg", "")) %>%
+  filter(!(Name %in% c("(Intercept)"))) %>%
+  write_csv(here("ad_pd", "coef_table_lipids_pd_naind.csv"))
+  
+
+get_importance_tables(targeted_ad_full_naind) %>%
+  filter(!(Name %in% c("(Intercept)"))) %>%
+  mutate(Coef = round(Coef, digits = 2),
+         Name = str_replace_all(Name, "_pos|_neg", "")) %>%
+  write_csv(here("ad_pd", "coef_table_targeted_ad_naind.csv"))
+get_importance_tables(lipids_ad_full_naind)
+
+
+
+###### same thing without penalty
+targeted_pd_full_naind_nopenalize <- logistic_control_analysis(all_targeted_naind, varname ="PD_ind", imp_num = 1, nlambda = 200, PD_ind = T, types = c("CO", "CM", "CY", "PD"), full_model = T, penalize_age_gender = T)
+targeted_ad_full_naind_nopenalize <- logistic_control_analysis(all_targeted_naind, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("CO", "CM", "CY", "AD"), full_model = T, penalize_age_gender = T)
+lipids_pd_full_naind_nopenalize <- logistic_control_analysis(all_lipids_naind, varname ="PD_ind", imp_num = 1, nlambda = 200, PD_ind = T, types = c("CO", "CM", "CY", "PD"), full_model = T, penalize_age_gender = T)
+lipids_ad_full_naind_nopenalize <- logistic_control_analysis(all_lipids_naind, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("CO", "CM", "CY", "AD"), full_model = T, penalize_age_gender = T)
+targeted_adpd_full_naind_nopenalize <- logistic_control_analysis(all_targeted_naind, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("PD", "AD"), full_model = T, penalize_age_gender = T)
+lipids_adpd_full_naind_nopenalize <- logistic_control_analysis(all_lipids_naind, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("PD", "AD"), full_model = T, penalize_age_gender = T)
+
+untargeted_pd_full_naind_nopenalize <- logistic_control_analysis(all_untargeted_naind, varname ="PD_ind", imp_num = 1, nlambda = 200, PD_ind = T, types = c("CO", "CM", "CY", "PD"), full_model = T, penalize_age_gender = T)
+untargeted_adpd_full_naind_nopenalize <- logistic_control_analysis(all_untargeted_naind, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("AD", "PD"), full_model = T, penalize_age_gender = T)
+
+saveRDS(targeted_pd_full_naind_nopenalize, file = here('ad_pd', 'targeted_pd_full_naind_nopenalize.Rds'))
+saveRDS(targeted_ad_full_naind_nopenalize, file = here('ad_pd', 'targeted_ad_full_naind_nopenalize.Rds'))
+saveRDS(lipids_pd_full_naind_nopenalize, file = here('ad_pd', 'lipids_pd_full_naind_nopenalize.Rds'))
+saveRDS(lipids_ad_full_naind_nopenalize, file = here('ad_pd', 'lipids_ad_full_naind_nopenalize.Rds'))
+saveRDS(targeted_adpd_full_naind_nopenalize, file = here('ad_pd', 'targeted_adpd_full_naind_nopenalize.Rds'))
+saveRDS(lipids_adpd_full_naind_nopenalize, file = here('ad_pd', 'lipids_adpd_full_naind_nopenalize.Rds'))
+
+saveRDS(untargeted_pd_full_naind_nopenalize, file = here('ad_pd', 'untargeted_pd_full_naind_nopenalize.Rds'))
+saveRDS(untargeted_adpd_full_naind_nopenalize, file = here('ad_pd', 'untargeted_adpd_full_naind_nopenalize.Rds'))
+
+get_importance_tables(lipids_pd_full_naind_nopenalize) %>%
+  mutate(Coef = round(Coef, digits = 2),
+         Name = str_replace_all(Name, "_pos|_neg", "")) %>%
+  filter(!(Name %in% c("(Intercept)"))) %>%
+  write_csv(here("ad_pd", "coef_table_lipids_pd_naind_nopenalize.csv"))
+
+get_importance_tables(lipids_ad_full_naind_nopenalize) %>%
+  mutate(Coef = round(Coef, digits = 2),
+         Name = str_replace_all(Name, "_pos|_neg", "")) %>%
+  filter(!(Name %in% c("(Intercept)"))) %>%
+  write_csv(here("ad_pd", "coef_table_lipids_ad_naind_nopenalize.csv"))
+
+get_importance_tables(lipids_adpd_full_naind_nopenalize) %>%
+  mutate(Coef = round(Coef, digits = 2),
+         Name = str_replace_all(Name, "_pos|_neg", "")) %>%
+  filter(!(Name %in% c("(Intercept)"))) %>%
+  write_csv(here("ad_pd", "coef_table_lipids_adpd_naind_nopenalize.csv"))
+
+
+get_importance_tables(targeted_ad_full_naind_nopenalize) %>%
+  filter(!(Name %in% c("(Intercept)"))) %>%
+  mutate(Coef = round(Coef, digits = 2),
+         Name = str_replace_all(Name, "_pos|_neg", "")) %>%
+  write_csv(here("ad_pd", "coef_table_targeted_ad_naind_nopenalize.csv"))
+
+get_importance_tables(targeted_pd_full_naind_nopenalize) %>%
+  filter(!(Name %in% c("(Intercept)"))) %>%
+  mutate(Coef = round(Coef, digits = 2),
+         Name = str_replace_all(Name, "_pos|_neg", "")) %>%
+  write_csv(here("ad_pd", "coef_table_targeted_pd_naind_nopenalize.csv"))
+
+get_importance_tables(targeted_adpd_full_naind_nopenalize) %>%
+  filter(!(Name %in% c("(Intercept)"))) %>%
+  mutate(Coef = round(Coef, digits = 2),
+         Name = str_replace_all(Name, "_pos|_neg", "")) %>%
+  write_csv(here("ad_pd", "coef_table_targeted_adpd_naind_nopenalize.csv"))
+
+
+
+###########################
+
 ### Univariate AD/PD Logistic Regresion on untargeted
 
 ### For use with mummichogcommand: `mummichog -f {input_file} -o {output_name} -c 0.05 -m {neg/pos}`
@@ -1023,7 +1393,9 @@ mz_retention_untargeted <- raw_data_untargeted %>%
 untargeted_all_amelia5_ad_ind <- imputed_all_untargeted5 %>%
   purrr::map(~cbind(.x[[1]], "AD_ind" = ifelse(imputed_all_untargeted5[[1]][[2]] == "AD", 1, 0)) %>% list())
 
-untargeted_univar_ad_logistic_list <- purrr::map(1:5, ~bh_univariate_age(untargeted_all_amelia5_ad_ind, var = "AD_ind", family = "binomial", conc = FALSE, imp_num = .x))
+ad_c_index <- which(imputed_all_untargeted5[[1]][[2]] %in% c('AD', 'CO', 'CY', 'CM'))
+
+untargeted_univar_ad_logistic_list <- purrr::map(1:5, ~bh_univariate_age(untargeted_all_amelia5_ad_ind, var = "AD_ind", family = "binomial", conc = FALSE, imp_num = .x, types_index = ad_c_index))
 
 untargeted_univar_ad_logistic <- untargeted_univar_ad_logistic_list %>%
   bind_rows(.id = "imp") %>%
@@ -1041,7 +1413,7 @@ mummichog_ad_untargeted <- untargeted_univar_ad_logistic %>%
   tidyr::separate(col = name, into = c('Metabolite1','Metabolite2', 'Mode'), sep = '_') %>%
   tidyr::unite(col = "Metabolite", Metabolite1, Metabolite2) %>%
   left_join(mz_retention_untargeted, by = c('Metabolite', 'Mode')) %>%
-  #dplyr::filter(bh_p_value < 0.05) %>%
+  # dplyr::filter(bh_p_value < 0.05) %>%
   dplyr::select('mz' = `m/z`, 'rtime' = `Retention time (min)`, 'p-value' = bh_p_value, 'z-score' = `z value`, Metabolite, Mode)
 
 mummichog_ad_untargeted %>%
@@ -1063,14 +1435,16 @@ ggsave("mummichog_ad_pos.png",
        height = 14)
 
 
+
 ######## PD ----------------------------------------------------------
 
 # add pd indicator
 untargeted_all_amelia5_pd_ind <- imputed_all_untargeted5 %>%
   purrr::map(~cbind(.x[[1]], "PD_ind" = ifelse(imputed_all_untargeted5[[1]][[2]] == "PD", 1, 0)) %>% list())
 
+pd_c_index <- which(imputed_all_untargeted5[[1]][[2]] %in% c('PD', 'CO', 'CY', 'CM'))
 
-untargeted_univar_pd_logistic_list <- purrr::map(1:5, ~bh_univariate_age(untargeted_all_amelia5_pd_ind, var = "PD_ind", family = "binomial", conc = FALSE, imp_num = .x))
+untargeted_univar_pd_logistic_list <- purrr::map(1:5, ~bh_univariate_age(untargeted_all_amelia5_pd_ind, types_index = pd_c_index, var = "PD_ind", family = "binomial", conc = FALSE, imp_num = .x))
 
 untargeted_univar_pd_logistic <- untargeted_univar_pd_logistic_list %>%
   bind_rows(.id = "imp") %>%
@@ -1117,6 +1491,186 @@ ggsave("mummichog_pd_pos.png",
        width = 20,
        height = 14)
 
+######## PD vs AD ----------------------------------------------------------
+
+
+pd_ad_index <- which(imputed_all_untargeted5[[1]][[2]] %in% c('PD', 'AD'))
+
+untargeted_univar_adpd_logistic_list <- purrr::map(1:5, ~bh_univariate_age(untargeted_all_amelia5_pd_ind, types_index = pd_ad_index, var = "PD_ind", family = "binomial", conc = FALSE, imp_num = .x))
+
+untargeted_univar_adpd_logistic <- untargeted_univar_adpd_logistic_list %>%
+  bind_rows(.id = "imp") %>%
+  group_by(name) %>%
+  filter(bh_p_value == median(bh_p_value)) %>%
+  # break ties
+  slice(1) %>%
+  ungroup()
+
+untargeted_univar_adpd_logistic <- readRDS(here("ad_pd", "untargeted_univar_adpd_logistic.Rds"))
+# saveRDS(untargeted_univar_adpd_logistic, here("ad_pd", "untargeted_univar_adpd_logistic.Rds"))
+
+# Left join because age_untargeted has less columns. pull out only significant (.05 level)
+mummichog_adpd_untargeted <- untargeted_univar_adpd_logistic %>% 
+  tidyr::separate(col = name, into = c('Metabolite1','Metabolite2', 'Mode'), sep = '_') %>%
+  tidyr::unite(col = "Metabolite", Metabolite1, Metabolite2) %>%
+  left_join(mz_retention_untargeted, by = c('Metabolite', 'Mode')) %>%
+  #dplyr::filter(bh_p_value < 0.05) %>%
+  dplyr::select('mz' = `m/z`, 'rtime' = `Retention time (min)`, 'p-value' = bh_p_value, 'z-score' = `z value`, Metabolite, Mode)
+
+mummichog_adpd_untargeted %>%
+  dplyr::filter(Mode == 'neg') %>%
+  write_tsv(here("ad_pd", 'mummichog_adpd_neg.txt'))
+
+mummichog_adpd_untargeted %>%
+  dplyr::filter(Mode == 'pos') %>%
+  write_tsv(here("ad_pd", 'mummichog_adpd_pos.txt'))
+
+# pretty much null i think
+mummichog_adpd_neg_plot <- mummichog_plot(here("ad_pd", "mummichog_adpd_neg", "tables", "mcg_pathwayanalysis_mummichog_adpd_neg.tsv")) +
+  labs(title = "Negative Mode")
+ggsave("mummichog_adpd_neg.png",
+       plot = mummichog_adpd_neg_plot, 
+       path = here("plots", "adpd_figs"),
+       width = 20,
+       height = 18)
+
+mummichog_adpd_pos_plot <- mummichog_plot(here("ad_pd", "mummichog_adpd_pos", "tables", "mcg_pathwayanalysis_mummichog_adpd_pos.tsv")) +
+  labs(title = "Positive Mode") + 
+  theme(axis.text.y = element_text(size = rel(1.75)))
+ggsave("mummichog_adpd_pos.png",
+       plot = mummichog_adpd_pos_plot, 
+       path = here("plots", "adpd_figs"),
+       width = 20,
+       height = 14)
+
+
+######## PD missingness indicator ----------------------------------------------------------
+
+# add pd indicator
+untargeted_all_amelia5_pd_naind <- all_untargeted_naind %>%
+  purrr::map(~cbind(.x[[1]], "PD_ind" = ifelse(all_untargeted_naind[[1]][[2]] == "PD", 1, 0)) %>% list())
+
+pd_c_na_index <- which(all_untargeted_naind[[1]][[2]] %in% c('PD', 'CO', 'CY', 'CM'))
+untargeted_univar_pd_logistic_naind <- bh_univariate_age(untargeted_all_amelia5_pd_naind, types_index = pd_c_na_index, var = "PD_ind", family = "binomial", conc = FALSE, imp_num = 1, scale =F)
+
+untargeted_univar_pd_logistic_naind <- readRDS(here("ad_pd", "untargeted_univar_pd_logistic_naind.Rds"))
+# saveRDS(untargeted_univar_pd_logistic_naind, here("ad_pd", "untargeted_univar_pd_logistic_naind.Rds"))
+
+# Left join because age_untargeted has less columns. pull out only significant (.05 level)
+mummichog_pd_untargeted_naind <- untargeted_univar_pd_logistic_naind %>% 
+  tidyr::separate(col = name, into = c('Metabolite1','Metabolite2', 'Mode'), sep = '_') %>%
+  tidyr::unite(col = "Metabolite", Metabolite1, Metabolite2) %>%
+  left_join(mz_retention_untargeted, by = c('Metabolite', 'Mode')) %>%
+  # dplyr::filter(bh_p_value < 0.05) %>%
+  dplyr::select('mz' = `m/z`, 'rtime' = `Retention time (min)`, 'p-value' = bh_p_value, 'z-score' = `z value`, Metabolite, Mode)
+
+mummichog_pd_untargeted_naind %>%
+  dplyr::filter(Mode == 'neg') %>%
+  write_tsv(here("ad_pd", 'mummichog_pd_neg_naind.txt'))
+
+mummichog_pd_untargeted_naind %>%
+  dplyr::filter(Mode == 'pos') %>%
+  write_tsv(here("ad_pd", 'mummichog_pd_pos_naind.txt'))
+
+# # pretty much null i think
+# mummichog_pd_neg_plot_naind <- mummichog_plot(here("ad_pd", "mummichog_pd_neg", "tables", "mcg_pathwayanalysis_mummichog_pd_neg.tsv")) +
+#   labs(title = "Negative Mode")
+# ggsave("mummichog_pd_neg.png",
+#        plot = mummichog_pd_neg_plot, 
+#        path = here("plots", "adpd_figs"),
+#        width = 20,
+#        height = 18)
+
+mummichog_pd_pos_plot_naind <- mummichog_plot(here("ad_pd", "mummichog_pd_pos_naind", "tables", "mcg_pathwayanalysis_mummichog_pd_pos_naind.tsv")) +
+  labs(title = "Positive Mode") + 
+  theme(axis.text.y = element_text(size = rel(1.75)))
+ggsave("mummichog_pd_pos_naind.png",
+       plot = mummichog_pd_pos_plot_naind, 
+       path = here("plots", "adpd_figs"),
+       width = 20,
+       height = 14)
+
+######## AD missingness indicator ----------------------------------------------------------
+
+# add ad indicator
+untargeted_all_amelia5_ad_naind <- all_untargeted_naind %>%
+  purrr::map(~cbind(.x[[1]], "AD_ind" = ifelse(all_untargeted_naind[[1]][[2]] == "AD", 1, 0)) %>% list())
+
+ad_c_na_index <- which(all_untargeted_naind[[1]][[2]] %in% c('AD', 'CO', 'CY', 'CM'))
+untargeted_univar_ad_logistic_naind <- bh_univariate_age(untargeted_all_amelia5_ad_naind, var = "AD_ind", family = "binomial", conc = FALSE, imp_num = 1, scale =F, types_index <- ad_c_na_index)
+
+untargeted_univar_ad_logistic_naind <- readRDS(here("ad_pd", "untargeted_univar_ad_logistic_naind.Rds"))
+# saveRDS(untargeted_univar_ad_logistic_naind, here("ad_pd", "untargeted_univar_ad_logistic_naind.Rds"))
+
+# Left join because age_untargeted has less columns. pull out only significant (.05 level)
+mummichog_ad_untargeted_naind <- untargeted_univar_ad_logistic_naind %>% 
+  tidyr::separate(col = name, into = c('Metabolite1','Metabolite2', 'Mode'), sep = '_') %>%
+  tidyr::unite(col = "Metabolite", Metabolite1, Metabolite2) %>%
+  left_join(mz_retention_untargeted, by = c('Metabolite', 'Mode')) %>%
+  # dplyr::filter(bh_p_value < 0.05) %>%
+  dplyr::select('mz' = `m/z`, 'rtime' = `Retention time (min)`, 'p-value' = bh_p_value, 'z-score' = `z value`, Metabolite, Mode)
+
+# both mummichog results are null.
+mummichog_ad_untargeted_naind %>%
+  dplyr::filter(Mode == 'neg') %>%
+  write_tsv(here("ad_pd", 'mummichog_ad_neg_naind.txt'))
+
+mummichog_ad_untargeted_naind %>%
+  dplyr::filter(Mode == 'pos') %>%
+  write_tsv(here("ad_pd", 'mummichog_ad_pos_naind.txt'))
+
+mummichog_ad_pos_plot_naind <- mummichog_plot(here("ad_pd", "mummichog_ad_pos_naind", "tables", "mcg_pathwayanalysis_mummichog_ad_pos_naind.tsv")) +
+  labs(title = "Positive Mode") + 
+  theme(axis.text.y = element_text(size = rel(1.75)))
+ggsave("mummichog_adpd_pos_naind.png",
+       plot = mummichog_adpd_pos_plot_naind, 
+       path = here("plots", "adpd_figs"),
+       width = 20,
+       height = 14)
+######## AD/PD (classify ad against pd) missingness indicator ----------------------------------------------------------
+
+ad_pd_na_index <- which(all_untargeted_naind[[1]][[2]] %in% c('AD', 'PD'))
+
+untargeted_univar_adpd_logistic_naind <- bh_univariate_age(untargeted_all_amelia5_adpd_naind, var = "AD_ind", family = "binomial", conc = FALSE, imp_num = 1, scale =F, types_index <- ad_pd_na_index)
+
+untargeted_univar_adpd_logistic_naind <- readRDS(here("ad_pd", "untargeted_univar_adpd_logistic_naind.Rds"))
+# saveRDS(untargeted_univar_adpd_logistic_naind, here("ad_pd", "untargeted_univar_adpd_logistic_naind.Rds"))
+
+# Left join because age_untargeted has less columns. pull out only significant (.05 level)
+mummichog_adpd_untargeted_naind <- untargeted_univar_adpd_logistic_naind %>% 
+  tidyr::separate(col = name, into = c('Metabolite1','Metabolite2', 'Mode'), sep = '_') %>%
+  tidyr::unite(col = "Metabolite", Metabolite1, Metabolite2) %>%
+  left_join(mz_retention_untargeted, by = c('Metabolite', 'Mode')) %>%
+  # dplyr::filter(bh_p_value < 0.05) %>%
+  dplyr::select('mz' = `m/z`, 'rtime' = `Retention time (min)`, 'p-value' = bh_p_value, 'z-score' = `z value`, Metabolite, Mode)
+
+# both mummichog results are null.
+mummichog_adpd_untargeted_naind %>%
+  dplyr::filter(Mode == 'neg') %>%
+  write_tsv(here("ad_pd", 'mummichog_adpd_neg_naind.txt'))
+
+mummichog_adpd_untargeted_naind %>%
+  dplyr::filter(Mode == 'pos') %>%
+  write_tsv(here("ad_pd", 'mummichog_adpd_pos_naind.txt'))
+
+# pretty much null i think
+mummichog_adpd_neg_plot_naind <- mummichog_plot(here("ad_pd", "mummichog_adpd_neg", "tables", "mcg_pathwayanalysis_mummichog_adpd_neg.tsv")) +
+  labs(title = "Negative Mode")
+ggsave("mummichog_adpd_neg.png",
+       plot = mummichog_adpd_neg_plot,
+       path = here("plots", "adpd_figs"),
+       width = 20,
+       height = 18)
+
+mummichog_adpd_pos_plot_naind <- mummichog_plot(here("ad_pd", "mummichog_adpd_pos_naind", "tables", "mcg_pathwayanalysis_mummichog_adpd_pos_naind.tsv")) +
+  labs(title = "Positive Mode") + 
+  theme(axis.text.y = element_text(size = rel(1.75)))
+ggsave("mummichog_adpd_pos_naind.png",
+       plot = mummichog_adpd_pos_plot_naind, 
+       path = here("plots", "adpd_figs"),
+       width = 20,
+       height = 14)
+
 ############################
 
 ### Univariate AD/PD Logisitic Regression on targeted ###
@@ -1129,34 +1683,14 @@ message("Targeted Univariate ADPD Logistic -------------------------------------
 #### AD First -----------------------------
 # we want an AD indicator, but not a PD one
 
-#empri = .1(num PD/AD)
-# targeted_ad_amelia5 <- filter_and_impute_multi(wide_data_targeted, c('AD'), empri = 6)
-# targeted_pd_amelia5 <- filter_and_impute_multi(wide_data_targeted, c('PD'), empri = 5)
-# 
-# targeted_adpd_separate_amelia5 <- purrr::map2(targeted_ad_amelia5, targeted_pd_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE))
-# 
-# targeted_all_amelia5_ad_ind <- purrr::map2(imputed_c_targeted5, targeted_adpd_separate_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE, 
-#                                                                                                                 add_AD_ind = TRUE, add_PD_ind = FALSE))
-# removing all columns with >10% missingness (to help imputation)
-# colnames_less10perct_targeted <- wide_data_targeted %>% 
-#   map_dbl(~ sum(is.na(.x))/nrow(wide_data_targeted) < .1) %>%
-#   names() %>%
-#   append(c("GBAStatus", "GBA_T369M"))
-# 
-# #### TODO: NEED TO PLAY WITH EMPRI!!! IT SHOULDN'T BE THIS HIGH
-# imputed_less10perct_targeted <- wide_data_targeted %>%
-#   select_at(vars(colnames_less10perct_targeted)) %>%
-#   filter_and_impute_multi(types = c("CO", "CY", "CM", "AD", "PD"), empri = 500) 
-# 
-# # add ad_indicator. note that we have to add the extra "list()" at the end because this removes metadata, and bh_univariate_age expects a list of lists
-# targeted_all_amelia5_ad_ind <- imputed_less10perct_targeted %>%
-#   purrr::map(~cbind(.x[[1]], "AD_ind" = ifelse(imputed_less10perct_targeted[[1]][[2]] == "AD", 1, 0)) %>% list())
 
 targeted_all_amelia5_ad_ind <- imputed_all_targeted5 %>%
   purrr::map(~cbind(.x[[1]], "AD_ind" = ifelse(imputed_all_targeted5[[1]][[2]] == "AD", 1, 0)) %>% list())
 
+ad_c_index_targeted <- which(imputed_all_targeted5[[1]][[2]] %in% c('AD', "CO", "CM", "CY"))
+
 # Create table with bh-corrected p values
-targeted_univar_ad_logistic_list <- purrr::map(1:5, ~bh_univariate_age(targeted_all_amelia5_ad_ind, var = "AD_ind", family = "binomial", conc = FALSE, imp_num = .x))
+targeted_univar_ad_logistic_list <- purrr::map(1:5, ~bh_univariate_age(targeted_all_amelia5_ad_ind, var = "AD_ind", family = "binomial", conc = FALSE, imp_num = .x, types_index = ad_c_index_targeted))
 targeted_univar_ad_logistic <- targeted_univar_ad_logistic_list %>%
   bind_rows(.id = "imp") %>%
   group_by(name) %>%
@@ -1202,7 +1736,7 @@ write_tsv(univar_ad_names_sig, here("ad_pd", "msea_ad_names_sig.txt"))
 
 #### PD -------------------------------------
 # # we want a PD indicator, but not an AD one
-# targeted_all_amelia5_pd_ind <- purrr::map2(imputed_c_targeted5, targeted_adpd_separate_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE, 
+# targeted_all_amelia5_pd_ind <- purrr::map2(imputed_c_targeted5, targeted_adpd_separate_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE,
 # add_AD_ind = FALSE, add_PD_ind = TRUE))
 
 # add ad_indicator. note that we have to add the extra "list()" at the end because this removes metadata, and bh_univariate_age expects a list of lists
@@ -1211,9 +1745,9 @@ write_tsv(univar_ad_names_sig, here("ad_pd", "msea_ad_names_sig.txt"))
 targeted_all_amelia5_pd_ind <- imputed_all_targeted5 %>%
   purrr::map(~cbind(.x[[1]], "PD_ind" = ifelse(imputed_all_targeted5[[1]][[2]] == "PD", 1, 0)) %>% list())
 
-
+pd_c_index_targeted <- which(imputed_all_targeted5[[1]][[2]] %in% c('PD', "CO", "CM", "CY"))
 # Create table with bh-corrected p values
-targeted_univar_pd_logistic_list <- purrr::map(1:5, ~bh_univariate_age(targeted_all_amelia5_pd_ind, var = "PD_ind", family = "binomial", conc = FALSE, imp_num = .x))
+targeted_univar_pd_logistic_list <- purrr::map(1:5, ~bh_univariate_age(targeted_all_amelia5_pd_ind, var = "PD_ind", family = "binomial", conc = FALSE, imp_num = .x, types_index = pd_c_targeted_index))
 
 # for each metabolite, use the smallest p value out of the 5 imputations. this is very generous
 targeted_univar_pd_logistic <- targeted_univar_pd_logistic_list %>%
@@ -1222,7 +1756,7 @@ targeted_univar_pd_logistic <- targeted_univar_pd_logistic_list %>%
   filter(bh_p_value == median(bh_p_value)) %>%
   slice(1) %>%
   ungroup()
-  
+
 targeted_univar_pd_logistic <- readRDS(here("ad_pd", "targeted_univar_pd_logistic.Rds"))
 # saveRDS(targeted_univar_pd_logistic, here("ad_pd", "targeted_univar_pd_logistic.Rds"))
 
@@ -1257,6 +1791,55 @@ univar_pd_names_sig <- msea_pd_table %>%
 write_tsv(univar_pd_names_sig, here("ad_pd", "msea_pd_names_sig.txt"))
 
 
+#### ADPD classification -----------------------------
+# classify AD against PD (ad is positive class)
+
+ad_pd_index_targeted <- which(imputed_all_targeted5[[1]][[2]] %in% c('AD', "PD"))
+
+# Create table with bh-corrected p values
+targeted_univar_adpd_logistic_list <- purrr::map(1:5, ~bh_univariate_age(targeted_all_amelia5_ad_ind, var = "AD_ind", family = "binomial", conc = FALSE, imp_num = .x, types_index = ad_pd_index_targeted))
+targeted_univar_adpd_logistic <- targeted_univar_adpd_logistic_list %>%
+  bind_rows(.id = "imp") %>%
+  group_by(name) %>%
+  filter(bh_p_value == median(bh_p_value)) %>%
+  # break ties
+  slice(1) %>%
+  ungroup()
+
+targeted_univar_adpd_logistic <- readRDS(here("ad_pd", "targeted_univar_adpd_logistic.Rds"))
+# saveRDS(targeted_univar_adpd_logistic, here("ad_pd", "targeted_univar_adpd_logistic.Rds"))
+
+
+targeted_univar_adpd_logistic %>%
+  filter(bh_p_value < 0.05)
+
+msea_adpd_table <-targeted_univar_adpd_logistic %>%
+  mutate(name = str_replace_all(name, "_neg|_pos", "") %>% str_to_lower() %>% str_trim(),
+         mapped_name = case_when(
+           #https://pubchem.ncbi.nlm.nih.gov/compound/12-Ketolithocholic-acid
+           name == "3\\?-hydroxy-12 ketolithocholic acid" ~ "12-Ketodeoxycholic acid",
+           #https://www.ebi.ac.uk/chebi/searchId.do?chebiId=CHEBI:27726 / https://www.genome.jp/dbget-bin/www_bget?cpd:C06560
+           name == "2-chloro-4,6-diamino-1,3,5-triazine" ~ "Deisopropyldeethylatrazine",
+           #http://www.hmdb.ca/metabolites/HMDB0006029
+           name == "acetyl-l-glutamine" ~ "N-Acetylglutamine",
+           #https://pubchem.ncbi.nlm.nih.gov/compound/Acetylornithine
+           name == "acetylornithine" ~  "N-Acetylornithine",
+           #https://pubchem.ncbi.nlm.nih.gov/compound/5-Aminovaleric-acid
+           name == "amino valerate" ~ "5-Aminopentanoic acid",
+           #https://pubchem.ncbi.nlm.nih.gov/compound/N_N-dimethylarginine
+           name == "dimethylarginine" ~ "Asymmetric dimethylarginine",
+           #https://pubchem.ncbi.nlm.nih.gov/compound/1826
+           name == "hiaa" ~ 	"5-Hydroxyindoleacetic acid",
+           TRUE ~ name))
+
+# the list of significant ones 
+univar_adpd_names_sig <- msea_adpd_table %>%
+  filter(bh_p_value < 0.05) %>%
+  select(mapped_name)
+write_tsv(univar_ad_names_sig, here("ad_pd", "msea_adpd_names_sig.txt"))
+##
+
+
 ## We need a reference list (ie include names on insignificant variables). can use either ad or pd
 univar_targeted_names_ref <- msea_pd_table %>%
   select(mapped_name)
@@ -1286,6 +1869,8 @@ msea_pd_smpdb <- read_csv(here("ad_pd", "msea_ora_smpdb_pd_result.csv")) %>%
   arrange(desc(Hits/Total))
 
 write_csv(msea_pd_smpdb, here("ad_pd", "msea_smpdb_pd_result_top10.csv"))
+
+
 
 
 
@@ -1526,16 +2111,18 @@ untargeted_gba_in_all <- untargeted_gba_logistic %>%
 
 ## GBA logistic, targeted
 #######
-# isolating just the PD subjects
-targeted_imputed_all_pd_index <- which(imputed_all_targeted5[[1]][[2]] == "PD")
-targeted_imputed_all_pd_features <- purrr::map(imputed_all_targeted5, ~.x[[1]][targeted_imputed_all_pd_index,])
-targeted_imputed_all_pd_metadata <- purrr::map(1:5, function(x) purrr::map(2:length(imputed_all_targeted5), function(y) imputed_all_targeted5[[x]][[y]][targeted_imputed_all_pd_index]))
+# # isolating just the PD subjects
+# targeted_imputed_all_pd_index <- which(imputed_all_targeted5[[1]][[2]] == "PD")
+# targeted_imputed_all_pd_features <- purrr::map(imputed_all_targeted5, ~.x[[1]][targeted_imputed_all_pd_index,])
+# targeted_imputed_all_pd_metadata <- purrr::map(1:5, function(x) purrr::map(2:length(imputed_all_targeted5), function(y) imputed_all_targeted5[[x]][[y]][targeted_imputed_all_pd_index]))
+# 
+# # get data in form of filter_and_impute_multi output
+# targeted_imputed_all_pd <- purrr::map(1:5, ~append(targeted_imputed_all_pd_metadata[[.x]], list(targeted_imputed_all_pd_features[[.x]]), after = 0))
 
-# get data in form of filter_and_impute_multi output
-targeted_imputed_all_pd <- purrr::map(1:5, ~append(targeted_imputed_all_pd_metadata[[.x]], list(targeted_imputed_all_pd_features[[.x]]), after = 0))
+# do a new imputation on just the PD subjects
+targeted_imputed_pd <- filter_and_impute_multi(wide_data_targeted, types = c("PD"), empri = 5)
 
-
-targeted_gba_logistic <- purrr::map(1:5, ~logistic_control_analysis(targeted_imputed_all_pd, varname ="GBA Status", imp_num = .x, nlambda = 200, GBA_ind = T))
+targeted_gba_logistic <- purrr::map(1:5, ~logistic_control_analysis(targeted_imputed_pd, varname ="GBA Status", imp_num = .x, nlambda = 200, GBA_ind = T))
 targeted_gba_logistic <- readRDS(here("ad_pd", "targeted_gba_logistic.Rds"))
 # saveRDS(targeted_gba_logistic, here("ad_pd", "targeted_gba_logistic.Rds"))
 
@@ -1545,7 +2132,7 @@ targeted_gba_roc_table <- targeted_gba_logistic %>%
   bind_rows(.id = "imp")
 
 targeted_gba_roc_plot <- ggplot(targeted_gba_roc_table) + 
-  geom_line(mapping = aes(fpr, tpr, group = imp), lwd = 1.5) + 
+  geom_line(mapping = aes(x, y, group = imp), lwd = 1.5) + 
   geom_abline(intercept = 0, slope = 1, linetype = 2) + 
   labs(title = "ROC: GBA Carriers vs Non-Carriers",
        subtitle = TeX('Targeted'),
@@ -1573,14 +2160,29 @@ ggsave("roc_gba_targeted.png",
 #        subtitle = TeX('Targeted ,$\\alpha = 0.5$'))
 # ggsave("gba_logistic_targeted.png")
 
+
 targeted_gba_coefs <- targeted_gba_logistic %>% 
   purrr::map(~.x[[1]] %>% enframe(value = "coef")) %>%
   reduce(full_join, by = "name") %>%
   rename("imp1" = 2, "imp2" = 3, "imp3" = 4, "imp4" = 5, "imp5" = 6) %>%
   mutate_if(is.numeric, ~ifelse(is.na(.x), 0, .x)) %>%
   rowwise() %>%
-  mutate(median_coef = median(c(imp1, imp2, imp3, imp4, imp5))) %>%
-  arrange(desc(abs(median_coef)))
+  mutate(name = str_replace_all(name, "_pos|_neg", ""),
+         mean_coef = mean(c(imp1, imp2, imp3, imp4, imp5)) %>% round(2),
+         median_coef = median(c(imp1, imp2, imp3, imp4, imp5))) %>%
+  arrange(desc(abs(mean_coef))) %>%
+  select("Name" = name, "Avg Coef" = mean_coef) %>%
+  ungroup() %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM")))
+
+# write separate tables for positive and negative coefs
+targeted_gba_coefs %>%
+  filter(`Avg Coef` > 0) %>%
+  write_csv(here("ad_pd", "pos_coef_table_targeted_gba.csv"))
+
+targeted_gba_coefs %>%
+  filter(`Avg Coef` < 0) %>%
+  write_csv(here("ad_pd", "neg_coef_table_targeted_gba.csv"))
 
 
 
@@ -1682,7 +2284,7 @@ lipids_gba_roc_table <- lipids_gba_logistic %>%
   bind_rows(.id = "imp")
 
 lipids_gba_roc_plot <- ggplot(lipids_gba_roc_table) + 
-  geom_line(mapping = aes(fpr, tpr, group = imp), lwd = 1.5) + 
+  geom_line(mapping = aes(x, y, group = imp), lwd = 1.5) + 
   geom_abline(intercept = 0, slope = 1, linetype = 2) + 
   labs(title = "ROC: GBA Carriers vs Non-Carriers",
        subtitle = TeX('Lipids'),
@@ -1715,9 +2317,22 @@ lipids_gba_coefs <- lipids_gba_logistic %>%
   rename("imp1" = 2, "imp2" = 3, "imp3" = 4, "imp4" = 5, "imp5" = 6) %>%
   mutate_if(is.numeric, ~ifelse(is.na(.x), 0, .x)) %>%
   rowwise() %>%
-  mutate(median_coef = median(c(imp1, imp2, imp3, imp4, imp5))) %>%
-  arrange(desc(abs(median_coef)))
+  mutate(name = str_replace_all(name, "_pos|_neg", ""),
+         mean_coef = mean(c(imp1, imp2, imp3, imp4, imp5)) %>% round(2),
+         median_coef = median(c(imp1, imp2, imp3, imp4, imp5))) %>%
+  arrange(desc(abs(mean_coef))) %>%
+  select("Name" = name, "Avg Coef" = mean_coef) %>%
+  ungroup() %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM")))
 
+# write separate tables for positive and negative coefs
+lipids_gba_coefs %>%
+  filter(`Avg Coef` > 0) %>%
+  write_csv(here("ad_pd", "pos_coef_table_lipids_gba.csv"))
+
+lipids_gba_coefs %>%
+  filter(`Avg Coef` < 0) %>%
+  write_csv(here("ad_pd", "neg_coef_table_lipids_gba.csv"))
 
 lipids_gba_avg_retained <- lipids_gba_logistic %>% 
    purrr::map(~.x[[1]] %>% setdiff("(Intercept)") %>% length) %>% 
