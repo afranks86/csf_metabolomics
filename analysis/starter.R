@@ -46,7 +46,7 @@
 #                                            "Mode", "RunIndex", "Type2"))) %>%
 #     as.matrix
 # 
-# apply(X, 2, function(x) mean(is.na(x))) %>% summary
+# apply(X, 2, function(x) mean(is.na(x))) %>% summary=
 # X[, 100]
 # 
 # 
@@ -71,7 +71,7 @@
 ###########################
 
 
-library(tidyverse)
+
 library(ggExtra)
 library(magrittr)
 library(ggridges)
@@ -94,7 +94,7 @@ library(yardstick)
 library(here)
 library(CCA)
 library(gridExtra)
-library(gbm3)
+#library(gbm3)
 library(MetaboAnalystR)
 library(mice)
 library(gghighlight)
@@ -111,13 +111,15 @@ library(knockoff)
 library(furrr)
 library(progressr)
 library(snow)
+library(tidyverse)
+library(patchwork)
 #plan(multisession, workers = 2)
 cluster_amelia <- makeSOCKcluster(c("localhost", "localhost", "localhost", "localhost"))
 
 source(here("analysis/utility.R"))
 
 
-theme_set(theme_bw(base_size = 30) #+
+theme_set(theme_bw(base_size = 8) #+
               #theme(axis.title.x = element_text(size = 24),
               #      axis.title.y = element_text(size = 24))
           )
@@ -618,7 +620,7 @@ loo_filter_impute_fitpred <- function(index, data, method = "mice"){
 
 #does loocv for logistic regression, using deviance loss by default (check?), eval at different elastic net alphas
 #if penalize_age_gender is false, set penalty coeff to 0
-fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, penalize_AD_PD = TRUE, family= 'binomial', nlambda = 200, weights = rep(1, length(labels) - 1)){
+fit_glmnet <- function(features, labels, alpha, penalize_age_gender = TRUE, penalize_AD_PD = TRUE, family= 'binomial', nlambda = 200, weights = rep(1, length(labels))){
     set.seed(1)
     #set foldid so that same folds every time (it's loocv so it's just an ordering)
     foldid <- sample(nrow(features))
@@ -863,7 +865,8 @@ importance_consolidated_loo <- function(retained){
 
 #' Quick function to get a table of mean coefficients of a full model
 #' @param full_model is output of map(1:5, logistic_control_analysis, ...) with flag full_model = T
-get_importance_tables <- function(full_model){
+#' @param drop_missing if TRUE, will only look at coefs that appear in all 5 imputations
+get_importance_tables <- function(full_model, drop_missing = F){
     # if the imputation number is not 5, then full_model is a single instance of logistic_control_analysis().
     if(length(full_model) != 5){
         importance_table <- importance(full_model) %>% 
@@ -872,20 +875,38 @@ get_importance_tables <- function(full_model){
             filter(Coef != 0) %>%
             select('Name' = name, Coef)
     } else{
-        importance_table <- full_model %>% 
-            purrr::map(~importance(.x) %>% enframe(value = "coef")) %>%
-            reduce(full_join, by = "name") %>%
-            rename("imp1" = 2, "imp2" = 3, "imp3" = 4, "imp4" = 5, "imp5" = 6) %>%
-            mutate_if(is.numeric, ~ifelse(is.na(.x), 0, .x)) %>%
-            rowwise() %>%
-            mutate(name = str_replace_all(name, "_pos|_neg", ""),
-                   mean_coef = mean(c(imp1, imp2, imp3, imp4, imp5)) %>% round(2),
-                   median_coef = median(c(imp1, imp2, imp3, imp4, imp5))) %>%
-            arrange(desc(abs(mean_coef))) %>%
-            select("Name" = name, "Avg Coef" = mean_coef) %>%
-            ungroup() %>%
-            filter(`Avg Coef` != 0)
-    }
+        if(drop_missing){
+            importance_table <- full_model %>% 
+                purrr::map(~importance(.x) %>% enframe(value = "coef")) %>%
+                reduce(full_join, by = "name") %>%
+                rename("imp1" = 2, "imp2" = 3, "imp3" = 4, "imp4" = 5, "imp5" = 6) %>%
+                drop_na() %>%
+                #mutate_if(is.numeric, ~ifelse(is.na(.x), 0, .x)) %>%
+                rowwise() %>%
+                mutate(name = str_replace_all(name, "_pos|_neg", ""),
+                       mean_coef = mean(c(imp1, imp2, imp3, imp4, imp5)) %>% round(2),
+                       median_coef = median(c(imp1, imp2, imp3, imp4, imp5))) %>%
+                arrange(desc(abs(mean_coef))) %>%
+                select("Name" = name, "Avg Coef" = mean_coef) %>%
+                ungroup() %>%
+                filter(`Avg Coef` != 0)
+        } else{
+            importance_table <- full_model %>% 
+                purrr::map(~importance(.x) %>% enframe(value = "coef")) %>%
+                reduce(full_join, by = "name") %>%
+                rename("imp1" = 2, "imp2" = 3, "imp3" = 4, "imp4" = 5, "imp5" = 6) %>%
+                mutate_if(is.numeric, ~ifelse(is.na(.x), 0, .x)) %>%
+                rowwise() %>%
+                mutate(name = str_replace_all(name, "_pos|_neg", ""),
+                       mean_coef = mean(c(imp1, imp2, imp3, imp4, imp5)) %>% round(2),
+                       median_coef = median(c(imp1, imp2, imp3, imp4, imp5))) %>%
+                arrange(desc(abs(mean_coef))) %>%
+                select("Name" = name, "Avg Coef" = mean_coef) %>%
+                ungroup() %>%
+                filter(`Avg Coef` != 0)
+        }
+        }
+        
     return(importance_table)
 }
 
@@ -1237,22 +1258,22 @@ predtruth_plot <- function(df, pred_name = "imp_avg", name, color = NULL, errorb
             ungroup()
         
         ggplot(df) + 
-            geom_errorbar(aes(x = truth, ymin = imp_min, ymax = imp_max, group = id, width = width), position = position_dodge(.3),  alpha = 0.7, size = 1) + 
-            geom_point(aes(truth, !!pred_name, color = !!color, group = id), size = 4.5, position = position_dodge(.3)) +
+            geom_errorbar(aes(x = truth, ymin = imp_min, ymax = imp_max, group = id, width = width), position = position_dodge(.3),  alpha = 0.7, size = 0.5) + 
+            geom_point(aes(truth, !!pred_name, color = !!color, group = id), size = 1, position = position_dodge(.3)) +
             scale_color_viridis_d() +
             labs(title = name,
                  x = 'Chronological Age',
                  y = 'Predicted Age') + 
             geom_abline(intercept = 0, slope = 1) + 
             expand_limits(x = 15, y = c(15, 100)) + 
-            geom_richtext(aes(x = box_pos$x, y = box_pos$y, hjust = box_pos$hjust, vjust = box_pos$vjust, label = paste0("R^2: ", cor(truth, !!pred_name, method = "pearson")^2 %>% round(2), 
-                                                                                                                         "<br>RMSE: ", (truth - !!pred_name)^2 %>% mean %>% sqrt %>% round(2), " [",rmse_null,"]", 
+            geom_richtext(aes(x = box_pos$x, y = box_pos$y, hjust = box_pos$hjust, vjust = box_pos$vjust, label = paste0("R^2: ", cor(truth, !!pred_name, method = "pearson")^2 %>% round(2),
+                                                                                                                         "<br>RMSE: ", (truth - !!pred_name)^2 %>% mean %>% sqrt %>% round(2), " [",rmse_null,"]",
                                                                                                                          "<br>MAE: ", (truth - !!pred_name) %>% abs %>% mean %>% round(2), " [",mae_null,"]")),
-                          size = 12)
+                          size = rel(2))
     } else {
         # same as above, but just without errorbar
         ggplot(df) + 
-            geom_point(aes(truth, !!pred_name, color = !!color), size = 4.5, position = position_dodge(width = .2)) + 
+            geom_point(aes(truth, !!pred_name, color = !!color), size = 1, position = position_dodge(width = .2)) + 
             scale_color_viridis_d() +
             labs(title = name,
                  #subtitle = paste0(name, " averaged over 5 imputations, alpha = 0.5, loo"),
@@ -1263,7 +1284,7 @@ predtruth_plot <- function(df, pred_name = "imp_avg", name, color = NULL, errorb
             geom_richtext(aes(x = box_pos$x, y = box_pos$y, hjust = box_pos$hjust, vjust = box_pos$vjust, label = paste0("R^2: ", cor(truth, !!pred_name, method = "pearson")^2 %>% round(2), 
                                                                                                                          "<br>RMSE: ", (truth - !!pred_name)^2 %>% mean %>% sqrt %>% round(2), " [",rmse_null,"]", 
                                                                                                                          "<br>MAE: ", (truth - !!pred_name) %>% abs %>% mean %>% round(2), " [",mae_null,"]")),
-                          size = 12)
+                          size = rel(2))
     }
     
     
@@ -1466,6 +1487,13 @@ mummichog_plot <- function(path){
         coord_flip() 
 }
 
+#' Function to compute brier score
+#' @param pred is a vector of predicted probabilities (1 = positive case)
+#' @param label is the true label (1 = positive case)
+brier <- function(pred, label){
+    mean((pred - label)^2)
+}
+
 
 
 ############################
@@ -1516,8 +1544,8 @@ wide_data_raw <- subject_data %>%
 
 
 ### code snippit from Alex for better metabolite_matching
-subject_data %>% filter(Metabolite == "176 Results") %>%
-    select(Mode) %>% table
+# subject_data %>% filter(Metabolite == "176 Results") %>%
+#     select(Mode) %>% table
 
 #subject_data$Metabolite %>% unique
 
@@ -1665,6 +1693,12 @@ untargeted_c_processed <- wide_data_untargeted %>%
     filter(Type %in% c("CO", "CY", 'CM')) %>%
     select_if(~sum(is.na(.x))/nrow(wide_data_untargeted) < .1) %>%
     mutate_at(vars(-any_of(metadata_cols)), ~as.vector(scale(.x, center = TRUE, scale = TRUE)))
+
+targeted_c_processed <- wide_data_targeted %>%
+    filter(Type %in% c("CO", "CY", 'CM')) %>%
+    select_if(~sum(is.na(.x))/nrow(wide_data_targeted) < .1) %>%
+    mutate_at(vars(-any_of(metadata_cols)), ~as.vector(scale(.x, center = TRUE, scale = TRUE)))
+
 
 untargeted_all_processed <- wide_data_untargeted %>%
     select_if(~sum(is.na(.x))/nrow(wide_data_untargeted) < .1) %>%

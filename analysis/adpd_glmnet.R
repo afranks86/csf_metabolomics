@@ -1,8 +1,6 @@
 source(here::here("analysis", "starter.R"))
 
 
-library(CCA)
-
 
 ## descriptive summary table
 panuc_data <- read_csv('E:/Projects/metabolomics/ND_Metabolomics/data/PANUC/panuc.csv')
@@ -11,7 +9,10 @@ ad_c_tracking <- read_csv('E:/Projects/metabolomics/ND_Metabolomics/data/ADTrack
   mutate(Type = fct_collapse(Type,'Control' = c('CO', 'CY', 'CM')))
 pd_tracking <- read_csv('E:/Projects/metabolomics/ND_Metabolomics/data/PDTracking.csv') %>%
   left_join(panuc_data, by = c('PaNUCID' = 'subject_id')) %>%
-  select(LPAge = AgeAtDraw, Sex, Type = `Disease Diagnosis`, cognitive_status, OnsetAge = ageatonset) %>%
+  transmute(LPAge = AgeAtDraw, Sex, race, Type = `Disease Diagnosis`, 
+         cognitive_status, OnsetAge = ageatonset,
+         moca_score, 
+         disease_duration_onset) %>%
   filter(Type == 'PD') %>%
   mutate(Sex = case_when(
     Sex == 'Female' ~ "F",
@@ -27,6 +28,7 @@ summary_subject_info <- ad_c_tracking %>%
   summarize(
     num_subjects = n(),
     num_female = sum(Sex == "F"),
+    num_white = sum(race == 'White'),
     min_LPage = min(LPAge), mean_LPage = mean(LPAge), max_LPage = max(LPAge),
     min_OnsetAge = min(OnsetAge), mean_OnsetAge = mean(OnsetAge), max_OnsetAge = max(OnsetAge),
     has_dementia = sum(cognitive_status == 'Dementia'),
@@ -35,12 +37,13 @@ summary_subject_info <- ad_c_tracking %>%
   mutate(across(-c('Type', 'num_subjects'), ~round(.x, digits = 2))) %>%
   transmute(Type, num_subjects,
             num_female,
+            num_white,
             LPAge = str_glue('{mean_LPage} [{min_LPage}, {max_LPage}]'),
             OnsetAge = str_glue('{mean_OnsetAge} [{min_OnsetAge}, {max_OnsetAge}]'),
             has_dementia,
             no_cognitive_impairment)
 
-write_csv(summary_subject_info, path = here('ad_pd', 'summary_subject_info.csv'))
+# write_csv(summary_subject_info, path = here('ad_pd', 'summary_subject_info.csv'))
 
 
 # transpose
@@ -244,15 +247,157 @@ imputed_all_untargeted5 <- readRDS(here("ad_pd", "imputed_all_untargeted5.Rds"))
 # 
 
 
+
+######
+
+### PCA On lipids
+
+# Idea: do plsda and see if the weights correspond to lipid classes
+
+#####
+
+# get a cleaned version of the lipids data for pca
+lipids_all_processed <- wide_data_lipids %>%
+  select_if(~sum(is.na(.x))/nrow(wide_data_lipids) < .5) %>%
+  mutate_at(vars(-any_of(metadata_cols)), ~as.vector(scale(.x, center = TRUE, scale = TRUE)))
+
+plsda_all_lipids <- opls(lipids_all_processed %>% select(-any_of(metadata_cols)), algoC = "nipals",
+                             y = as.character(collapse_controls(lipids_all_processed)$Type), predI = 2)
+
+plsda_pc1_varx_explained_l <- plsda_all_lipids@modelDF["p1","R2X"] %>%
+  scales::percent()
+plsda_pc2_varx_explained_l <- plsda_c_lipids@modelDF["p2","R2X"] %>%
+  scales::percent()
+
+
+plsda_scores_all_lipids <- plsda_all_lipids@scoreMN %>%
+  as_tibble() %>%
+  bind_cols(lipids_all_processed %>% select(Age, "Sex" = Gender, APOE, Type, Id)) %>%
+  collapse_controls()
+
+plsda_type_lipids <- ggplot(plsda_scores_all_lipids, aes(p1, p2, color = Type)) + 
+  geom_point(size = 5) +
+  stat_ellipse(size = 2) +
+  labs(title = "Partial Least Squares Discriminant Analysis",
+       subtitle = "by phenotype",
+       x = str_glue("PC1 ({plsda_pc1_varx_explained})"),
+       y = str_glue("PC2 ({plsda_pc2_varx_explained})")) + 
+  scale_color_viridis_d()
+
+
+
+
+############################
+
+### AD/PD Logisitic Regression, baseline model using only sex and age ###
+
+############################
+message("Untargeted ADPD logistic -------------------------------------------")
+
+# AD vs C ---------------
+
+base_ad_c_df <- wide_data_targeted %>%
+  filter(Type %in% c('AD', 'CO', 'CM', 'CY')) %>%
+  transmute(AD_ind = Type == 'AD',
+            male_ind = Gender == 'M',
+            Age)
+
+base_ad_c_out <- purrr::map_df(1:nrow(base_ad_c_df),
+                               ~{
+                                 loo_obs <- slice(base_ad_c_df, .x)
+                                 train_obs <- slice(base_ad_c_df, -.x)
+                                 # calculate what fraction of the total each class has
+                                 freq_frac <- table(train_obs$AD_ind)/length(train_obs$AD_ind)
+                                 # assign 1 - that value to a "weights" vector
+                                 weights_train <- 1 - freq_frac[as.character(train_obs$AD_ind)]    
+                                 base_ad_c_mod <- glm(AD_ind ~ male_ind + Age, 
+                                                      data = train_obs, 
+                                                      family = 'quasibinomial',
+                                                      weights = weights_train)
+                                 tibble(pred = predict(base_ad_c_mod, select(loo_obs, -AD_ind), type = 'response'),
+                                        label = loo_obs$AD_ind)
+                               })
+  
+
+base_ad_c_roc <- fpr_tpr(pred = base_ad_c_out$pred, 
+                          label = base_ad_c_out$label)
+
+base_ad_c_brier <- brier(pred = base_ad_c_out$pred, 
+                         label = base_ad_c_out$label)
+
+
+# PD vs C ---------------
+
+base_pd_c_df <- wide_data_targeted %>%
+  filter(Type %in% c('PD', 'CO', 'CM', 'CY')) %>%
+  transmute(PD_ind = Type == 'PD',
+            male_ind = Gender == 'M',
+            Age)
+
+base_pd_c_out <- purrr::map_df(1:nrow(base_pd_c_df),
+                               ~{
+                                 loo_obs <- slice(base_pd_c_df, .x)
+                                 train_obs <- slice(base_pd_c_df, -.x)
+                                 # calculate what fraction of the total each class has
+                                 freq_frac <- table(train_obs$PD_ind)/length(train_obs$PD_ind)
+                                 # assign 1 - that value to a "weights" vector
+                                 weights_train <- 1 - freq_frac[as.character(train_obs$PD_ind)]    
+                                 base_pd_c_mod <- glm(PD_ind ~ male_ind + Age, 
+                                                      data = train_obs, 
+                                                      family = 'quasibinomial',
+                                                      weights = weights_train)
+                                 tibble(pred = predict(base_pd_c_mod, select(loo_obs, -PD_ind), type = 'response'),
+                                        label = loo_obs$PD_ind)
+                               })
+
+
+base_pd_c_roc <- fpr_tpr(pred = base_pd_c_out$pred, 
+                         label = base_pd_c_out$label)
+
+base_pd_c_brier <- brier(pred = base_pd_c_out$pred, 
+                         label = base_pd_c_out$label)
+# AD vs PD --------------
+base_ad_pd_df <- wide_data_targeted %>%
+  filter(Type %in% c('AD', 'PD')) %>%
+  transmute(AD_ind = Type == 'AD',
+            male_ind = Gender == 'M',
+            Age)
+
+base_ad_pd_out <- purrr::map_df(1:nrow(base_ad_pd_df),
+                               ~{
+                                 loo_obs <- slice(base_ad_pd_df, .x)
+                                 train_obs <- slice(base_ad_pd_df, -.x)
+                                 # calculate what fraction of the total each class has
+                                 freq_frac <- table(train_obs$AD_ind)/length(train_obs$AD_ind)
+                                 # assign 1 - that value to a "weights" vector
+                                 weights_train <- 1 - freq_frac[as.character(train_obs$AD_ind)]    
+                                 base_ad_pd_mod <- glm(AD_ind ~ male_ind + Age, 
+                                                      data = train_obs, 
+                                                      family = 'quasibinomial',
+                                                      weights = weights_train)
+                                 tibble(pred = predict(base_ad_pd_mod, select(loo_obs, -AD_ind), type = 'response'),
+                                        label = loo_obs$AD_ind)
+                               })
+
+
+base_ad_pd_roc <- fpr_tpr(pred = base_ad_pd_out$pred, 
+                         label = base_ad_pd_out$label)
+
+base_ad_pd_brier <- brier(pred = base_ad_pd_out$pred, 
+                         label = base_ad_pd_out$label)
 ############################
 
 ### AD/PD Logisitic Regression on untargeted ###
 
 ############################
 
-message("Untargeted ADPD logistic -------------------------------------------")
+
+
 
 #### AD First -----------------------------
+
+
+
 # we want an AD indicator, but not a PD one
 # untargeted_all_amelia5_ad_ind <- purrr::map2(imputed_c_untargeted5, untargeted_adpd_separate_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE, 
 #                                                                                                                       add_AD_ind = TRUE, add_PD_ind = FALSE))
@@ -525,6 +670,7 @@ ggplot() + geom_point(aes(x = targeted_ad_logistic[[1]]$pred, y = dev_resid)) +
        y = "Deviance")
 
 #-- 
+# get average coefs across imputations. also 
 targeted_ad_coefs <- targeted_ad_logistic %>% 
   purrr::map(~.x[[1]] %>% enframe(value = "coef")) %>%
   reduce(full_join, by = "name") %>%
@@ -544,9 +690,11 @@ targeted_ad_coefs %>%
   filter(`Avg Coef` > 0) %>%
   write_csv(here("ad_pd", "pos_coef_table_targeted_ad.csv"))
 
+
 targeted_ad_coefs %>%
   filter(`Avg Coef` < 0) %>%
   write_csv(here("ad_pd", "neg_coef_table_targeted_ad.csv"))
+
 
 
 targeted_ad_avg_retained <- targeted_ad_logistic %>% 
@@ -1117,6 +1265,15 @@ lipids_adpd_full <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_lipid
 
 untargeted_pd_full <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_untargeted5, varname ="PD_ind", imp_num = .x, nlambda = 200, PD_ind = T, types = c("CO", "CM", "CY", "PD"), full_model = T))
 
+
+targeted_pd_full <- readRDS(file = here('ad_pd', 'targeted_pd_full.Rds'))
+targeted_ad_full <- readRDS(file = here('ad_pd', 'targeted_ad_full.Rds'))
+lipids_pd_full <- readRDS(file = here('ad_pd', 'lipids_pd_full.Rds'))
+lipids_ad_full <- readRDS(file = here('ad_pd', 'lipids_ad_full.Rds'))
+targeted_adpd_full <- readRDS(file = here('ad_pd', 'targeted_adpd_full.Rds'))
+lipids_adpd_full <- readRDS(file = here('ad_pd', 'lipids_adpd_full.Rds'))
+
+
 saveRDS(targeted_pd_full, file = here('ad_pd', 'targeted_pd_full.Rds'))
 saveRDS(targeted_ad_full, file = here('ad_pd', 'targeted_ad_full.Rds'))
 saveRDS(lipids_pd_full, file = here('ad_pd', 'lipids_pd_full.Rds'))
@@ -1130,18 +1287,22 @@ saveRDS(untargeted_pd_full, file = here('ad_pd', 'untargeted_pd_full.Rds'))
 
 
 
-full_targeted_ad_coefs <- get_importance_tables(targeted_ad_full)
+
+full_targeted_ad_coefs <- get_importance_tables(targeted_ad_full, drop_missing = T)
 
 # write separate tables for positive and negative coefs
+# exponentiate to get odds ratios associated with a unit increase in the predictor.
 full_targeted_ad_coefs %>%
   filter(`Avg Coef` > 0) %>%
+  transmute(Name, OR = round(exp(`Avg Coef`), digits = 2)) %>%
   filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
-  write_csv(here("ad_pd", "pos_coef_table_targeted_ad.csv"))
+  write_csv(here("ad_pd", "pos_OR_table_targeted_ad_full.csv"))
 
 full_targeted_ad_coefs %>%
   filter(`Avg Coef` < 0) %>%
+  transmute(Name, OR = round(exp(`Avg Coef`), digits = 2)) %>%
   filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
-  write_csv(here("ad_pd", "neg_coef_table_targeted_ad.csv"))
+  write_csv(here("ad_pd", "neg_OR_table_targeted_ad_full.csv"))
 
 full_targeted_ad_coefs %>%
   filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
@@ -1163,20 +1324,22 @@ full_targeted_ad_coefs %>%
            name == "hiaa" ~ 	"5-Hydroxyindoleacetic acid",
            TRUE ~ name)) %>%
   select(mapped_name) %>%
-  write_tsv(here("ad_pd", "msea_ad_names_multivar_sig.txt"))
+  write_tsv(here("ad_pd", "msea_ad_names_multivar_sig_full.txt"))
 
 
-full_targeted_pd_coefs <- get_importance_tables(targeted_pd_full)
+full_targeted_pd_coefs <- get_importance_tables(targeted_pd_full, drop_missing = TRUE)
 # write separate tables for positive and negative coefs
 full_targeted_pd_coefs %>%
   filter(`Avg Coef` > 0) %>%
+  transmute(Name, OR = round(exp(`Avg Coef`), digits = 2)) %>%
   filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
-  write_csv(here("ad_pd", "pos_coef_table_targeted_pd.csv"))
+  write_csv(here("ad_pd", "pos_OR_table_targeted_pd_full.csv"))
 
 full_targeted_pd_coefs %>%
   filter(`Avg Coef` < 0) %>%
+  transmute(Name, OR = round(exp(`Avg Coef`), digits = 2)) %>%
   filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
-  write_csv(here("ad_pd", "neg_coef_table_targeted_pd.csv"))
+  write_csv(here("ad_pd", "neg_OR_table_targeted_pd_full.csv"))
 
 full_targeted_pd_coefs %>%
   filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
@@ -1198,65 +1361,74 @@ full_targeted_pd_coefs %>%
            name == "hiaa" ~ 	"5-Hydroxyindoleacetic acid",
            TRUE ~ name)) %>%
   select(mapped_name) %>%
-  write_tsv(here("ad_pd", "msea_pd_names_multivar_sig.txt"))
+  write_tsv(here("ad_pd", "msea_pd_names_multivar_sig_full.txt"))
 
 #
-full_lipids_ad_coefs <- get_importance_tables(lipids_ad_full)
+full_lipids_ad_coefs <- get_importance_tables(lipids_ad_full, drop_missing = T)
 
 # write separate tables for positive and negative coefs
 full_lipids_ad_coefs %>%
   filter(`Avg Coef` > 0) %>%
+  transmute(Name, OR = round(exp(`Avg Coef`), digits = 2)) %>%
   filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
-  write_csv(here("ad_pd", "pos_coef_table_lipids_ad.csv"))
+  write_csv(here("ad_pd", "pos_OR_table_lipids_ad_full.csv"))
 
 full_lipids_ad_coefs %>%
   filter(`Avg Coef` < 0) %>%
+  transmute(Name, OR = round(exp(`Avg Coef`), digits = 2)) %>%
   filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
-  write_csv(here("ad_pd", "neg_coef_table_lipids_ad.csv"))
+  write_csv(here("ad_pd", "neg_OR_table_lipids_ad_full.csv"))
 
 
-full_lipids_pd_coefs <- get_importance_tables(lipids_pd_full)
+full_lipids_pd_coefs <- get_importance_tables(lipids_pd_full, drop_missing = T)
+
 # write separate tables for positive and negative coefs
 full_lipids_pd_coefs %>%
   filter(`Avg Coef` > 0) %>%
+  transmute(Name, OR = round(exp(`Avg Coef`), digits = 2)) %>%
   filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
-  write_csv(here("ad_pd", "pos_coef_table_lipids_pd.csv"))
+  write_csv(here("ad_pd", "pos_OR_table_lipids_pd_full.csv"))
 
 full_lipids_pd_coefs %>%
   filter(`Avg Coef` < 0) %>%
+  transmute(Name, OR = round(exp(`Avg Coef`), digits = 2)) %>%
   filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
-  write_csv(here("ad_pd", "neg_coef_table_lipids_pd.csv"))
+  write_csv(here("ad_pd", "neg_OR_table_lipids_pd_full.csv"))
 
 
 ### ad vs pd
-full_targeted_adpd_coefs <- get_importance_tables(targeted_adpd_full)
+full_targeted_adpd_coefs <- get_importance_tables(targeted_adpd_full, drop_missing = T)
 
 # write separate tables for positive and negative coefs
 full_targeted_adpd_coefs %>%
   filter(`Avg Coef` > 0) %>%
+  transmute(Name, OR = round(exp(`Avg Coef`), digits = 2)) %>%
   filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
-  write_csv(here("ad_pd", "pos_coef_table_targeted_adpd.csv"))
+  write_csv(here("ad_pd", "pos_OR_table_targeted_adpd_full.csv"))
 
 full_targeted_adpd_coefs %>%
   filter(`Avg Coef` < 0) %>%
+  transmute(Name, OR = round(exp(`Avg Coef`), digits = 2)) %>%
   filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
-  write_csv(here("ad_pd", "neg_coef_table_targeted_adpd.csv"))
+  write_csv(here("ad_pd", "neg_OR_table_targeted_adpd_full.csv"))
 
 full_targeted_adpd_coefs %>%
   filter(Name %in% c("(Intercept)", "Age", "GenderM"))
 
 # lipids
-full_lipids_adpd_coefs <- get_importance_tables(lipids_adpd_full)
+full_lipids_adpd_coefs <- get_importance_tables(lipids_adpd_full, drop_missing = T)
 
 full_lipids_adpd_coefs %>%
   filter(`Avg Coef` > 0) %>%
+  transmute(Name, OR = round(exp(`Avg Coef`), digits = 2)) %>%
   filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
-  write_csv(here("ad_pd", "pos_coef_table_lipids_adpd.csv"))
+  write_csv(here("ad_pd", "pos_OR_table_lipids_adpd_full.csv"))
 
 full_lipids_adpd_coefs %>%
   filter(`Avg Coef` < 0) %>%
+  transmute(Name, OR = round(exp(`Avg Coef`), digits = 2)) %>%
   filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
-  write_csv(here("ad_pd", "neg_coef_table_lipids_adpd.csv"))
+  write_csv(here("ad_pd", "neg_OR_table_lipids_adpd_full.csv"))
 
 full_lipids_adpd_coefs %>%
   filter(Name %in% c("(Intercept)", "Age", "GenderM"))
@@ -1287,6 +1459,17 @@ lipids_adpd_full_naind <- logistic_control_analysis(all_lipids_naind, varname ="
 
 untargeted_pd_full_naind <- logistic_control_analysis(all_untargeted_naind, varname ="PD_ind", imp_num = 1, nlambda = 200, PD_ind = T, types = c("CO", "CM", "CY", "PD"), full_model = T)
 
+targeted_pd_full_naind <- readRDS(file = here('ad_pd', 'targeted_pd_full_naind.Rds'))
+targeted_ad_full_naind <- readRDS(file = here('ad_pd', 'targeted_ad_full_naind.Rds'))
+lipids_pd_full_naind <- readRDS(file = here('ad_pd', 'lipids_pd_full_naind.Rds'))
+lipids_ad_full_naind <- readRDS(file = here('ad_pd', 'lipids_ad_full_naind.Rds'))
+targeted_adpd_full_naind <- readRDS(file = here('ad_pd', 'targeted_adpd_full_naind.Rds'))
+lipids_adpd_full_naind <- readRDS(file = here('ad_pd', 'lipids_adpd_full_naind.Rds'))
+
+untargeted_pd_full_naind <- readRDS(file = here('ad_pd', 'untargeted_pd_full_naind.Rds'))
+
+
+
 saveRDS(targeted_pd_full_naind, file = here('ad_pd', 'targeted_pd_full_naind.Rds'))
 saveRDS(targeted_ad_full_naind, file = here('ad_pd', 'targeted_ad_full_naind.Rds'))
 saveRDS(lipids_pd_full_naind, file = here('ad_pd', 'lipids_pd_full_naind.Rds'))
@@ -1297,18 +1480,25 @@ saveRDS(lipids_adpd_full_naind, file = here('ad_pd', 'lipids_adpd_full_naind.Rds
 saveRDS(untargeted_pd_full_naind, file = here('ad_pd', 'untargeted_pd_full_naind.Rds'))
 
 get_importance_tables(lipids_pd_full_naind) %>%
-  mutate(Coef = round(Coef, digits = 2),
-         Name = str_replace_all(Name, "_pos|_neg", "")) %>%
+  mutate(Name = str_replace_all(Name, "_pos|_neg", "")) %>%
   filter(!(Name %in% c("(Intercept)"))) %>%
-  write_csv(here("ad_pd", "coef_table_lipids_pd_naind.csv"))
+  transmute(Name, OR = round(exp(Coef), digits = 2)) %>%
+  write_csv(here("ad_pd", "OR_table_lipids_pd_naind.csv"))
   
 
 get_importance_tables(targeted_ad_full_naind) %>%
   filter(!(Name %in% c("(Intercept)"))) %>%
-  mutate(Coef = round(Coef, digits = 2),
-         Name = str_replace_all(Name, "_pos|_neg", "")) %>%
-  write_csv(here("ad_pd", "coef_table_targeted_ad_naind.csv"))
-get_importance_tables(lipids_ad_full_naind)
+  mutate(Name = str_replace_all(Name, "_pos|_neg", "")) %>%
+  transmute(Name, OR = round(exp(Coef), digits = 2)) %>%
+  write_csv(here("ad_pd", "OR_table_targeted_ad_naind.csv"))
+
+
+get_importance_tables(lipids_adpd_full_naind) %>%
+  mutate(Name = str_replace_all(Name, "_pos|_neg", "")) %>%
+  filter(!(Name %in% c("(Intercept)"))) %>%
+  transmute(Name, OR = round(exp(Coef), digits = 2)) %>%
+  write_csv(here("ad_pd", "OR_table_lipids_adpd_naind.csv"))
+
 
 
 
@@ -1319,6 +1509,14 @@ lipids_pd_full_naind_nopenalize <- logistic_control_analysis(all_lipids_naind, v
 lipids_ad_full_naind_nopenalize <- logistic_control_analysis(all_lipids_naind, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("CO", "CM", "CY", "AD"), full_model = T, penalize_age_gender = T)
 targeted_adpd_full_naind_nopenalize <- logistic_control_analysis(all_targeted_naind, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("PD", "AD"), full_model = T, penalize_age_gender = T)
 lipids_adpd_full_naind_nopenalize <- logistic_control_analysis(all_lipids_naind, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("PD", "AD"), full_model = T, penalize_age_gender = T)
+
+targeted_pd_full_naind_nopenalize <- readRDS(file = here('ad_pd', 'targeted_pd_full_naind_nopenalize.Rds'))
+targeted_ad_full_naind_nopenalize <- readRDS(file = here('ad_pd', 'targeted_ad_full_naind_nopenalize.Rds'))
+lipids_pd_full_naind_nopenalize <- readRDS(file = here('ad_pd', 'lipids_pd_full_naind_nopenalize.Rds'))
+lipids_ad_full_naind_nopenalize <- readRDS(file = here('ad_pd', 'lipids_ad_full_naind_nopenalize.Rds'))
+targeted_adpd_full_naind_nopenalize <- readRDS(file = here('ad_pd', 'targeted_adpd_full_naind_nopenalize.Rds'))
+lipids_adpd_full_naind_nopenalize <- readRDS(file = here('ad_pd', 'lipids_adpd_full_naind_nopenalize.Rds'))
+
 
 untargeted_pd_full_naind_nopenalize <- logistic_control_analysis(all_untargeted_naind, varname ="PD_ind", imp_num = 1, nlambda = 200, PD_ind = T, types = c("CO", "CM", "CY", "PD"), full_model = T, penalize_age_gender = T)
 untargeted_adpd_full_naind_nopenalize <- logistic_control_analysis(all_untargeted_naind, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("AD", "PD"), full_model = T, penalize_age_gender = T)

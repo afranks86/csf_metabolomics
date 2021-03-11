@@ -505,6 +505,15 @@ ggsave('age_clock_combined_reduced_pred.png',
        path = here("plots", "aging_figs"), 
        width = 14, height = 10)
 
+figure_3 <- predtruth_plot(targeted_reduced$pred_df, name = "Targeted") /
+  predtruth_plot(untargeted_reduced$pred_df, name = "Untargeted") /
+  predtruth_plot(got_reduced$pred_df, name = "GOT") /
+  predtruth_plot(lipids_reduced$pred_df, name = "Lipids")
+
+ggsave('figure_3.png',
+       plot = figure_3,
+       path = here('plots', 'aging_figs', 'main_figs'),
+       width = 83, height = 200, dpi = 300, units = 'mm')
 
 #' Function to get the median coefficient across five imputations for one of the leave one out models
 #' @param index is a natural number between 1 and the number of observations used in reduced_output
@@ -549,9 +558,12 @@ untargeted_c_matched_age_reduced <- untargeted_reduced$pred_df %>%
 
 ggsave(filename = "age_clock_untargeted_reduced_pred_matched.png",
        plot = predtruth_plot(untargeted_c_matched_age_reduced, name = "Untargeted (matched)"),
-       width = 14,
-       height = 10,
-       path = here("plots", "aging_figs")) #14.9 x 8.21
+       width = 83,
+       height = 100,
+       path = here("plots", "aging_figs", 'main_figs'),
+       units = 'mm',
+       dpi = 300
+       )
 
 
 ####### Untargeted Variations #################
@@ -678,7 +690,11 @@ saveRDS(got_reduced_takelog, file = here('aging_output_files', 'got_reduced_take
 
 
 
-roc_fig <- function(roc_df){
+
+roc_fig <- function(roc_df, predtruth_df){
+  #brier_score <- with(predtruth_df, brier(imp_avg, truth))
+  
+  
   ggplot(roc_df) + 
     geom_line(mapping = aes(x, y, group = imp), lwd = 1.5) + 
     geom_abline(intercept = 0, slope = 1, linetype = 2) + 
@@ -686,10 +702,13 @@ roc_fig <- function(roc_df){
          #subtitle = TeX('Untargeted'),
          x = 'False Positive Rate',
          y = 'True Positive Rate') + 
-    geom_text(x = Inf, y = -Inf, 
-              hjust = 1, vjust = -0.5, 
+    geom_richtext(x = Inf, y = -Inf, 
+              hjust = 1, vjust = 0, 
               size = 20,# label.padding = unit(1, "lines"),
-              label = paste0('AUC:', round(mean(roc_df$auc), 3)))
+              label = paste0('AUC:', round(mean(roc_df$auc), 3) 
+                             #'<br>Brier:', round(brier_score, 3)
+                            )
+              )
 }
 
 
@@ -714,10 +733,63 @@ lipids_ad_reduced <- reduced_logistic_analysis(data = wide_data_lipids,
                                             types = c("AD", "CO", "CM", "CY")
                                             )
 
+targeted_ad_reduced <- readRDS(file = here('aging_output_files', 'targeted_ad_reduced.Rds'))
+untargeted_ad_reduced <- readRDS(file = here('aging_output_files', 'untargeted_ad_reduced.Rds'))
+lipids_ad_reduced <- readRDS(file = here('aging_output_files', 'lipids_ad_reduced.Rds'))
+got_ad_reduced <- readRDS(file = here('aging_output_files', 'got_ad_reduced.Rds'))
+
 saveRDS(targeted_ad_reduced, file = here('aging_output_files', 'targeted_ad_reduced.Rds'))
 saveRDS(untargeted_ad_reduced, file = here('aging_output_files', 'untargeted_ad_reduced.Rds'))
 saveRDS(lipids_ad_reduced, file = here('aging_output_files', 'lipids_ad_reduced.Rds'))
 saveRDS(got_ad_reduced, file = here('aging_output_files', 'got_ad_reduced.Rds'))
+
+
+
+untargeted_ad_c_roc <- roc_fig(untargeted_ad_reduced$roc_df, untargeted_ad_reduced$predtruth_df) + 
+  labs(title = 'Untargeted')
+targeted_ad_c_roc <- roc_fig(targeted_ad_reduced$roc_df, targeted_ad_reduced$predtruth_df) + 
+  labs(title = 'Targeted')
+lipids_ad_c_roc <- roc_fig(lipids_ad_reduced$roc_df, lipids_ad_reduced$predtruth_df) + 
+  labs(title = 'Lipids')
+got_ad_c_roc <- roc_fig(got_ad_reduced$roc_df, got_ad_reduced$predtruth_df) + 
+  labs(title = 'GOT')
+
+
+# get null model from adpd_glmnet.R
+meta_ad_c_auc <- round(base_ad_c_roc$auc[1], 3)
+
+roc_ad_reduced_grid <- untargeted_ad_c_roc + targeted_ad_c_roc + lipids_ad_c_roc + got_ad_c_roc + 
+  plot_annotation(title = "ROC: AD vs C",
+                  subtitle = str_glue("(Age, sex only AUC: {meta_ad_c_auc})")) +
+  plot_layout(ncol = 2, nrow = 2)
+
+ggsave('roc_ad_reduced_grid.png',
+       plot = roc_ad_reduced_grid,
+       path = here("plots", "adpd_figs"), 
+       width = 28, height = 20)
+
+
+ggsave('roc_ad_reduced_untargeted.png',
+       plot = roc_fig(untargeted_ad_reduced$roc_df, untargeted_ad_reduced$predtruth_df) + 
+         labs(title = 'Untargeted: AD vs C'),
+       path = here("plots", "adpd_figs"), 
+       width = 14, height = 10)
+ggsave('roc_ad_reduced_targeted.png',
+       plot = roc_fig(targeted_ad_reduced$roc_df, targeted_ad_reduced$predtruth_df) + 
+         labs(title = 'Targeted: AD vs C'),
+       path = here("plots", "adpd_figs"), 
+       width = 14, height = 10)
+ggsave('roc_ad_reduced_lipids.png',
+       plot = roc_fig(lipids_ad_reduced$roc_df, lipids_ad_reduced$predtruth_df) + 
+         labs(title = 'Lipids: AD vs C'),
+       path = here("plots", "adpd_figs"), 
+       width = 14, height = 10)
+ggsave('roc_ad_reduced_got.png',
+       plot = roc_fig(got_ad_reduced$roc_df, got_ad_reduced$predtruth_df) + 
+         labs(title = 'GOT: AD vs C'),
+       path = here("plots", "adpd_figs"), 
+       width = 14, height = 10)
+
 ####
 
 targeted_pd_reduced <- reduced_logistic_analysis(data = wide_data_targeted, 
@@ -742,6 +814,36 @@ saveRDS(targeted_pd_reduced, file = here('aging_output_files', 'targeted_pd_redu
 saveRDS(untargeted_pd_reduced, file = here('aging_output_files', 'untargeted_pd_reduced.Rds'))
 saveRDS(lipids_pd_reduced, file = here('aging_output_files', 'lipids_pd_reduced.Rds'))
 saveRDS(got_pd_reduced, file = here('aging_output_files', 'got_pd_reduced.Rds'))
+
+
+targeted_pd_reduced <- readRDS(file = here('aging_output_files', 'targeted_pd_reduced.Rds'))
+untargeted_pd_reduced <- readRDS(file = here('aging_output_files', 'untargeted_pd_reduced.Rds'))
+lipids_pd_reduced <- readRDS(file = here('aging_output_files', 'lipids_pd_reduced.Rds'))
+got_pd_reduced <- readRDS(file = here('aging_output_files', 'got_pd_reduced.Rds'))
+
+
+
+untargeted_pd_c_roc <- roc_fig(untargeted_pd_reduced$roc_df, untargeted_pd_reduced$predtruth_df) + 
+  labs(title = 'Untargeted')
+targeted_pd_c_roc <- roc_fig(targeted_pd_reduced$roc_df, targeted_pd_reduced$predtruth_df) + 
+  labs(title = 'Targeted')
+lipids_pd_c_roc <- roc_fig(lipids_pd_reduced$roc_df, lipids_pd_reduced$predtruth_df) + 
+  labs(title = 'Lipids')
+got_pd_c_roc <- roc_fig(got_pd_reduced$roc_df, got_pd_reduced$predtruth_df) + 
+  labs(title = 'GOT')
+
+# get null model from adpd_glmnet.R (base_ad_c...)
+meta_pd_c_auc <- round(base_pd_c_roc$auc[1], 3)
+
+roc_pd_reduced_grid <- untargeted_pd_c_roc + targeted_pd_c_roc + lipids_pd_c_roc + got_pd_c_roc + 
+  plot_annotation(title = "ROC: PD vs C",
+                  subtitle = str_glue("(Age, sex only: {meta_pd_c_auc})")) +
+  plot_layout(ncol = 2, nrow = 2)
+
+ggsave('roc_pd_reduced_grid.png',
+       plot = roc_pd_reduced_grid,
+       path = here("plots", "adpd_figs"), 
+       width = 28, height = 20)
 
 
 #### Untargeted PD has almost perfect prediction... remove all metabolites retained in the full model and see what happens
@@ -801,26 +903,49 @@ saveRDS(lipids_adpd_reduced, file = here('aging_output_files', 'lipids_adpd_redu
 saveRDS(got_adpd_reduced, file = here('aging_output_files', 'got_adpd_reduced.Rds'))
  
 
-ggsave('roc_adpd_untargeted.png',
-       plot = roc_fig(untargeted_adpd_reduced$roc_df) + 
-         labs(title = 'Untargeted: AD vs PD'),
+untargeted_adpd_roc <- roc_fig(untargeted_adpd_reduced$roc_df, untargeted_adpd_reduced$predtruth_df) + 
+  labs(title = 'Untargeted')
+targeted_adpd_roc <- roc_fig(targeted_adpd_reduced$roc_df, targeted_adpd_reduced$predtruth_df) + 
+  labs(title = 'Targeted')
+lipids_adpd_roc <- roc_fig(lipids_adpd_reduced$roc_df, lipids_adpd_reduced$predtruth_df) + 
+  labs(title = 'Lipids')
+got_adpd_roc <- roc_fig(got_adpd_reduced$roc_df, got_adpd_reduced$predtruth_df) + 
+  labs(title = 'GOT')
+
+
+# ggsave('roc_adpd_untargeted.png',
+#        plot = roc_fig(untargeted_adpd_reduced$roc_df) + 
+#          labs(title = 'Untargeted: AD vs PD'),
+#        path = here("plots", "adpd_figs"), 
+#        width = 14, height = 10)
+# ggsave('roc_adpd_targeted.png',
+#        plot = roc_fig(targeted_adpd_reduced$roc_df) + 
+#          labs(title = 'Targeted: AD vs PD'),
+#        path = here("plots", "adpd_figs"), 
+#        width = 14, height = 10)
+# ggsave('roc_adpd_lipids.png',
+#        plot = roc_fig(lipids_adpd_reduced$roc_df) + 
+#          labs(title = 'Lipids: AD vs PD'),
+#        path = here("plots", "adpd_figs"), 
+#        width = 14, height = 10)
+# ggsave('roc_adpd_got.png',
+#        plot = roc_fig(got_adpd_reduced$roc_df) + 
+#          labs(title = 'GOT: AD vs PD'),
+#        path = here("plots", "adpd_figs"), 
+#        width = 14, height = 10)
+
+
+# get null model
+meta_adpd_auc <- round(base_ad_pd_roc$auc[1], 3)
+roc_adpd_reduced_grid <- untargeted_adpd_roc + targeted_adpd_roc + lipids_adpd_roc + got_adpd_roc + 
+  plot_annotation(title = "ROC: AD vs PD",
+                  subtitle = str_glue("(Age, sex only: {meta_adpd_auc})")) +
+  plot_layout(ncol = 2, nrow = 2)
+
+ggsave('roc_adpd_reduced_grid.png',
+       plot = roc_adpd_reduced_grid,
        path = here("plots", "adpd_figs"), 
-       width = 14, height = 10)
-ggsave('roc_adpd_targeted.png',
-       plot = roc_fig(targeted_adpd_reduced$roc_df) + 
-         labs(title = 'Targeted: AD vs PD'),
-       path = here("plots", "adpd_figs"), 
-       width = 14, height = 10)
-ggsave('roc_adpd_lipids.png',
-       plot = roc_fig(lipids_adpd_reduced$roc_df) + 
-         labs(title = 'Lipids: AD vs PD'),
-       path = here("plots", "adpd_figs"), 
-       width = 14, height = 10)
-ggsave('roc_adpd_got.png',
-       plot = roc_fig(got_adpd_reduced$roc_df) + 
-         labs(title = 'GOT: AD vs PD'),
-       path = here("plots", "adpd_figs"), 
-       width = 14, height = 10)
+       width = 28, height = 20)
 
 
 

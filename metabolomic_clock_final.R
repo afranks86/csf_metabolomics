@@ -23,9 +23,10 @@ age_dist_c <- qplot(wide_data_targeted %>%
 
 ggsave("age_dist_c.png",
        plot = age_dist_c,
-       path = here("plots", "aging_figs"),
-       width= 14,
-       height = 10)
+       path = here("plots", "aging_figs", 'main_figs'),
+       width= 83,
+       height = 50,
+       dpi = 300, units = 'mm')
 
 ### Batch Balance --------------
 subject_data_meta <- raw_data_targeted %>%     
@@ -211,20 +212,170 @@ pca_plsda_scores_c_untargeted <- pca_scores_c_untargeted %>%
   rename("p1_plsda" = p1)
 
 
-pca_plsda_untar <- ggplot(pca_plsda_scores_c_untargeted, aes(p1_pca, p1_plsda, color = Sex)) + 
-  geom_point(aes(alpha = Age), size = 5) +
-  stat_ellipse(size = 2) +
+pca_plsda_untar <- ggplot(pca_plsda_scores_c_untargeted, aes(p1_pca, p1_plsda, shape = Sex)) + 
+  geom_point(aes(color = Age), size = 1) +
+  stat_ellipse(size = 0.5) +
   labs(title = "PCA/PLS-DA",
        x = str_glue("PCA: PC1 ({pc1_var_explained})"),
        y = str_glue("PLSDA: PC2 ({plsda_null_pc1_varx_explained})")) + 
-  scale_color_viridis_d() +
-  scale_fill_viridis_c()
+  scale_color_viridis_c() #+
+  #scale_fill_viridis_c()
 
 ggsave("pca_plsda_untar.png",
        plot = pca_plsda_untar,
        path = here("plots", "aging_figs"),
        width = 14,
        height = 10)
+
+
+ggsave("figure_2.png",
+       plot = pca_plsda_untar,
+       path = here("plots", "aging_figs", "main_figs"),
+       width = 83,
+       height = 60,
+       units = 'mm', dpi = 300)
+
+
+
+
+#########
+# PCA -> PLS-DA on targeted data
+# for loading matrix
+#########
+
+pca_c_targeted_x <- targeted_c_processed %>% 
+  dplyr::select(-any_of(metadata_cols))
+
+pca_c_targeted <-  pca_c_targeted_x %>%
+  opls(algoC = "nipals",
+       parAsColFcVn = targeted_c_processed$Gender)
+
+pca_c_targeted <- readRDS(here("aging_output_files", "pca_c_targeted.Rds"))
+# saveRDS(pca_c_targeted, here("aging_output_files", "pca_c_targeted.Rds"))
+
+
+pca_scores_c_targeted <- pca_c_targeted@scoreMN %>%
+  as_tibble() %>%
+  bind_cols(targeted_c_processed %>% select(Age, "Sex" = Gender, APOE, Type, Id))
+
+pc1_var_explained_tar <- pca_c_targeted@modelDF["p1","R2X"] %>%
+  scales::percent()
+pc2_var_explained_tar <- pca_c_targeted@modelDF["p2","R2X"] %>%
+  scales::percent()
+
+# look at median age for pc1 > 0 and pc1 <0
+pca_scores_c_targeted %>%
+  transmute(Age, p1, 
+            p1_greater_than_zero = p1 > 0) %>%
+  group_by(p1_greater_than_zero) %>%
+  summarize(p1_median_age = median(Age))
+
+# by gender
+pca_gender_targeted <- ggplot(pca_scores_c_targeted, aes(p1, p2, color = Sex)) + 
+  geom_point(size = 5) +
+  stat_ellipse(size = 2) +
+  labs(title = "Principal Component Analysis",
+       subtitle = "Colored by Sex",
+       x = str_glue("PC1 ({pc1_var_explained_tar})"),
+       y = str_glue("PC2 ({pc2_var_explained_tar})")) + 
+  scale_color_viridis_d()
+
+# by age
+pca_age_targeted <- ggplot(pca_scores_c_targeted, aes(Age, p1, color = Age)) + 
+  geom_point(size = 5) +
+  scale_color_viridis_c() + 
+  #stat_ellipse() +
+  labs(title = "Principal Component Analysis",
+       subtitle = str_glue("First PC by Age"),
+       y = str_glue("PC1 ({pc1_var_explained})"),
+       x = str_glue("Chronological Age (Years)")) 
+
+
+
+
+
+
+## PLS-DA  (using gender as response) -------------------------
+
+# R2X / R2Y: % variance in X/Y explained by component
+# Q2 : 1 - (predicted RSS / sum squares Y). tiny q2y means pretty bad predictive performance
+plsda_c_targeted <- targeted_c_processed %>%
+  dplyr::select(-any_of(metadata_cols)) %>%
+  opls(y = targeted_c_processed$Gender, algoC = "nipals", predI = 2)
+
+plsda_c_targeted <- readRDS(here("aging_output_files", "plsda_c_targeted.Rds"))
+# saveRDS(plsda_c_targeted, here("aging_output_files", "plsda_c_targeted.Rds"))
+
+
+
+plsda_pc1_varx_explained_tar <- plsda_c_targeted@modelDF["p1","R2X"] %>%
+  scales::percent()
+plsda_pc2_varx_explained_tar <- plsda_c_targeted@modelDF["p2","R2X"] %>%
+  scales::percent()
+
+
+plsda_scores_c_targeted <- plsda_c_targeted@scoreMN %>%
+  as_tibble() %>%
+  bind_cols(targeted_c_processed %>% select(Age, "Sex" = Gender, APOE, Type, Id))
+
+plsda_gender_targeted <- ggplot(plsda_scores_c_targeted, aes(p1, p2, color = Sex)) + 
+  geom_point(size = 5) +
+  stat_ellipse(size = 2) +
+  labs(title = "Partial Least Squares Discriminant Analysis",
+       subtitle = "By Sex",
+       x = str_glue("PC1 ({plsda_pc1_varx_explained_tar})"),
+       y = str_glue("PC2 ({plsda_pc2_varx_explained_tar})")) + 
+  scale_color_viridis_d()
+
+
+
+
+## compute first pc, do plsda in null space of transofmration matrix ------
+
+x_c_nullpc1_tar <- pca_c_targeted_x - pca_c_targeted@scoreMN[,'p1'] %*% t(pca_c_targeted@loadingMN[,'p1'])
+plsda_c_targeted_nullpc1 <- x_c_nullpc1_tar %>%
+  opls(y = targeted_c_processed$Gender, algoC = "nipals", predI = 2)
+
+plsda_c_targeted_nullpc1 <- readRDS(here("aging_output_files", "plsda_c_targeted_nullpc1.Rds"))
+# saveRDS(plsda_c_targeted_nullpc1, here("aging_output_files", "plsda_c_targeted_nullpc1.Rds"))
+
+
+
+plsda_null_pc1_varx_explained_tar <- plsda_c_targeted_nullpc1@modelDF["p1","R2X"] %>%
+  scales::percent()
+plsda_null_pc2_varx_explained_tar <- plsda_c_targeted_nullpc1@modelDF["p2","R2X"] %>%
+  scales::percent()
+
+
+plsda_scores_c_targeted_nullpc1 <- plsda_c_targeted_nullpc1@scoreMN %>%
+  as_tibble() %>%
+  bind_cols(targeted_c_processed %>% select(Age, "Sex" = Gender, APOE, Type, Id))
+
+pca_plsda_scores_c_targeted <- pca_scores_c_targeted %>%
+  select("p1_pca" = p1, Id) %>%
+  inner_join(plsda_scores_c_targeted_nullpc1, by = "Id") %>%
+  select(-p2) %>%
+  rename("p1_plsda" = p1)
+
+
+pca_plsda_tar <- ggplot(pca_plsda_scores_c_targeted, aes(p1_pca, p1_plsda, shape = Sex)) + 
+  geom_point(aes(color = Age), size = 1) +
+  stat_ellipse(size = 0.5) +
+  labs(title = "PCA/PLS-DA",
+       x = str_glue("PCA: PC1 ({pc1_var_explained_tar})"),
+       y = str_glue("PLSDA: PC2 ({plsda_null_pc1_varx_explained_tar})")) + 
+  scale_color_viridis_c() #+
+#scale_fill_viridis_c()
+
+ggsave("pca_plsda_tar.png",
+       plot = pca_plsda_tar,
+       path = here("plots", "aging_figs"),
+       width = 83,
+       height = 60,
+       units = 'mm', dpi = 300)
+
+
+
 
 
 ######################################################################
@@ -246,164 +397,164 @@ ggsave("pca_plsda_untar.png",
 
 
 
-
-########
-
-### GOT
-
-########
-message("GOT -------------------------------------------")
-
-imputed_c_got5 <- filter_and_impute_multi(wide_data, c('CO', 'CY', 'CM'), empri = 10, scale = T)
-got_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_got5, name = "GOT", color = NULL, imp_num = .x, map_got = FALSE))
-
-imputed_c_got5 <- readRDS(here("aging_output_files", "imputed_c_got5.Rds"))
-got_age_analysis <- readRDS(here("aging_output_files", "got_age_analysis.Rds"))
-# saveRDS(imputed_c_got5, here("aging_output_files", "imputed_c_got5.Rds"))
-# saveRDS(got_age_analysis, here("aging_output_files", "got_age_analysis.Rds"))
-
-got_pred_df <- imputation_df(got_age_analysis)
-
-# final plot
-got_age_predtruth <- predtruth_plot(got_pred_df, name = "GOT")
-ggsave(filename = "age_clock_GOT_pred.png", 
-       plot = got_age_predtruth,
-       path = here("plots", "aging_figs"), 
-       width = 14, height = 10)
-
-
-got_avg_retained <- got_age_analysis %>% 
-  purrr::map(~.x[[2]] %>% setdiff("(Intercept)") %>% length) %>% 
-  unlist %>% mean
-
-got_in_all <- got_age_analysis %>% 
-  purrr::map(~.x[[2]] %>% names) %>% 
-  reduce(intersect) %>%
-  setdiff("(Intercept)")
-
-got_in_at_least_one <- got_age_analysis %>%
-  purrr::map(~.x[[2]] %>% names) %>% 
-  reduce(c) %>%
-  setdiff("(Intercept)")
-
-got_retained_table <- tibble(
-  data = "GOT",
-  avg_retained = got_avg_retained,
-  num_in_all = length(got_in_all),
-  num_in_any = length(got_in_at_least_one)
-)
-
-
-## Create null model as baseline (it's dataset agnositic, since the observations are same)
-null_df <- got_pred_df %>%
-  ungroup() %>%
-  select(truth, gender, apoe, apoe4, type) %>%
-  mutate(pred = mean(truth))
-
-(null_age_predtruth <- predtruth_plot(null_df, pred_name = "pred", name = "Mean model", errorbar = FALSE))
-
-
-
-
-
-
-
-
-### Lipids
-
-########
-message("Lipids (amelia) -------------------------------------------")
-
-imputed_c_lipids5 <- filter_and_impute_multi(wide_data_lipids, c('CO', 'CY', 'CM'), empri = 10)
-lipids_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_lipids5, name = "Lipids", color = NULL, imp_num = .x))
-
-imputed_c_lipids5 <- readRDS(here("aging_output_files", "imputed_c_lipids5.Rds"))
-lipids_age_analysis <- readRDS(here("aging_output_files", "lipids_age_analysis.Rds"))
-# saveRDS(imputed_c_lipids5, here("aging_output_files", "imputed_c_lipids5.Rds"))
-# saveRDS(lipids_age_analysis, here("aging_output_files", "lipids_age_analysis.Rds"))
-
-
-lipids_pred_df <- imputation_df(lipids_age_analysis)
-  
-lipids_age_predtruth <- predtruth_plot(lipids_pred_df, name = "Lipids")
-ggsave(filename = "age_clock_lipids_pred.png", 
-       plot = lipids_age_predtruth,
-       path = here("plots", "aging_figs"), 
-       width = 14, height = 10)
-
-lipids_avg_retained <- lipids_age_analysis %>% 
-  purrr::map(~.x[[2]] %>% setdiff("(Intercept)") %>% length) %>% 
-  unlist %>% mean
-
-lipids_in_all <- lipids_age_analysis %>% 
-  purrr::map(~.x[[2]] %>% names) %>% 
-  reduce(intersect) %>%
-  setdiff("(Intercept)")
-
-lipids_in_at_least_one <- lipids_age_analysis %>%
-  purrr::map(~.x[[2]] %>% names) %>% 
-  reduce(c) %>%
-  setdiff("(Intercept)")
-
-lipids_retained_table <- tibble(
-  data = "Lipids",
-  avg_retained = lipids_avg_retained,
-  num_in_all = length(lipids_in_all),
-  num_in_any = length(lipids_in_at_least_one)
-)
-
-lipids_coef_table <- lipids_age_analysis %>%
-  purrr::imap(~enframe(.x[[2]], value = str_glue("coef{.y}"))) %>%
-  reduce(~full_join(.x, .y, by = "name")) %>%
-  rowwise() %>%
-  transmute(name,
-            avgCoef = mean(c(coef1, coef2, coef3, coef4, coef5), na.rm = TRUE) %>% round(1)
-  ) %>%
-  ungroup() %>%
-  arrange(desc(abs(avgCoef))) %>%
-  filter(!(name %in% c("GenderM", "(Intercept)")))
-
-# write separate tables for positive and negative coefs
-lipids_coef_table %>%
-  filter(avgCoef > 0) %>%
-  write_csv(here("aging_tables", "pos_coef_table_lipids.csv"))
-
-lipids_coef_table %>%
-  filter(avgCoef < 0) %>%
-  write_csv(here("aging_tables", "neg_coef_table_lipids.csv"))
+# 
+# ########
+# 
+# ### GOT
+# 
+# ########
+# message("GOT -------------------------------------------")
+# 
+# imputed_c_got5 <- filter_and_impute_multi(wide_data, c('CO', 'CY', 'CM'), empri = 10, scale = T)
+# got_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_got5, name = "GOT", color = NULL, imp_num = .x, map_got = FALSE))
+# 
+# imputed_c_got5 <- readRDS(here("aging_output_files", "imputed_c_got5.Rds"))
+# got_age_analysis <- readRDS(here("aging_output_files", "got_age_analysis.Rds"))
+# # saveRDS(imputed_c_got5, here("aging_output_files", "imputed_c_got5.Rds"))
+# # saveRDS(got_age_analysis, here("aging_output_files", "got_age_analysis.Rds"))
+# 
+# got_pred_df <- imputation_df(got_age_analysis)
+# 
+# # final plot
+# got_age_predtruth <- predtruth_plot(got_pred_df, name = "GOT")
+# ggsave(filename = "age_clock_GOT_pred.png",
+#        plot = got_age_predtruth,
+#        path = here("plots", "aging_figs"),
+#        width = 14, height = 10)
+# 
+# 
+# got_avg_retained <- got_age_analysis %>%
+#   purrr::map(~.x[[2]] %>% setdiff("(Intercept)") %>% length) %>%
+#   unlist %>% mean
+# 
+# got_in_all <- got_age_analysis %>%
+#   purrr::map(~.x[[2]] %>% names) %>%
+#   reduce(intersect) %>%
+#   setdiff("(Intercept)")
+# 
+# got_in_at_least_one <- got_age_analysis %>%
+#   purrr::map(~.x[[2]] %>% names) %>%
+#   reduce(c) %>%
+#   setdiff("(Intercept)")
+# 
+# got_retained_table <- tibble(
+#   data = "GOT",
+#   avg_retained = got_avg_retained,
+#   num_in_all = length(got_in_all),
+#   num_in_any = length(got_in_at_least_one)
+# )
+# 
+# 
+# ## Create null model as baseline (it's dataset agnositic, since the observations are same)
+# null_df <- got_pred_df %>%
+#   ungroup() %>%
+#   select(truth, gender, apoe, apoe4, type) %>%
+#   mutate(pred = mean(truth))
+# 
+# (null_age_predtruth <- predtruth_plot(null_df, pred_name = "pred", name = "Mean model", errorbar = FALSE))
+# 
 
 
 
 
 
 
-### Correlation between lipids and GOT residuals
-
-got_avg_resid <- got_pred_df$imp_avg - got_pred_df$truth
-lipids_avg_resid <- lipids_pred_df$imp_avg - lipids_pred_df$truth
-
-cor.test(got_avg_resid, lipids_avg_resid, method = "spearman")
-
-
-# now, this correlation might include some correlation between the methods (as a result of the regularization to the horizontal line)
-# to try and capture correlation better, we'll fit linear models for pred ~ truth, and then compare the residuals of those models
-  # note: i know it's kinda backwards to do pred ~ truth, but we're just matching the x/y of the plot
-got_truthpred_lm <- lm(imp_avg ~ truth, data = got_pred_df)
-lipids_truthpred_lm <- lm(imp_avg ~ truth, data = lipids_pred_df)
-cor.test(resid(got_truthpred_lm), resid(lipids_truthpred_lm), method = "spearman")
-
-
-got_pred_df %>%
-  ungroup %>%
-  mutate(model_line = predict(got_truthpred_lm)) %>%
-  predtruth_plot(name = "GOT") + 
-  geom_line(aes(truth, model_line), color = "blue")
-
-lipids_pred_df %>%
-  ungroup %>%
-  mutate(model_line = predict(lipids_truthpred_lm)) %>%
-  predtruth_plot(name = "Lipids") + 
-  geom_line(aes(truth, model_line), color = "blue")
+# 
+# ### Lipids
+# 
+# ########
+# message("Lipids (amelia) -------------------------------------------")
+# 
+# imputed_c_lipids5 <- filter_and_impute_multi(wide_data_lipids, c('CO', 'CY', 'CM'), empri = 10)
+# lipids_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_lipids5, name = "Lipids", color = NULL, imp_num = .x))
+# 
+# imputed_c_lipids5 <- readRDS(here("aging_output_files", "imputed_c_lipids5.Rds"))
+# lipids_age_analysis <- readRDS(here("aging_output_files", "lipids_age_analysis.Rds"))
+# # saveRDS(imputed_c_lipids5, here("aging_output_files", "imputed_c_lipids5.Rds"))
+# # saveRDS(lipids_age_analysis, here("aging_output_files", "lipids_age_analysis.Rds"))
+# 
+# 
+# lipids_pred_df <- imputation_df(lipids_age_analysis)
+#   
+# lipids_age_predtruth <- predtruth_plot(lipids_pred_df, name = "Lipids")
+# ggsave(filename = "age_clock_lipids_pred.png", 
+#        plot = lipids_age_predtruth,
+#        path = here("plots", "aging_figs"), 
+#        width = 14, height = 10)
+# 
+# lipids_avg_retained <- lipids_age_analysis %>% 
+#   purrr::map(~.x[[2]] %>% setdiff("(Intercept)") %>% length) %>% 
+#   unlist %>% mean
+# 
+# lipids_in_all <- lipids_age_analysis %>% 
+#   purrr::map(~.x[[2]] %>% names) %>% 
+#   reduce(intersect) %>%
+#   setdiff("(Intercept)")
+# 
+# lipids_in_at_least_one <- lipids_age_analysis %>%
+#   purrr::map(~.x[[2]] %>% names) %>% 
+#   reduce(c) %>%
+#   setdiff("(Intercept)")
+# 
+# lipids_retained_table <- tibble(
+#   data = "Lipids",
+#   avg_retained = lipids_avg_retained,
+#   num_in_all = length(lipids_in_all),
+#   num_in_any = length(lipids_in_at_least_one)
+# )
+# 
+# lipids_coef_table <- lipids_age_analysis %>%
+#   purrr::imap(~enframe(.x[[2]], value = str_glue("coef{.y}"))) %>%
+#   reduce(~full_join(.x, .y, by = "name")) %>%
+#   rowwise() %>%
+#   transmute(name,
+#             avgCoef = mean(c(coef1, coef2, coef3, coef4, coef5), na.rm = TRUE) %>% round(1)
+#   ) %>%
+#   ungroup() %>%
+#   arrange(desc(abs(avgCoef))) %>%
+#   filter(!(name %in% c("GenderM", "(Intercept)")))
+# 
+# # write separate tables for positive and negative coefs
+# lipids_coef_table %>%
+#   filter(avgCoef > 0) %>%
+#   write_csv(here("aging_tables", "pos_coef_table_lipids.csv"))
+# 
+# lipids_coef_table %>%
+#   filter(avgCoef < 0) %>%
+#   write_csv(here("aging_tables", "neg_coef_table_lipids.csv"))
+# 
+# 
+# 
+# 
+# 
+# 
+# ### Correlation between lipids and GOT residuals
+# 
+# got_avg_resid <- got_pred_df$imp_avg - got_pred_df$truth
+# lipids_avg_resid <- lipids_pred_df$imp_avg - lipids_pred_df$truth
+# 
+# cor.test(got_avg_resid, lipids_avg_resid, method = "spearman")
+# 
+# 
+# # now, this correlation might include some correlation between the methods (as a result of the regularization to the horizontal line)
+# # to try and capture correlation better, we'll fit linear models for pred ~ truth, and then compare the residuals of those models
+#   # note: i know it's kinda backwards to do pred ~ truth, but we're just matching the x/y of the plot
+# got_truthpred_lm <- lm(imp_avg ~ truth, data = got_pred_df)
+# lipids_truthpred_lm <- lm(imp_avg ~ truth, data = lipids_pred_df)
+# cor.test(resid(got_truthpred_lm), resid(lipids_truthpred_lm), method = "spearman")
+# 
+# 
+# got_pred_df %>%
+#   ungroup %>%
+#   mutate(model_line = predict(got_truthpred_lm)) %>%
+#   predtruth_plot(name = "GOT") + 
+#   geom_line(aes(truth, model_line), color = "blue")
+# 
+# lipids_pred_df %>%
+#   ungroup %>%
+#   mutate(model_line = predict(lipids_truthpred_lm)) %>%
+#   predtruth_plot(name = "Lipids") + 
+#   geom_line(aes(truth, model_line), color = "blue")
 
 
 
@@ -426,82 +577,76 @@ lipids_pred_df %>%
 #   purrr::map(~.x[[1]] %>% names) %>% 
 #   reduce(intersect) %>%
 #   setdiff("(Intercept)")
+
+
+
+# ########
+# 
+# ### Targeted
+# 
+# ########
+# 
+# message("Targeted -------------------------------------------")
+# 
+# imputed_c_targeted5 <- filter_and_impute_multi(wide_data_targeted, c('CO', 'CY', 'CM'), scale = T)
+# targeted_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_targeted5, name = "Targeted", color = NULL, imp_num = .x))
+# 
+# imputed_c_targeted5 <- readRDS(here("aging_output_files", "imputed_c_targeted5.Rds"))
+# targeted_age_analysis <- readRDS(here("aging_output_files", "targeted_age_analysis.Rds"))
+# # saveRDS(imputed_c_targeted5, here("aging_output_files", "imputed_c_targeted5.Rds"))
+# # saveRDS(targeted_age_analysis, here("aging_output_files", "targeted_age_analysis.Rds"))
 # 
 # 
-
-########
-
-### Lipids: Mice, loo
-
-########
-
-########
-
-### Targeted
-
-########
-
-message("Targeted -------------------------------------------")
-
-imputed_c_targeted5 <- filter_and_impute_multi(wide_data_targeted, c('CO', 'CY', 'CM'), scale = T)
-targeted_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_targeted5, name = "Targeted", color = NULL, imp_num = .x))
-
-imputed_c_targeted5 <- readRDS(here("aging_output_files", "imputed_c_targeted5.Rds"))
-targeted_age_analysis <- readRDS(here("aging_output_files", "targeted_age_analysis.Rds"))
-# saveRDS(imputed_c_targeted5, here("aging_output_files", "imputed_c_targeted5.Rds"))
-# saveRDS(targeted_age_analysis, here("aging_output_files", "targeted_age_analysis.Rds"))
-
-
-targeted_pred_df <- imputation_df(targeted_age_analysis)
-
-
-targeted_age_predtruth <- predtruth_plot(targeted_pred_df, name = "Targeted")
-ggsave(filename = "age_clock_targeted_pred.png", 
-       plot = targeted_age_predtruth,
-       path = here("plots", "aging_figs"), 
-       width = 14, height = 10)
-
-targeted_avg_retained <- targeted_age_analysis %>% 
-  purrr::map(~.x[[2]] %>% setdiff("(Intercept)") %>% length) %>% 
-  unlist %>% mean
-
-targeted_in_all <- targeted_age_analysis %>% 
-  purrr::map(~.x[[2]] %>% names) %>% 
-  reduce(intersect) %>%
-  setdiff("(Intercept)")
-
-targeted_in_at_least_one <- targeted_age_analysis %>%
-  purrr::map(~.x[[2]] %>% names) %>% 
-  reduce(c) %>%
-  setdiff("(Intercept)")
-
-targeted_retained_table <- tibble(
-  data = "Targeted",
-  avg_retained = targeted_avg_retained,
-  num_in_all = length(targeted_in_all),
-  num_in_any = length(targeted_in_at_least_one)
-)
-
-targeted_coef_table <- targeted_age_analysis %>%
-  purrr::imap(~enframe(.x[[2]], value = str_glue("coef{.y}"))) %>%
-  reduce(~full_join(.x, .y, by = "name")) %>%
-  rowwise() %>%
-  transmute(name = str_replace_all(name, "_pos|_neg", ""),
-            avgCoef = mean(c(coef1, coef2, coef3, coef4, coef5), na.rm = TRUE) %>% round(1)
-            ) %>%
-  ungroup() %>%
-  arrange(desc(abs(avgCoef))) %>%
-  filter(name != "(Intercept)")
-
-# write separate tables for positive and negative coefs
-targeted_coef_table %>%
-  filter(avgCoef > 0) %>%
-  write_csv(here("aging_tables", "pos_coef_table_targeted.csv"))
-
-targeted_coef_table %>%
-  filter(avgCoef < 0) %>%
-  write_csv(here("aging_tables", "neg_coef_table_targeted.csv"))
-
+# targeted_pred_df <- imputation_df(targeted_age_analysis)
+# 
+# 
+# targeted_age_predtruth <- predtruth_plot(targeted_pred_df, name = "Targeted")
+# ggsave(filename = "age_clock_targeted_pred.png", 
+#        plot = targeted_age_predtruth,
+#        path = here("plots", "aging_figs"), 
+#        width = 14, height = 10)
+# 
+# targeted_avg_retained <- targeted_age_analysis %>% 
+#   purrr::map(~.x[[2]] %>% setdiff("(Intercept)") %>% length) %>% 
+#   unlist %>% mean
+# 
+# targeted_in_all <- targeted_age_analysis %>% 
+#   purrr::map(~.x[[2]] %>% names) %>% 
+#   reduce(intersect) %>%
+#   setdiff("(Intercept)")
+# 
+# targeted_in_at_least_one <- targeted_age_analysis %>%
+#   purrr::map(~.x[[2]] %>% names) %>% 
+#   reduce(c) %>%
+#   setdiff("(Intercept)")
+# 
+# targeted_retained_table <- tibble(
+#   data = "Targeted",
+#   avg_retained = targeted_avg_retained,
+#   num_in_all = length(targeted_in_all),
+#   num_in_any = length(targeted_in_at_least_one)
+# )
+# 
+# targeted_coef_table <- targeted_age_analysis %>%
+#   purrr::imap(~enframe(.x[[2]], value = str_glue("coef{.y}"))) %>%
+#   reduce(~full_join(.x, .y, by = "name")) %>%
+#   rowwise() %>%
+#   transmute(name = str_replace_all(name, "_pos|_neg", ""),
+#             avgCoef = mean(c(coef1, coef2, coef3, coef4, coef5), na.rm = TRUE) %>% round(1)
+#             ) %>%
+#   ungroup() %>%
+#   arrange(desc(abs(avgCoef))) %>%
+#   filter(name != "(Intercept)")
+# 
+# # write separate tables for positive and negative coefs
+# targeted_coef_table %>%
+#   filter(avgCoef > 0) %>%
+#   write_csv(here("aging_tables", "pos_coef_table_targeted.csv"))
+# 
+# targeted_coef_table %>%
+#   filter(avgCoef < 0) %>%
+#   write_csv(here("aging_tables", "neg_coef_table_targeted.csv"))
+# 
 
 
 
@@ -807,52 +952,52 @@ ggsave(filename = "age_clock_untar_lipids_pred.png",
 
 
 
-
-######################
-
-### Post selection inference
-
-######################
-
-
-# post selection
-untargeted_post <- post_select(imputed_c_untargeted5, untargeted_age_analysis, "untargeted-post")
-post_untargeted_pred_df <- imputation_df(untargeted_post)
-post_untargeted_age_predtruth <- predtruth_plot(post_untargeted_pred_df, name = "Untargeted Post")
-ggsave(filename = "post_age_clock_untargeted_pred.png", 
-       path = here("plots", "aging_figs"), 
-       plot = post_untargeted_age_predtruth,
-       width = 14, height = 10)
-
-
-targeted_post <- post_select(imputed_c_targeted5, targeted_age_analysis, "targeted-post")
-post_targeted_pred_df <- imputation_df(targeted_post)
-post_targeted_age_predtruth <- predtruth_plot(post_targeted_pred_df, name = "Targeted Post")
-ggsave(filename = "post_age_clock_targeted_pred.png", 
-       path = here("plots", "aging_figs"), 
-       plot = post_targeted_age_predtruth,
-       width = 14, height = 10)
-
-
-lipids_post <- post_select(imputed_c_lipids5, lipids_age_analysis, "lipids-post")
-post_lipids_pred_df <- imputation_df(lipids_post)
-post_lipids_age_predtruth <- predtruth_plot(post_lipids_pred_df, name = "Lipids Post")
-ggsave(filename = "post_age_clock_lipids_pred.png", 
-       path = here("plots", "aging_figs"), 
-       plot = post_lipids_age_predtruth,
-       width = 14, height = 10)
-
-got_post <- post_select(imputed_c_got5, got_age_analysis, "got-post")
-post_got_pred_df <- imputation_df(got_post)
-post_got_age_predtruth <- predtruth_plot(post_got_pred_df, name = "GOT Post")
-ggsave(filename = "post_age_clock_GOT_pred.png", 
-       path = here("plots", "aging_figs"), 
-       plot = post_got_age_predtruth,
-       width = 14, height = 10)
-
-
-
-
+# 
+# ######################
+# 
+# ### Post selection inference
+# 
+# ######################
+# 
+# 
+# # post selection
+# untargeted_post <- post_select(imputed_c_untargeted5, untargeted_age_analysis, "untargeted-post")
+# post_untargeted_pred_df <- imputation_df(untargeted_post)
+# post_untargeted_age_predtruth <- predtruth_plot(post_untargeted_pred_df, name = "Untargeted Post")
+# ggsave(filename = "post_age_clock_untargeted_pred.png", 
+#        path = here("plots", "aging_figs"), 
+#        plot = post_untargeted_age_predtruth,
+#        width = 14, height = 10)
+# 
+# 
+# targeted_post <- post_select(imputed_c_targeted5, targeted_age_analysis, "targeted-post")
+# post_targeted_pred_df <- imputation_df(targeted_post)
+# post_targeted_age_predtruth <- predtruth_plot(post_targeted_pred_df, name = "Targeted Post")
+# ggsave(filename = "post_age_clock_targeted_pred.png", 
+#        path = here("plots", "aging_figs"), 
+#        plot = post_targeted_age_predtruth,
+#        width = 14, height = 10)
+# 
+# 
+# lipids_post <- post_select(imputed_c_lipids5, lipids_age_analysis, "lipids-post")
+# post_lipids_pred_df <- imputation_df(lipids_post)
+# post_lipids_age_predtruth <- predtruth_plot(post_lipids_pred_df, name = "Lipids Post")
+# ggsave(filename = "post_age_clock_lipids_pred.png", 
+#        path = here("plots", "aging_figs"), 
+#        plot = post_lipids_age_predtruth,
+#        width = 14, height = 10)
+# 
+# got_post <- post_select(imputed_c_got5, got_age_analysis, "got-post")
+# post_got_pred_df <- imputation_df(got_post)
+# post_got_age_predtruth <- predtruth_plot(post_got_pred_df, name = "GOT Post")
+# ggsave(filename = "post_age_clock_GOT_pred.png", 
+#        path = here("plots", "aging_figs"), 
+#        plot = post_got_age_predtruth,
+#        width = 14, height = 10)
+# 
+# 
+# 
+# 
 # ########
 # 
 # ### untargeted Raw
@@ -869,36 +1014,36 @@ ggsave(filename = "post_age_clock_GOT_pred.png",
 # 
 # (untargeted_raw_age_predtruth <- predtruth_plot(untargeted_raw_pred_df, name = "Untargeted, Raw")) 
 # 
-
-########
-
-### untargeted Raw scaled
-
-########
-
-imputed_c_untargeted_rawscaled5 <- filter_and_impute_multi(wide_data_untargeted_rawscaled, c('CO', 'CY', 'CM'), empri = 10)
-#save(imputed_c_untargeted_rawscaled5, file = "imputed_c_untargeted_rawscaled5_03022020")
-# lambdas were reaching the end of their sequence due to hugeness of data, so we increase nlambda from 100 to 200
-untargeted_rawscaled_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_untargeted_rawscaled5, name = "Untargeted, Raw Scaled", color = NULL, imp_num = .x, nlambda = 200))
-#save(untargeted_rawscaled_age_analysis, file = "untargeted_rawscaled_age_analysis_02032020.RData")
-
-imputed_c_untargeted_rawscaled5 <- readRDS(here("aging_output_files", "imputed_c_untargeted_rawscaled5.Rds"))
-untargeted_rawscaled_age_analysis <- readRDS(here("aging_output_files", "untargeted_rawscaled_age_analysis.Rds"))
-
-
-# saveRDS(imputed_c_untargeted_rawscaled5, here("aging_output_files", "imputed_c_untargeted_rawscaled5.Rds"))
-# saveRDS(untargeted_rawscaled_age_analysis, here("aging_output_files", "untargeted_rawscaled_age_analysis.Rds"))
-
-
-untargeted_rawscaled_pred_df <- imputation_df(untargeted_rawscaled_age_analysis)
-
-untargeted_rawscaled_age_predtruth <- predtruth_plot(untargeted_rawscaled_pred_df, 
-                                                     name = "Untargeted, Without Drift Correction")
-ggsave(filename = "no_drift_correction_age_clock_untargeted_pred.png", 
-       path = here("plots", "aging_figs"), 
-       plot = untargeted_rawscaled_age_predtruth,
-       width = 14, height = 10)
-
+# 
+# ########
+# 
+# ### untargeted Raw scaled
+# 
+# ########
+# 
+# imputed_c_untargeted_rawscaled5 <- filter_and_impute_multi(wide_data_untargeted_rawscaled, c('CO', 'CY', 'CM'), empri = 10)
+# #save(imputed_c_untargeted_rawscaled5, file = "imputed_c_untargeted_rawscaled5_03022020")
+# # lambdas were reaching the end of their sequence due to hugeness of data, so we increase nlambda from 100 to 200
+# untargeted_rawscaled_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_untargeted_rawscaled5, name = "Untargeted, Raw Scaled", color = NULL, imp_num = .x, nlambda = 200))
+# #save(untargeted_rawscaled_age_analysis, file = "untargeted_rawscaled_age_analysis_02032020.RData")
+# 
+# imputed_c_untargeted_rawscaled5 <- readRDS(here("aging_output_files", "imputed_c_untargeted_rawscaled5.Rds"))
+# untargeted_rawscaled_age_analysis <- readRDS(here("aging_output_files", "untargeted_rawscaled_age_analysis.Rds"))
+# 
+# 
+# # saveRDS(imputed_c_untargeted_rawscaled5, here("aging_output_files", "imputed_c_untargeted_rawscaled5.Rds"))
+# # saveRDS(untargeted_rawscaled_age_analysis, here("aging_output_files", "untargeted_rawscaled_age_analysis.Rds"))
+# 
+# 
+# untargeted_rawscaled_pred_df <- imputation_df(untargeted_rawscaled_age_analysis)
+# 
+# untargeted_rawscaled_age_predtruth <- predtruth_plot(untargeted_rawscaled_pred_df, 
+#                                                      name = "Untargeted, Without Drift Correction")
+# ggsave(filename = "no_drift_correction_age_clock_untargeted_pred.png", 
+#        path = here("plots", "aging_figs"), 
+#        plot = untargeted_rawscaled_age_predtruth,
+#        width = 14, height = 10)
+# 
 
 
 
@@ -993,44 +1138,44 @@ ggsave(filename = "no_drift_correction_age_clock_untargeted_pred.png",
 #   setdiff("(Intercept)")
 # 
 
-########
-
-### Untargeted, select columns with <10% missingness, randomly shuffling the ages to test
-
-########
-
-
-message("Untargeted  subset, permuted age-------------------------------------------")
-
-wide_data_untargeted_permuted <- wide_data_untargeted %>%
-  mutate(Age = sample(Age, replace = F))
-
-# What about doing untargeted analysis on <10% missing?
-untargeted_permuted_less_10perc_missing <-wide_data_untargeted_permuted %>%
-  map_dbl(~ sum(is.na(.x))/length(.x)) %>% 
-  enframe(value = "perct_missing") %>% filter(perct_missing < .1)
-
-wide_data_untargeted_permuted_less10perc_missing <- wide_data_untargeted_permuted %>% select_at(vars(untargeted_less_10perc_missing$name))    
-
-
-# analysis
-imputed_c_untargeted_permuted_10subset5 <- filter_and_impute_multi(wide_data_untargeted_permuted_less10perc_missing , c('CO', 'CY', 'CM'))
-untargeted_permuted_10subset_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_untargeted_permuted_10subset5, name = "untargeted_permuted_10subset", color = NULL, imp_num = .x))
-
-untargeted_permuted_10subset_pred_df <- imputation_df(untargeted_permuted_10subset_age_analysis)
-
-(untargeted_permuted_10subset_age_predtruth <- predtruth_plot(untargeted_permuted_10subset_pred_df, name = "untargeted_permuted (<10% missing)")) 
-ggsave(filename = "age_clock_untargeted_permuted_10subset_pred.png") #14.9 x 8.21
-
-untargeted_permuted_10subset_avg_retained <- untargeted_permuted_10subset_age_analysis %>% 
-  purrr::map(~.x[[2]] %>% setdiff("(Intercept)") %>% length) %>% 
-  unlist %>% mean
-
-untargeted_permuted_10subset_in_all <- untargeted_permuted_10subset_age_analysis %>% 
-  purrr::map(~.x[[2]] %>% names) %>% 
-  reduce(intersect) %>%
-  setdiff("(Intercept)")
-
+# ########
+# 
+# ### Untargeted, select columns with <10% missingness, randomly shuffling the ages to test
+# 
+# ########
+# 
+# 
+# message("Untargeted  subset, permuted age-------------------------------------------")
+# 
+# wide_data_untargeted_permuted <- wide_data_untargeted %>%
+#   mutate(Age = sample(Age, replace = F))
+# 
+# # What about doing untargeted analysis on <10% missing?
+# untargeted_permuted_less_10perc_missing <-wide_data_untargeted_permuted %>%
+#   map_dbl(~ sum(is.na(.x))/length(.x)) %>%
+#   enframe(value = "perct_missing") %>% filter(perct_missing < .1)
+# 
+# wide_data_untargeted_permuted_less10perc_missing <- wide_data_untargeted_permuted %>% select_at(vars(untargeted_less_10perc_missing$name))
+# 
+# 
+# # analysis
+# imputed_c_untargeted_permuted_10subset5 <- filter_and_impute_multi(wide_data_untargeted_permuted_less10perc_missing , c('CO', 'CY', 'CM'))
+# untargeted_permuted_10subset_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_untargeted_permuted_10subset5, name = "untargeted_permuted_10subset", color = NULL, imp_num = .x))
+# 
+# untargeted_permuted_10subset_pred_df <- imputation_df(untargeted_permuted_10subset_age_analysis)
+# 
+# (untargeted_permuted_10subset_age_predtruth <- predtruth_plot(untargeted_permuted_10subset_pred_df, name = "untargeted_permuted (<10% missing)"))
+# ggsave(filename = "age_clock_untargeted_permuted_10subset_pred.png") #14.9 x 8.21
+# 
+# untargeted_permuted_10subset_avg_retained <- untargeted_permuted_10subset_age_analysis %>%
+#   purrr::map(~.x[[2]] %>% setdiff("(Intercept)") %>% length) %>%
+#   unlist %>% mean
+# 
+# untargeted_permuted_10subset_in_all <- untargeted_permuted_10subset_age_analysis %>%
+#   purrr::map(~.x[[2]] %>% names) %>%
+#   reduce(intersect) %>%
+#   setdiff("(Intercept)")
+# 
 
 
 
@@ -1047,22 +1192,22 @@ untargeted_permuted_10subset_in_all <- untargeted_permuted_10subset_age_analysis
 ###################################################################
 
 
-#############################
-
-#### knockoff
-
-#############################
-
-my_glmnet_stat <- function(X, X_k, y){
-  stat.glmnet_coefdiff(X, X_k, y, nlambda = 200, alpha = 0.5)
-}
-
-testx <- imputed_c_targeted5[[1]]$Y[,-which(colnames(imputed_c_targeted5[[1]]$Y) %in% c("(Intercept)", "Age"))]
-testy <- as.matrix(imputed_c_targeted5[[1]]$Y[, 'Age'])
-knockoff_tar <- knockoff.filter(testx, testy, knockoffs = create.second_order, statistic = my_glmnet_stat, fdr = 0.05)
-
-print(knockoff_tar$selected)
-
+# #############################
+# 
+# #### knockoff
+# 
+# #############################
+# 
+# my_glmnet_stat <- function(X, X_k, y){
+#   stat.glmnet_coefdiff(X, X_k, y, nlambda = 200, alpha = 0.5)
+# }
+# 
+# testx <- imputed_c_targeted5[[1]]$Y[,-which(colnames(imputed_c_targeted5[[1]]$Y) %in% c("(Intercept)", "Age"))]
+# testy <- as.matrix(imputed_c_targeted5[[1]]$Y[, 'Age'])
+# knockoff_tar <- knockoff.filter(testx, testy, knockoffs = create.second_order, statistic = my_glmnet_stat, fdr = 0.05)
+# 
+# print(knockoff_tar$selected)
+# 
 
 
 
@@ -1467,21 +1612,21 @@ full_model_new_data <- function(imputation, new_data, nlambda = 100){
   list("data_df" = data_df, "fit" = fit)
 }
 
-
-imputed_adpd_got_amelia5 <- filter_and_impute_multi(wide_data, c("AD", "PD"), method = "amelia")
-imputed_adpd_lipids_amelia5 <- filter_and_impute_multi(wide_data_lipids, c("AD", "PD"), method = "amelia")
-
-imputed_adpd_combined_amelia5 <- purrr::map2(imputed_adpd_got_amelia5, imputed_adpd_lipids_amelia5, ~combine_got_lipids(.x, .y))
-
-
-adpd_age_analysis <- 1:5 %>% purrr::map(~full_model_new_data(imputed_c_combined_amelia5[[.x]], new_data = imputed_adpd_combined_amelia5[[.x]], nlambda = 200))
-
-adpd_pred_df <- imputation_df(adpd_age_analysis)
-
-(adpd_age_predtruth <- predtruth_plot(adpd_pred_df, name = "Combined GOT + Lipids", data_name = "AD/PD")) 
-ggsave(filename = "age_c_adpd_pred.png") #14.9 x 8.21
-
-
+# 
+# imputed_adpd_got_amelia5 <- filter_and_impute_multi(wide_data, c("AD", "PD"), method = "amelia")
+# imputed_adpd_lipids_amelia5 <- filter_and_impute_multi(wide_data_lipids, c("AD", "PD"), method = "amelia")
+# 
+# imputed_adpd_combined_amelia5 <- purrr::map2(imputed_adpd_got_amelia5, imputed_adpd_lipids_amelia5, ~combine_got_lipids(.x, .y))
+# 
+# 
+# adpd_age_analysis <- 1:5 %>% purrr::map(~full_model_new_data(imputed_c_combined_amelia5[[.x]], new_data = imputed_adpd_combined_amelia5[[.x]], nlambda = 200))
+# 
+# adpd_pred_df <- imputation_df(adpd_age_analysis)
+# 
+# (adpd_age_predtruth <- predtruth_plot(adpd_pred_df, name = "Combined GOT + Lipids", data_name = "AD/PD")) 
+# ggsave(filename = "age_c_adpd_pred.png") #14.9 x 8.21
+# 
+# 
 
 
 # ################
@@ -1566,9 +1711,75 @@ untargeted_adpd_pred_df_separate %>% mutate(pred_dist =abs(imp_avg - truth)) %>%
 
 
 
+#########
 
+### check prediction accuracy on bootstrapped samples of AD/PD
+### we want to test if the AD/PD model is actually better than the intercept only model.
 
 ################
+
+#' function to get out of sample predicted age of a bootstrapped ADPD sample
+#' c_data is the data used the fit the model, i.e. imputed_c_untargeted5 (technically, it should be a list of 5 versions of the data)
+untar_adpd_boot <- function(seed, c_data = imputed_c_untargeted5){
+  set.seed(seed)
+  
+  ad_boot <- wide_data_untargeted %>%
+    filter(Type == 'AD') %>%
+    slice_sample(n = nrow(.), replace = TRUE)
+  pd_boot <- wide_data_untargeted %>%
+    filter(Type == 'PD') %>%
+    slice_sample(n = nrow(.), replace = TRUE)
+  
+  boot_ad_amelia5 <- filter_and_impute_multi(ad_boot, c('AD'), empri = 5)
+  boot_pd_amelia5 <- filter_and_impute_multi(pd_boot, c('PD'), empri = 5)
+  
+  boot_adpd_separate_amelia5 <- purrr::map2(boot_ad_amelia5, boot_pd_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE))
+  
+  boot_adpd_age_analysis_separate <- 1:5 %>% purrr::map(~full_model_new_data(c_data[[.x]], new_data = boot_adpd_separate_amelia5[[.x]], nlambda = 200))
+  
+  boot_adpd_pred_df_separate <- imputation_df(boot_adpd_age_analysis_separate)
+  
+  # well, not technically the average RMSE, but rather the RMSE using the average prediction (across 5 imps)
+  boot_avg_rmse <- with(boot_adpd_pred_df_separate, sqrt(mean((truth - imp_avg)^2)))
+  boot_avg_mae <- with(boot_adpd_pred_df_separate, mean(abs((truth - imp_avg))))
+  
+  
+  
+  # null model statistcs
+  boot_adpd_null_pred <- mean(boot_adpd_pred_df_separate$truth) %>% rep(times = length(boot_adpd_pred_df_separate$truth))
+  boot_adpd_rmse_null <- (boot_adpd_pred_df_separate$truth - boot_adpd_null_pred)^2 %>% mean %>% sqrt %>% round(2)
+  boot_adpd_mae_null <- (boot_adpd_pred_df_separate$truth - boot_adpd_null_pred) %>% abs %>% mean %>% round(2)
+  
+  
+  tibble(seed = seed,
+         null_rmse = boot_adpd_rmse_null,
+         null_mae = boot_adpd_mae_null,
+         avg_rmse = boot_avg_rmse,
+         avg_mae = boot_avg_mae
+         )
+}
+
+
+boot_untar_df <- purrr::map_dfr(1:10, ~untar_adpd_boot(.x))
+
+## results indicate that the imputation procedure changes results a lot.
+## kinda a weird thing to try, because amelia assumes samples are indep (but there are duplicates in boot)
+
+# instead, just see how much better the performance is in the ad/pd pred vs the null pred
+
+untar_abs_error_mod <- with(untargeted_adpd_pred_df_separate, imp_avg - truth)
+untar_abs_error_null <- with(untargeted_adpd_pred_df_separate, mean(truth) - truth)
+     
+# generate stats on differences between the two models
+untar_abs_error_df <- tibble(mod_abs_err = untar_abs_error_mod,
+                             null_abs_err = untar_abs_error_null,
+                             truth = untargeted_adpd_pred_df_separate$truth) %>%
+  pivot_longer(cols = ends_with('abs_err'), names_to = 'source', values_to = 'resid') %>%
+  ggplot() +
+  geom_point(aes(truth, resid, color = source))
+
+
+
 
 ## Using untargeted, Comparing metrics for matched controls/ ADPD
 
@@ -1621,8 +1832,8 @@ untargeted_adpd_age_predtruth_separate <- predtruth_plot(untargeted_adpd_pred_df
     geom_richtext(aes(x = -Inf, y = Inf, hjust = 0, vjust = 1, label = paste0("R^2: ", cor(truth, imp_avg, method = "pearson")^2 %>% round(2), 
                                                                               "<br>RMSE: ", (truth - imp_avg)^2 %>% mean %>% sqrt %>% round(2), " [",adpd_rmse_null,"]", 
                                                                               "<br>MAE: ", (truth - imp_avg) %>% abs %>% mean %>% round(2), " [",adpd_mae_null,"]")),
-                  size =12) + 
-    ggforce::geom_mark_circle(aes(truth, imp_avg, filter = biggest_error ==1), size = 1.5)
+                  size =rel(2)) + 
+    ggforce::geom_mark_circle(aes(truth, imp_avg, filter = biggest_error ==1), expand = unit(3, 'mm'), size = 0.25)
   
 
 ggsave(filename = "age_adpd_pred_untargeted.png", 
@@ -1631,6 +1842,16 @@ ggsave(filename = "age_adpd_pred_untargeted.png",
        width = 16, height = 10) #14.9 x 8.21
 
 
+figure_4a <- predtruth_plot(untargeted_c_matched_age_reduced, name = "Untargeted (matched)")
+
+figure_4 <- figure_4a / 
+  untargeted_adpd_age_predtruth_separate
+
+ggsave(filename = 'figure_4.png',
+       path = here('plots', 'aging_figs', 'main_figs'),
+       plot = figure_4,
+       width = 83, height = 100,
+       units = 'mm', dpi = 300)
 
 
 ### residuals plot, faceted by type
@@ -1672,88 +1893,87 @@ ggplot(untargeted_pred_df_with_adpd_oos) +
 
 
 
-#### asefkjasdklfjhalsdkfjh
 
-################
-
-## Using targeted, separate imputation for AD/PD
-
-################
-
-message("targeted, ADPD age, separate imp -------------------------------------------")
-
-#empri = .1(num PD/AD)
-targeted_ad_amelia5 <- filter_and_impute_multi(wide_data_targeted, c('AD'), empri = 5)
-targeted_pd_amelia5 <- filter_and_impute_multi(wide_data_targeted, c('PD'), empri = 5)
-
-targeted_adpd_separate_amelia5 <- purrr::map2(targeted_ad_amelia5, targeted_pd_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE))
-
-targeted_adpd_age_analysis_separate <- 1:5 %>% purrr::map(~full_model_new_data(imputed_c_targeted5[[.x]], new_data = targeted_adpd_separate_amelia5[[.x]], nlambda = 200))
-
-targeted_adpd_pred_df_separate <- imputation_df(targeted_adpd_age_analysis_separate)
-
-
-targeted_adpd_pred_df_separate <- targeted_adpd_pred_df_separate %>%
-  mutate(mse = (truth - imp_avg)^2) %>%
-  group_by(type) %>%
-  mutate(biggest_error = ifelse(mse == max(mse), 1,0)) %>%
-  ungroup
-
-## Update regular ADPD plot with the stats for this one:
-(targeted_adpd_age_predtruth_separate <- predtruth_plot(targeted_adpd_pred_df_separate, name = "targeted", data_name = "AD/PD, separate", color = "type") +
-    geom_richtext(aes(x = -Inf, y = Inf, hjust = 0, vjust = 1, label = paste0("R^2: ", cor(truth, imp_avg, method = "pearson")^2 %>% round(2),  
-                                                                              "<br>RMSE: ", (truth - imp_avg)^2 %>% mean %>% sqrt %>% round(2),
-                                                                              "<br>MAE: ", (truth - imp_avg) %>% abs %>% mean %>% round(2))),
-                  size =12) + 
-    ggforce::geom_mark_circle(aes(truth, imp_avg, fill = type, filter = biggest_error ==1))) 
-
-
-
-
-
-###########
-
-## Using targeted raw data, look at different levels of retained metabolites between matched controls and ad/pd
-
-###########
-
-# find matched controls
-targeted_adpd_matched_controls <- purrr::map(1:nrow(wide_data_targeted), ~find_control(.x, data = filter(wide_data_targeted, Type %in% c("AD", "PD")), 
-                                                                                           data_control = filter(wide_data_targeted, Type %in% c("CO", "CY", "CM")))) %>%
-  bind_rows() %>%
-  distinct(.keep_all = T)
-
-
-targeted_adpd_retained <- wide_data_targeted %>%
-  filter(Type %in% c("AD", "PD")) %>%
-  select_at(vars(setdiff(targeted_coef_table$name, c("(Intercept)", "GenderM"))))
-
-targeted_matched_c_retained <- targeted_adpd_matched_controls %>%
-  select_at(vars(setdiff(targeted_coef_table$name, c("(Intercept)", "GenderM"))))
-  
-two_df_t_test <- function(df1, df2, name){
-  first_col <- df1 %>% pull(name)
-  second_col <- df2 %>% pull(name)
-
-  # run a Welsh's t test (maybe better for unequal sample sizes since unequal var)
-  result <- t.test(first_col, second_col, var.equal = FALSE)
-  
-  tibble(metabolite = name,
-         t_stat = result$statistic,
-         t_df = result$parameter,
-         t_pval = result$p.value)
-  
-}
-
-targeted_retained_t <- purrr::map_df(names(targeted_adpd_retained), 
-                                        ~two_df_t_test(targeted_adpd_retained, targeted_matched_c_retained, .x)) %>%
-  mutate(t_BH_pval = p.adjust(t_pval, method = "BH")) %>%
-  arrange(t_BH_pval)
-
-t_values_age_coefs <- left_join(targeted_retained_t, targeted_coef_table, by = c("metabolite" = "name")) %>%
-  rowwise() %>%
-  mutate(avg_coef = mean(c(coef1, coef2, coef3, coef4, coef5), na.rm = T)) %>%
-  ungroup()
+# ################
+# 
+# ## Using targeted, separate imputation for AD/PD
+# 
+# ################
+# 
+# message("targeted, ADPD age, separate imp -------------------------------------------")
+# 
+# #empri = .1(num PD/AD)
+# targeted_ad_amelia5 <- filter_and_impute_multi(wide_data_targeted, c('AD'), empri = 5)
+# targeted_pd_amelia5 <- filter_and_impute_multi(wide_data_targeted, c('PD'), empri = 5)
+# 
+# targeted_adpd_separate_amelia5 <- purrr::map2(targeted_ad_amelia5, targeted_pd_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE))
+# 
+# targeted_adpd_age_analysis_separate <- 1:5 %>% purrr::map(~full_model_new_data(imputed_c_targeted5[[.x]], new_data = targeted_adpd_separate_amelia5[[.x]], nlambda = 200))
+# 
+# targeted_adpd_pred_df_separate <- imputation_df(targeted_adpd_age_analysis_separate)
+# 
+# 
+# targeted_adpd_pred_df_separate <- targeted_adpd_pred_df_separate %>%
+#   mutate(mse = (truth - imp_avg)^2) %>%
+#   group_by(type) %>%
+#   mutate(biggest_error = ifelse(mse == max(mse), 1,0)) %>%
+#   ungroup
+# 
+# ## Update regular ADPD plot with the stats for this one:
+# (targeted_adpd_age_predtruth_separate <- predtruth_plot(targeted_adpd_pred_df_separate, name = "targeted", data_name = "AD/PD, separate", color = "type") +
+#     geom_richtext(aes(x = -Inf, y = Inf, hjust = 0, vjust = 1, label = paste0("R^2: ", cor(truth, imp_avg, method = "pearson")^2 %>% round(2),  
+#                                                                               "<br>RMSE: ", (truth - imp_avg)^2 %>% mean %>% sqrt %>% round(2),
+#                                                                               "<br>MAE: ", (truth - imp_avg) %>% abs %>% mean %>% round(2))),
+#                   size =12) + 
+#     ggforce::geom_mark_circle(aes(truth, imp_avg, fill = type, filter = biggest_error ==1))) 
+# 
+# 
+# 
+# 
+# 
+# ###########
+# 
+# ## Using targeted raw data, look at different levels of retained metabolites between matched controls and ad/pd
+# 
+# ###########
+# 
+# # find matched controls
+# targeted_adpd_matched_controls <- purrr::map(1:nrow(wide_data_targeted), ~find_control(.x, data = filter(wide_data_targeted, Type %in% c("AD", "PD")), 
+#                                                                                            data_control = filter(wide_data_targeted, Type %in% c("CO", "CY", "CM")))) %>%
+#   bind_rows() %>%
+#   distinct(.keep_all = T)
+# 
+# 
+# targeted_adpd_retained <- wide_data_targeted %>%
+#   filter(Type %in% c("AD", "PD")) %>%
+#   select_at(vars(setdiff(targeted_coef_table$name, c("(Intercept)", "GenderM"))))
+# 
+# targeted_matched_c_retained <- targeted_adpd_matched_controls %>%
+#   select_at(vars(setdiff(targeted_coef_table$name, c("(Intercept)", "GenderM"))))
+#   
+# two_df_t_test <- function(df1, df2, name){
+#   first_col <- df1 %>% pull(name)
+#   second_col <- df2 %>% pull(name)
+# 
+#   # run a Welsh's t test (maybe better for unequal sample sizes since unequal var)
+#   result <- t.test(first_col, second_col, var.equal = FALSE)
+#   
+#   tibble(metabolite = name,
+#          t_stat = result$statistic,
+#          t_df = result$parameter,
+#          t_pval = result$p.value)
+#   
+# }
+# 
+# targeted_retained_t <- purrr::map_df(names(targeted_adpd_retained), 
+#                                         ~two_df_t_test(targeted_adpd_retained, targeted_matched_c_retained, .x)) %>%
+#   mutate(t_BH_pval = p.adjust(t_pval, method = "BH")) %>%
+#   arrange(t_BH_pval)
+# 
+# t_values_age_coefs <- left_join(targeted_retained_t, targeted_coef_table, by = c("metabolite" = "name")) %>%
+#   rowwise() %>%
+#   mutate(avg_coef = mean(c(coef1, coef2, coef3, coef4, coef5), na.rm = T)) %>%
+#   ungroup()
 
 ########
 
@@ -1772,74 +1992,74 @@ untargeted_all_age_analysis <- purrr::map(1:5, ~age_control_analysis(untargeted_
 
 untargeted_all_pred_df <- imputation_df(untargeted_all_age_analysis)
 
-(untargeted_all_age_predtruth <- predtruth_plot(untargeted_all_pred_df, name = "Untargeted (all)")) 
+(untargeted_all_age_predtruth <- predtruth_plot(untargeted_all_pred_df, name = "Untargeted (all)"))
 ggsave(filename = "age_clock_all_untargeted_pred.png") #14.9 x 8.21
 
 
 
-########
-
-### Untargeted MATCHED, including ADPD (ie full model)
-### We're interested in the coefficient for AD/PD
-### The full full model has huge ADPD coeffs, so we're trying to narrow that down.
-
-########
-
-message("Untargeted ADPD full age model, matched subjects -------------------------------------------")
-
-wide_data_untargeted_matched_c <- purrr::map_df(1:nrow(wide_data_untargeted), ~find_control(.x, data = filter(wide_data_untargeted, Type %in% c("AD", "PD")), 
-                                                                                           data_control = filter(wide_data_untargeted, Type %in% c("CO", "CY", "CM")))) %>%
-  distinct(.keep_all = TRUE)
-
-imputed_matched_c_untargeted5 <- filter_and_impute_multi(wide_data_untargeted_matched_c, types = c("CO","CY", "CM"), empri = 5)
-# combine controls with AD/PD imputation. include indicators for AD/PD as predictors
-untargeted_all_matched_amelia5 <- purrr::map2(imputed_matched_c_untargeted5, untargeted_adpd_separate_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE, add_AD_ind = TRUE, add_PD_ind = TRUE))
-
-
-untargeted_all_matched_age_analysis <- purrr::map(1:5, ~age_control_analysis(untargeted_all_matched_amelia5, name = "untargeted (matched,all types) ", color = NULL, imp_num = .x, nlambda = 200))
-
-untargeted_all_matched_pred_df <- imputation_df(untargeted_all_matched_age_analysis)
-
-(untargeted_all_matched_age_predtruth <- predtruth_plot(untargeted_all_matched_pred_df, name = "Untargeted (all matched)")) 
-ggsave(filename = "age_clock_all_matched_untargeted_pred.png") #14.9 x 8.21
-
-untargeted_all_matched_age_analysis[[1]]$importance
-
-
-
-################
-
-## Using untargeted, separate imputation for AD/PD
-## FIT ON ADPD data, pred on matched control
-
-################
-
-message("Untargeted Age model, fit on ADPD, predict on matched control -------------------------------------------")
-
-untargeted_reverse_adpd_age_analysis_separate <- 1:5 %>% purrr::map(~full_model_new_data(untargeted_adpd_separate_amelia5[[.x]], new_data = imputed_matched_c_untargeted5[[.x]], nlambda = 200))
-
-untargeted_reverse_adpd_pred_df_separate <- imputation_df(untargeted_reverse_adpd_age_analysis_separate)
-
-(untargeted_reverse_adpd_age_predtruth_separate <- predtruth_plot(untargeted_reverse_adpd_pred_df_separate, name = "Untargeted", data_name = "Control, separate (fit on AD/PD)", color = NULL)) 
-ggsave(filename = "age_c_reverse_adpd_pred_untargeted_separate.png") #14.9 x 8.21
+# ########
+# 
+# ### Untargeted MATCHED, including ADPD (ie full model)
+# ### We're interested in the coefficient for AD/PD
+# ### The full full model has huge ADPD coeffs, so we're trying to narrow that down.
+# 
+# ########
+# 
+# message("Untargeted ADPD full age model, matched subjects -------------------------------------------")
+# 
+# wide_data_untargeted_matched_c <- purrr::map_df(1:nrow(wide_data_untargeted), ~find_control(.x, data = filter(wide_data_untargeted, Type %in% c("AD", "PD")), 
+#                                                                                            data_control = filter(wide_data_untargeted, Type %in% c("CO", "CY", "CM")))) %>%
+#   distinct(.keep_all = TRUE)
+# 
+# imputed_matched_c_untargeted5 <- filter_and_impute_multi(wide_data_untargeted_matched_c, types = c("CO","CY", "CM"), empri = 5)
+# # combine controls with AD/PD imputation. include indicators for AD/PD as predictors
+# untargeted_all_matched_amelia5 <- purrr::map2(imputed_matched_c_untargeted5, untargeted_adpd_separate_amelia5, ~merge_datasets(.x, .y, include_metadata = TRUE, include_age = TRUE, add_AD_ind = TRUE, add_PD_ind = TRUE))
+# 
+# 
+# untargeted_all_matched_age_analysis <- purrr::map(1:5, ~age_control_analysis(untargeted_all_matched_amelia5, name = "untargeted (matched,all types) ", color = NULL, imp_num = .x, nlambda = 200))
+# 
+# untargeted_all_matched_pred_df <- imputation_df(untargeted_all_matched_age_analysis)
+# 
+# (untargeted_all_matched_age_predtruth <- predtruth_plot(untargeted_all_matched_pred_df, name = "Untargeted (all matched)")) 
+# ggsave(filename = "age_clock_all_matched_untargeted_pred.png") #14.9 x 8.21
+# 
+# untargeted_all_matched_age_analysis[[1]]$importance
 
 
 
-################
+# ################
+# 
+# ## Using untargeted, separate imputation for AD/PD
+# ## FIT ON ADPD data, pred on matched control
+# 
+# ################
+# 
+# message("Untargeted Age model, fit on ADPD, predict on matched control -------------------------------------------")
+# 
+# untargeted_reverse_adpd_age_analysis_separate <- 1:5 %>% purrr::map(~full_model_new_data(untargeted_adpd_separate_amelia5[[.x]], new_data = imputed_matched_c_untargeted5[[.x]], nlambda = 200))
+# 
+# untargeted_reverse_adpd_pred_df_separate <- imputation_df(untargeted_reverse_adpd_age_analysis_separate)
+# 
+# (untargeted_reverse_adpd_age_predtruth_separate <- predtruth_plot(untargeted_reverse_adpd_pred_df_separate, name = "Untargeted", data_name = "Control, separate (fit on AD/PD)", color = NULL)) 
+# ggsave(filename = "age_c_reverse_adpd_pred_untargeted_separate.png") #14.9 x 8.21
 
-## Using targeted, separate imputation for AD/PD
-## FIT ON ADPD data, pred on matched control
 
-################
-
-message("targeted Age model, fit on ADPD, predict on matched control -------------------------------------------")
-
-targeted_reverse_adpd_age_analysis_separate <- 1:5 %>% purrr::map(~full_model_new_data(targeted_adpd_separate_amelia5[[.x]], new_data = imputed_matched_c_targeted5[[.x]], nlambda = 200))
-
-targeted_reverse_adpd_pred_df_separate <- imputation_df(targeted_reverse_adpd_age_analysis_separate)
-
-(targeted_reverse_adpd_age_predtruth_separate <- predtruth_plot(targeted_reverse_adpd_pred_df_separate, name = "targeted", data_name = "Control, separate (fit on AD/PD)", color = NULL)) 
-ggsave(filename = "age_c_reverse_adpd_pred_targeted_separate.png") #14.9 x 8.21
+# 
+# ################
+# 
+# ## Using targeted, separate imputation for AD/PD
+# ## FIT ON ADPD data, pred on matched control
+# 
+# ################
+# 
+# message("targeted Age model, fit on ADPD, predict on matched control -------------------------------------------")
+# 
+# targeted_reverse_adpd_age_analysis_separate <- 1:5 %>% purrr::map(~full_model_new_data(targeted_adpd_separate_amelia5[[.x]], new_data = imputed_matched_c_targeted5[[.x]], nlambda = 200))
+# 
+# targeted_reverse_adpd_pred_df_separate <- imputation_df(targeted_reverse_adpd_age_analysis_separate)
+# 
+# (targeted_reverse_adpd_age_predtruth_separate <- predtruth_plot(targeted_reverse_adpd_pred_df_separate, name = "targeted", data_name = "Control, separate (fit on AD/PD)", color = NULL)) 
+# ggsave(filename = "age_c_reverse_adpd_pred_targeted_separate.png") #14.9 x 8.21
 
 
 
@@ -2556,13 +2776,22 @@ missingness_overview_plot <- ggplot(pct_missing_data) +
        y = "Percent Missing",
        fill = "Age") + 
   scale_fill_viridis_d() + 
-  theme(legend.text = element_text(size = 30))
+  scale_y_continuous(labels = scales::percent_format())
+
 ggsave("missingness_overview_bar.png",
        plot = missingness_overview_plot,
-       path = here("plots", "aging_figs"),
-       width = 14,
-       height = 10)
+       path = here("plots", "aging_figs", 'main_figs'),
+       width = 83,
+       height = 50,
+       dpi = 300, units = 'mm')
 
+figure_1 <- age_dist_c / missingness_overview_plot
+ggsave("figure_1.png",
+       plot = figure_1,
+       path = here("plots", "aging_figs", 'main_figs'),
+       width = 83,
+       height = 100,
+       dpi = 300, units = 'mm')
 
 
 # Run chi squared test on missingness between 3 groups of controls (equal range)
