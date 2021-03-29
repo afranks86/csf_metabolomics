@@ -1707,9 +1707,15 @@ untargeted_all_processed <- wide_data_untargeted %>%
 
 
 wide_data_combined <- wide_data %>%
-    #remove duplicate columns
-    select(-c(Age, Type, Gender, Batch, Index, GBAStatus, GBA_T369M, cognitive_status, APOE, Type2)) %>%
-    inner_join(wide_data_lipids, by = 'Id') 
+    left_join(select(wide_data_targeted, -any_of(setdiff(metadata_cols, 'Id'))), by = 'Id') %>%
+    left_join(select(wide_data_untargeted, -any_of(setdiff(metadata_cols, 'Id'))), by = 'Id') %>%
+    left_join(select(wide_data_lipids, -any_of(setdiff(metadata_cols, 'Id'))), by = 'Id')
+
+combined_c_processed <- wide_data_combined %>%
+    filter(Type %in% c("CO", "CY", 'CM')) %>%
+    select_if(~sum(is.na(.x))/nrow(wide_data_combined) < .1) %>%
+    mutate_at(vars(-any_of(metadata_cols)), ~as.vector(scale(.x, center = TRUE, scale = TRUE)))
+
 
 
 #### PANUC data
