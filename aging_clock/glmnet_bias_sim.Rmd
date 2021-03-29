@@ -1,0 +1,486 @@
+---
+title: "glmnet_bias_simulations"
+author: "Nathan Hwangbo"
+date: "2/2/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(here)
+library(patchwork)
+library(glmnet)
+library(tidyverse)
+library(ggtext)
+library(lmeVarComp) # for computing minimum least sqaures. soln is not bad, but didn't want to compute matrix inverse explicitly.
+#source(here(tarter.R))
+```
+
+```{r}
+
+prediction_plot <- function(truth, pred, title = NULL, num_sig, num_missed, num_noise, num_nonzero){
+  
+  min_value <- min(c(truth, pred))
+  max_value <- max(c(truth, pred))
+  
+  pred_table <- tibble(truth = truth, 
+                       pred = pred)
+  ggplot(pred_table) + 
+    geom_point(aes(x = truth, y = pred), size = 4.5) + 
+    geom_abline(slope = 1, intercept = 0) +  
+    xlim(c(min_value, max_value)) + 
+    geom_richtext(aes(x = -Inf, y = Inf, 
+                      hjust = 0, vjust = 1, 
+                      label = paste0("R^2: ", cor(truth, pred, method = "pearson")^2 %>% round(2), 
+                                     "<br>RMSE: ",
+                                     (truth - pred)^2 %>% mean %>% sqrt %>% round(2),
+                                     #"<br>MAE: ",
+                                     #(truth - pred) %>% abs %>% mean %>% round(2),
+                                     "<br># Retained: ",
+                                     num_nonzero,
+                                     "<br># Missed: ",
+                                     num_missed %>% round(2),
+                                     "<br># False Positives: ",
+                                     num_noise %>% round(2))),
+                  size = 10,
+                  label.size = 1
+    ) +
+    labs(title = title) + 
+    expand_limits(x = 15, y = c(25,80)) + 
+    theme(axis.text = element_text(size = 20))
+  
+}
+
+```
+
+
+###. Simulation using a simple high dim normal dataset
+
+We form our dataset with the following properties:
+* $p >> n$
+* Noisy data (iid random features, with $y$ being a linear combination of a few)
+
+In particular, this example has $y$ as a linear combination of 100 features
+
+```{r}
+#set.seed(1)
+dat <- replicate(n = 1000, rnorm(200, mean = 0, sd = 1))
+# rename columns for convenience
+colnames(dat) <- 1:ncol(dat)
+
+# train / test split
+train <- dat[1:100,]
+test <- dat[101:200,]
+
+# add singular values as weights
+singular_values <- svd(train)$d 
+
+## create y as a linear combination of the data xB + \epsilon
+relevant_x <- sample(1:ncol(dat), size = 100, replace = FALSE)
+# dot prod
+random_weights <- rnorm(100, mean = 1, sd = 10) * test_weights
+epsilon <- rnorm(200, mean = 0, sd = 5)
+y <- dat[,relevant_x] %*% as.matrix(random_weights) + epsilon
+
+# train/test split
+y_train <- y[1:100]
+y_test <- y[101:200]
+```
+
+
+```{r}
+fit <- cv.glmnet(train, y_train, family = "gaussian", alpha = 0.5)
+fit_coefs <- coef(fit, s = "lambda.1se") %>%
+  as.matrix()
+# see how many coefs are nonzero
+(nonzero_coefs <- fit_coefs[fit_coefs[,1] != 0,] %>% length)
+noise_coefs <- names(nonzero_coefs) %>% 
+  setdiff(c(relevant_x, "(Intercept)"))
+
+pred <- predict(fit, s = "lambda.1se", newx = test)
+
+prediction_plot(y_test, pred)
+```
+
+
+
+###. Post Selection Inference
+
+####. Using another glmnet
+```{r}
+new_features <- names(nonzero_coefs) %>% 
+  setdiff("(Intercept)") %>%
+  as.numeric()
+
+post_train <- train[, new_features]
+post_test <- test[,new_features]
+post_fit <- cv.glmnet(post_train, y_train, family = "gaussian", alpha = 0.5)
+post_coefs <- coef(post_fit, s = "lambda.1se") %>%
+  as.matrix()
+(post_nonzero_coefs <- post_coefs[post_coefs[,1] != 0,] %>%
+    enframe())
+
+(post_missed_coefs <- as.character(relevant_x) %>% setdiff(post_nonzero_coefs$name))
+
+post_glmnet_pred <- predict(post_fit, s = "lambda.1se", newx = post_test)
+
+prediction_plot(y_test, post_glmnet_pred)
+```
+
+
+####. Using LM
+```{r, eval = FALSE}
+post_train_df <- post_train %>% 
+  as_tibble() %>%
+  mutate(y = y_train)
+post_lm <- lm(y ~ ., data = post_train_df)
+post_coefs_lm <- coef(post_lm)
+(post_nonzero_coefs_lm <- post_coefs_lm[post_coefs_lm != 0] %>% 
+  enframe())
+
+post_lm_pred <- predict(post_lm, newdata = as_tibble(post_test))
+prediction_plot(y_test, post_lm_pred)
+
+```
+
+###. Simulation using the untargeted metabolomic profile.
+
+```{r}
+# dat <- wide_data_untargeted %>%
+#   select(-1:-7)
+# 
+#load(file = here::here("untargeted_all_amelia5.RData"))
+#load(file = here::here("imputed_c_untargeted5.RData"))
+#load(file = here::here())
+
+#imputed_untargeted <- filter_and_impute_multi(wide_data_untargeted, c('CO', 'CY', 'CM', 'AD', 'PD'), empri = 200, num = 1)
+
+load(here::here("imputed_untargeted1.RData"))
+raw_imputed_untargeted <- imputed_untargeted[[1]]
+imputed_untargeted <- imputed_untargeted[[1]][[1]]
+
+sim_post_model <- function(data = imputed_untargeted, num_sig, 
+                           mu_weight = 50 / num_sig, sigma_weight = 1, mu_eps = 0, sigma_eps = 3, alpha = 0.5, plot_both = TRUE){
+  set.seed(1)
+  random_shuffle <- sample(1:nrow(data), size = nrow(data), replace = F)
+  untar_dat <- data[random_shuffle,]
+  # get rid of metadata columns
+  untar_dat <- untar_dat[,-which(colnames(untar_dat) %in% c("Age", "GenderM", "(Intercept)"))]
+  
+  
+  colnames(untar_dat) <- 1:ncol(untar_dat)
+  train <- untar_dat[1:100,]
+  test <- untar_dat[101:198,]
+  
+  ## create y as a linear combination of the data xB + \epsilon
+  relevant_x <- sample(1:ncol(untar_dat), size = num_sig, replace = FALSE)
+  random_weights <- rnorm(num_sig, mean = mu_weight, sd = sigma_weight)
+  epsilon <- rnorm(nrow(untar_dat), mean = mu_eps, sd = sigma_eps)
+  y <- 50 + untar_dat[,relevant_x] %*% as.matrix(random_weights) + epsilon
+  
+  # train/test split
+  y_train <- y[1:100]
+  y_test <- y[101:198]
+  
+  fit <- cv.glmnet(train, y_train, family = "gaussian", alpha = alpha, nlambda = 200)
+  fit_coefs <- coef(fit, s = "lambda.min") %>%
+    as.matrix()
+  # see how many coefs are nonzero
+  nonzero_coefs <- fit_coefs[fit_coefs[,1] != 0,] %>% 
+    names() %>% 
+    setdiff("(Intercept)") 
+  #nonzero_coefs %>% length
+  
+  noise_coefs <- nonzero_coefs %>% 
+    setdiff(c(relevant_x, "(Intercept)"))
+  # correct_coefs <- names(nonzero_coefs) %>%
+  #   intersect(relevant_x)
+  
+  round1_pred <- predict(fit, s = "lambda.min", newx = test)
+  
+  round1_pred_plot <- prediction_plot(y_test, round1_pred, 
+                                      num_sig = num_sig, 
+                                      num_nonzero = length(nonzero_coefs),
+                                      num_missed = length(setdiff(relevant_x, nonzero_coefs)), 
+                                      num_noise = length(noise_coefs),
+                                      title = "Original Model") +
+    labs(x = "Truth", y = "Pred")
+  
+  # features for post selection inference.
+  new_features <- nonzero_coefs %>%
+    as.numeric()
+  
+  post_train <- train[, new_features]
+  post_test <- test[,new_features]
+  post_fit <- cv.glmnet(post_train, y_train, family = "gaussian", alpha = alpha)
+  post_coefs <- coef(post_fit, s = "lambda.min") %>%
+    as.matrix()
+  post_nonzero_coefs <- post_coefs[post_coefs[,1] != 0,] %>%
+    enframe() %>%
+    pull(name) %>%
+    setdiff("(Intercept)")
+  
+  post_noise = intersect(post_nonzero_coefs, noise_coefs)
+  post_missed_coefs <- as.character(relevant_x) %>% setdiff(post_nonzero_coefs)
+  
+  post_glmnet_pred <- predict(post_fit, s = "lambda.min", newx = post_test)
+  
+  post_pred_plot <- prediction_plot(y_test, post_glmnet_pred, 
+                                    num_sig = num_sig, 
+                                    num_nonzero = length(post_nonzero_coefs),
+                                    num_missed = length(setdiff(relevant_x, post_nonzero_coefs)),
+                                    num_noise = length(post_noise),
+                                    title = "Post Selection") +
+    labs(x = "Truth", y = "Pred")
+  
+  # list(true_nonzero = relevant_x,
+  #      plot = round1_pred_plot + post_pred_plot,
+  #      round1_nonzero = nonzero_coefs,
+  #      post_nonzero = post_nonzero_coefs
+  #      )
+  
+  if(plot_both){
+    pred_plot <- round1_pred_plot + post_pred_plot + 
+      plot_annotation(title = str_glue("{num_sig} Significant Predictors"))
+  } else{
+    pred_plot <- round1_pred_plot +
+      plot_annotation(title = str_glue("{num_sig} Significant Predictors"))
+  }
+  
+  
+  
+  list(round1_nonzero = nonzero_coefs,
+       post_nonzero = post_nonzero_coefs,
+       true_x = relevant_x,
+       y = y,
+       round1_noise = noise_coefs %>% length,
+       post_noise = post_noise %>% length,
+       plot = pred_plot,
+       results = tibble(num_sig = rep(num_sig, times = 2),
+                        round = c("round1", "post"),
+                     rmse = c((y_test - round1_pred)^2 %>% mean %>% sqrt, (y_test - post_glmnet_pred)^2 %>% mean %>% sqrt),
+                     num_nonzero = c(length(nonzero_coefs), length(post_nonzero_coefs)),
+                     num_missed = c(length(setdiff(relevant_x, nonzero_coefs)), length(setdiff(relevant_x, post_nonzero_coefs))),
+                     num_fp = c(length(noise_coefs),length(post_noise)),
+                     miss_fp_ratio = num_missed / num_fp
+                     )
+       )
+  
+}
+
+high_eps_full <- sim_post_model(imputed_untargeted, 1000, sigma_weight = 10, sigma_eps = 30)
+high_eps_full$plot
+
+high_eps_sparse <- sim_post_model(imputed_untargeted, 1000, sigma_weight = 1, sigma_eps = 10)
+high_eps$plot
+
+
+# Takeaway: Regularization bias can occur when the number of true predictors is very large -- that is, when age is impacted by many metabolites in a small way.
+reg_bias_bad1 <- sim_post_model(imputed_untargeted, 1000, sigma_weight = .01, sigma_eps = 5, mu_weight = .01)$plot
+saveRDS(reg_bias_bad1, file = here('aging_output_files', 'reg_bias_bad1'))
+ggsave("reg_bias.png",
+       plot = reg_bias_bad1,
+       path = here("plots", "aging_figs"),
+       width = 28,
+       height = 10)
+
+# Takeaway: Even in the situation where # true predictors < p and strong signal, elastic net not guaranteed to pick up true signal. This makes post selection dangerous, especially for inference.
+post_select_bad2 <- sim_post_model(imputed_untargeted, 100, sigma_weight = .5, sigma_eps = 1, mu_weight =.5)$plot
+post_select_bad2
+saveRDS(post_select_bad2, file = here('aging_output_files', 'post_select_bad2'))
+ggsave("post_select.png",
+       plot = post_select_bad2,
+       path = here("plots", "aging_figs"),
+       width = 28,
+       height = 10)
+
+
+
+high_wt <- sim_post_model(imputed_untargeted, 1000, sigma_weight = 30, sigma_eps = 10)
+high_wt$plot
+
+
+post_models_half <- purrr::map(seq(5,1000, 5), ~sim_post_model(.x))
+post_table_half <- purrr::map(post_models_half, ~.x$results) %>% bind_rows
+
+# post_table_half %>%
+#   pivot_wider(names_from = round, values_from = -c(round, num_sig)) %>%
+#   mutate(miss_fp_ratio_round1 = (num_missed_round1 + 1) / (num_fp_round1 + 1),
+#          miss_fp_ratio_post = (num_missed_post + 1) / (num_fp_post + 1)) %>%
+#   pivot_longer(-num_sig, names_to = c("colum", "round"), names_pattern = "(num|rmse.*)_(.*)")
+
+post_models_half[[200]]$plot
+post_models_half[[1]]$plot
+
+ggplot(post_table_half) + 
+  geom_smooth(aes(num_sig, rmse, color = round))
+
+ggplot(post_table_half) +
+  geom_smooth(aes(num_sig, num_nonzero, color = round))
+
+ggplot(post_table_half) + 
+  geom_smooth(aes(num_sig, num_fp, color = round))
+
+ggplot(post_table_half) +
+  geom_smooth(aes(num_sig, miss_fp_ratio, color = round))
+
+
+# alt way to assign weights
+
+# weighted_x <- dat[, relevant_x] 
+# for(i in 1:ncol(weighted_x)){
+#   weighted_x[,i] <- weighted_x[,i] * random_weights[i]
+# }
+# 
+# y <- rowSums(weighted_x)
+
+# 
+# post_models_2 <- purrr::map(seq(0, 1, 0.1), ~sim_post_model(300, alpha = .x))
+# post_table_2 <- purrr::map(post_models_2, ~.x$results) %>% bind_rows
+# 
+# post_models_2[[10]]$plot
+# post_models_2[[1]]$plot
+# 
+# ggplot(post_table_2) +
+#   geom_smooth(aes(num_sig, rmse, color = round))
+# 
+# ggplot(post_table_2) +
+#   geom_smooth(aes(num_sig, num_nonzero, color = round))
+# 
+# ggplot(post_table_2) +
+#   geom_smooth(aes(num_sig, num_fp, color = round))
+
+```
+
+
+
+Trying minimum least squares fit
+```{r}
+loo_mnls <- function(index, features, labels){
+    
+    #features and label, leaving out one observation for training
+    loo_features <- features[-index,]
+    loo_labels <- labels[-index]
+    
+    #features and labels on the held out observation
+    
+    new_features <- features[index,] %>% matrix(nrow = 1, dimnames = list('', colnames(loo_features) ))
+    new_label <- labels[index]
+    
+    
+    
+    #fit on n-1
+    fit <- mnls(x = loo_features, y = loo_labels)
+    
+    #predict on 1
+    pred <- new_features %*% fit
+    return(list(fit,pred))
+}
+
+untar_labels <- raw_imputed_untargeted[[1]][,"Age"]
+untar_labels_nomean <- untar_labels - mean(untar_labels)
+untar_features <- raw_imputed_untargeted[[1]][,-which(colnames(raw_imputed_untargeted[[1]]) %in% c("Age", "(Intercept)"))]
+min_ls <- mnls(untar_features, untar_labels)
+mse_min_ls <- ((untar_features %*% min_ls) - untar_labels)^2 %>% mean
+
+
+untar_loomnls <- purrr::map(1:length(untar_labels_nomean), ~loo_mnls(.x, untar_features, untar_labels_nomean))
+untar_loo_mnls_pred <- purrr::map_dbl(untar_loomnls, ~.x[[2]])
+
+ggplot(tibble(truth = untar_labels, pred = untar_loo_mnls_pred)) +
+  geom_point(aes(truth, pred)) +
+  geom_abline(slope = 1, intercept= 0)
+
+
+# look at how much variability there is in the fits. 
+  # the ith column is the coef for the fit with the ith observation left out
+untar_loomnls_fits <- untar_loomnls %>%
+  purrr::map(~.x[[1]]) %>%
+  reduce(cbind) %>%
+  as_tibble() %>%
+  mutate(coef_var = pmap(., lift_vd(var)) %>% unlist,
+         avg_coef = pmap(.,lift_vd(mean)) %>% unlist)
+```
+
+
+Try mean imputation model to test effect of imputation
+```{r}
+
+mean_model <- function(data){
+  mean_imputation_untargeted_c <- data %>%
+  filter(Type %in% c("CO", "CY", "CM")) %>%
+  select_if(function(x) sum(is.na(x))/nrow(.) < .5) %>%
+  mutate_at(vars(-c(Age, Gender, APOE, Type, Id)), function(x) scale(x, center = T, scale = T)) %>%
+  mutate_if(is.numeric, ~ifelse(is.na(.x), mean(.x, na.rm = T), .x))
+
+mean_imputated_untar_c_features <- mean_imputation_untargeted_c %>%
+  select(-c(Age, APOE, Type, Id)) %>%
+  model.matrix(~., .)
+
+untar_c_age <- mean_imputation_untargeted_c$Age
+
+
+full_model <- get_full_model(features= mean_imputated_untar_c_features, untar_c_age, alpha = 0.5, family = "gaussian", penalize_AD_PD = FALSE, penalize_age_gender = FALSE, nlambda = 200)
+  # Note: If AD_ind, PD_ind are missing from the dataset, the flag penalize_AD_Pd doesn't do anything
+fitpred_c_loo_age <- lapply(1:nrow(mean_imputated_untar_c_features), function(x) loo_cvfit_glmnet(x, mean_imputated_untar_c_features, untar_c_age, lambda = full_model[[2]], full_fit = full_model[[1]],
+                                                                                           alpha = 0.5, family = 'gaussian', penalize_age_gender = FALSE, penalize_AD_PD = FALSE, nlambda = 200))
+  
+fit_c_loo_age <- lapply(fitpred_c_loo_age, function(x) x[[1]])
+pred_c_loo_age <- lapply(fitpred_c_loo_age, function(x) x[[2]]) %>%
+    unlist
+  
+  #fit used to get lambda
+cv_fits <- lapply(fitpred_c_loo_age, function(x) x[[3]])
+  
+  #some measure of variable importance
+importance_c_loo_age <- lapply(fit_c_loo_age, function(x) importance(x))
+  
+importance_c_loo_median_age <- importance_c_loo_age %>% 
+    purrr::map(~importance_consolidated_loo(.x)) %>%
+    bind_rows() %>%
+    #select only the variables that were present in >95% of fits
+    select_if(function(x) sum(is.na(x))/length(x) < .05) %>%
+    map_dbl(~median(.x, na.rm = T))
+  
+  
+resid_c_loo_age <- pred_c_loo_age - untar_c_age
+shapiro <- shapiro.test(resid_c_loo_age)
+  
+  
+  ### look at alpha = 0.5
+  c_loo_age_table <- tibble(truth = untar_c_age, 
+                            pred = pred_c_loo_age,
+                            resid = truth - pred,
+                            #apoe = imputed_c_apoe,
+                            #type = imputed_c_type,
+                            #gender = imputed_c_gender,
+                            #id = imputed_c_id,
+                            #apoe4 = apoe %>% fct_collapse('1' = c('24','34','44'), '0' = c('22', '23', '33'))
+  )
+  
+  
+  pred_truth_c <- ggplot(c_loo_age_table) + 
+    geom_point(aes(truth, pred)) + 
+    scale_color_brewer(type = 'qual', palette = 'Set1') +
+    labs(title = 'Control: True vs Predicted Age',
+         subtitle = paste0(name, ', alpha = 0.5, loo'),
+         x = 'True Age',
+         y = 'Predicted Age') + 
+    geom_abline(intercept = 0, slope = 1) + 
+    geom_richtext(aes(x = -Inf, y = Inf, hjust = 0, vjust = 1, label = paste0("R^2: ", cor(truth, pred, method = "pearson")^2 %>% round(2), 
+                                                                           "<br>RMSE: ", (truth - pred)^2 %>% mean %>% sqrt %>% round(2), 
+                                                                           "<br>MAE: ", (truth - pred) %>% abs %>% mean %>% round(2))),
+               size = 12
+               )
+  
+  pred_truth_c
+
+}
+
+mean_model(wide_data_untargeted)
+  
+
+```
+
