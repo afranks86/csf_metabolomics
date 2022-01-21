@@ -1,76 +1,9 @@
-###########################
+######################################
 
-### Starter code from Prof Franks ###
+### Loading libraries, reading in data
+### Also defining many helper functions used in both aging and AD/PD analysis
 
-###########################
-
-# library(tidyverse)
-# library(ggridges)
-# library(gbm3)
-# library(patchwork)
-# library(scales)
-# library(quantreg)
-# library(glmnet)
-# library(mice)
-# 
-# source("utility.R")
-# 
-# processed_files <- dir(pattern="^preprocessed_lipid_data*")
-# 
-# 
-# processed_files <- dir(pattern="^preprocessed_gotms_data*")
-# 
-# 
-# processed_files <- dir(pattern="^preprocessed_untargeted_data*")
-# 
-# ## load("preprocessed_gotms_data.RData")
-# 
-# ## Most recent file
-# load(max(processed_files[grep("-20+", processed_files)]))
-# 
-# 
-# wide_data <- subject_data %>%     
-#     filter(!(Type %in% c("Other"))) %>%
-#     mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
-#     dplyr::select(-one_of("Raw", "RawScaled", "Trend", "Batch", "Name",
-#                           "Id", "Index", "GBAStatus", "GBA_T369M",
-#                           "cognitive_status")) %>%
-#     spread(key=Lipid, value=Abundance)
-# 
-# 
-# Yage <- wide_data %>% dplyr::select(Age) %>% as.matrix
-# 
-# Ytype <- wide_data %>% dplyr::select(Type) %>% as.matrix
-# 
-# X <- wide_data %>% dplyr::select(-one_of(c("Age", "Gender", "Type", "APOE",
-#                                            "Mode", "RunIndex", "Type2"))) %>%
-#     as.matrix
-# 
-# apply(X, 2, function(x) mean(is.na(x))) %>% summary=
-# X[, 100]
-# 
-# 
-# X <- X[, colMeans(is.na(X)) < 0.2]
-# colnames(X) <- make.names(colnames(X))
-# mice_X <- mice(X)
-# 
-# Xcomp <- complete(mice_X) %>% as.matrix
-# 
-# res <- cv.glmnet(x=Xcomp, y=Yage, family="gaussian", alpha=0.5)
-# coef(res, res$lambda.min)
-# plot(res)
-
-
-
-
-
-###########################
-
-### nathan's universal script for all his glmnet analyses ###
-
-###########################
-
-
+######################################
 
 library(ggExtra)
 library(magrittr)
@@ -92,11 +25,9 @@ library(latex2exp)
 library(rsample)
 library(yardstick)
 library(here)
-library(CCA)
 library(gridExtra)
-#library(gbm3)
+library(gbm3)
 library(MetaboAnalystR)
-library(mice)
 library(gghighlight)
 library(ggtext)
 library(ggforce)
@@ -104,22 +35,18 @@ library(denoiseR)
 library(ropls)
 library(vctrs)
 library(scales)
-# an alt to Hosmer Lemeshow
-#install.packages('heatmapFit')
-library(heatmapFit)
-library(knockoff)
 library(furrr)
 library(progressr)
 library(snow)
 library(tidyverse)
 library(patchwork)
-#plan(multisession, workers = 2)
-cluster_amelia <- makeSOCKcluster(c("localhost", "localhost", "localhost", "localhost"))
+plan(multisession, workers = 4)
+#cluster_amelia <- makeSOCKcluster(c("localhost", "localhost", "localhost", "localhost"))
 
 source(here("analysis/utility.R"))
 
 
-theme_set(theme_bw(base_size = 8) #+
+theme_set(theme_bw(base_size = 12) #+
               #theme(axis.title.x = element_text(size = 24),
               #      axis.title.y = element_text(size = 24))
           )
@@ -257,8 +184,7 @@ imputed_data_cleaning <- function(Yt, Y_colnames, age, gender, transpose = T, le
         Y_tmp <- t(Yt) %>% 
             as_tibble %>%
             set_colnames(Y_colnames)
-    }
-    else{
+    }else{
         Y_tmp <- Yt %>% 
             as_tibble %>%
             set_colnames(Y_colnames)
@@ -289,7 +215,7 @@ imputed_data_cleaning <- function(Yt, Y_colnames, age, gender, transpose = T, le
                           "Index", "GBAStatus",  "Id",
                           "GBA_T369M", "cognitive_status"))) %>% 
         #convert factors to dummmies (1 if male, 0 if female)
-        model.matrix(~., .)
+        model.matrix.lm(~., ., na.action = "na.pass")
     
 
     colnames(Y) <- str_replace_all(colnames(Y), '`', '') %>%
@@ -338,7 +264,8 @@ scale_data <- function(col_to_scale, df_for_ref, name){
 #' type is a vector of strings, one of the levels of type
 #' empri is the argument to amelia to set ridge prior. makes it easier to converge
 #' @param AD_ind/PD_ind optional flag to add ad/pd indicators to the features.
-filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, empri = 100, AD_ind = FALSE, PD_ind = FALSE, transpose = T, impute = T, replace_zeroes = T, include_led = F, scale = T){
+#' @param na_threshold is a number between 0 and 1. columns with more than na_threshold missingness are removed
+filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, empri = 100, AD_ind = FALSE, PD_ind = FALSE, transpose = T, impute = T, replace_zeroes = T, include_led = F, scale = T, na_threshold = 0.5){
     set.seed(1)
     filtered <- data %>%
         filter(Type %in% types)
@@ -365,7 +292,7 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
     
     
     
-    ## removing columns we don't want in the imputation
+    # removing columns we don't want in the imputation
     # amelia requires all data to be roughly normal (so no metadata)
     # but mice can take anything
     ####NH EDIT 11/19. maybe it's best to keep everything consistent..
@@ -392,11 +319,14 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
     
     
     # if 0s are still in the data and we want to replace them with NA (if it's not binary var)
+    # this is because 0s are data artifacts-- they wouldn't have shown up in our data if they were 0
     if(replace_zeroes){
         filtered_features <- filtered_features %>%
             mutate_if(~!is_binary(.x), function(x) replace(x, x==0, NA))
     }
     
+    
+    message(str_glue('scaling...'))
     # we want to make sure scaling the data happens on controls, and then is applied to ad/pd
     # so this if statement checks if we're imputing AD/PD, while making sure that at least some controls are in the data (ndistinct > 2)
     if(all("PD" %in% types | "AD" %in% types & n_distinct(data$Type) > 2)){
@@ -412,15 +342,15 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
             # mutate_if(function(x) sum(is.na(x))/nrow(filtered_features) > .5,
             #           ~ifelse(is.na(.x), 1, 0)) %>%
             # remove columns with > 50% NA
-            select_if(function(x) sum(is.na(x))/nrow(filtered_features) < .5) %>%
+            select_if(function(x) sum(is.na(x))/nrow(filtered_features) <= na_threshold) %>%
             # remove rows that are totally NA
             janitor::remove_empty('rows')
         
         
         Y <- Y_filtered %>%
             # scale each column using the same scaling done on the controls
-            #furrr::future_map2_dfc(names(.), ~scale_data(.x, c_data, .y)) %>%
-            purrr::map2_dfc(names(.), ~scale_data(.x, c_data, .y)) %>%
+            furrr::future_map2_dfc(names(.), ~scale_data(.x, c_data, .y)) %>%
+            # purrr::map2_dfc(names(.), ~scale_data(.x, c_data, .y)) %>%
             # need to use model.matrix to get the factors to turn into dummies (otherwise they're treated as numeric)
             # it would be nice we if could keep the factors for mice, but it won't work because we need to transpose
             # need to use model.matrix.lm to get the na.action argument to ignore na
@@ -442,7 +372,7 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
             # mutate_if(function(x) sum(is.na(x))/nrow(filtered_features) > .5,
             #           ~ifelse(is.na(.x), 1, 0)) %>%
             # remove columns with > 50% NA
-            select_if(function(x) sum(is.na(x))/nrow(filtered_features) < .5) %>%
+            select_if(function(x) sum(is.na(x))/nrow(filtered_features) <= na_threshold) %>%
             # remove rows that are totally NA
             janitor::remove_empty('rows') %>%
             # need to use model.matrix to get the factors to turn into dummies (otherwise they're treated as numeric)
@@ -464,21 +394,22 @@ filter_and_impute_multi <- function(data, types, method = "amelia", num = 5, emp
         str_replace_all('\\\\', '')
     
     if(impute){
-        
+        message(str_glue('starting to impute'))
 
         #do imputation
         if(method == "amelia"){
             if(transpose){
-                Yt_list <- amelia(t(Y), m = num, empri = empri, p2s = 0, parallel = 'snow', ncpus = 4, cl = cluster_amelia)$imputations
+                #Yt_list <- amelia(t(Y), m = num, empri = empri, p2s = 0, parallel = 'snow', ncpus = 4, cl = cluster_amelia)$imputations
+                Yt_list <- amelia(t(Y), m = num, empri = empri, p2s = 2)$imputations
                 imputed_Y <- 1:num %>% paste0('imp', .) %>%
                     purrr::map(~imputed_data_cleaning(Yt_list[[.x]], Y_colnames = Y_colnames, age = age, gender = gender, led = led))
             } else{
-                Yt_list <- amelia(Y, m = num, empri = empri, p2s = 0, parallel = 'snow', ncpus = 4, cl = cluster_amelia)$imputations
+                Yt_list <- amelia(Y, m = num, empri = empri, p2s = 2)$imputations
                 imputed_Y <- 1:num %>% paste0('imp', .) %>%
                     purrr::map(~imputed_data_cleaning(Yt_list[[.x]], Y_colnames = Y_colnames, age = age, gender = gender, transpose = F, led = led))
             }
             
-            
+            message(str_glue('done imputing!'))
         } else if (method == "mice"){
             if(transpose){
                 #need to change names on the tranposed dataset so that they aren't just numbers. v for variable
@@ -911,6 +842,20 @@ get_importance_tables <- function(full_model, drop_missing = F){
 }
 
 
+percent_missing_by_type <- function(data, name){
+    missing <- data %>% 
+        group_by(Type) %>%
+        group_map(~sum(is.na(.x)) / prod(dim(.x)))
+    
+    tibble(
+        "source" = name,
+        "CY" = missing[[4]], 
+        "CM" = missing[[2]],
+        "CO" = missing[[3]],
+        "AD" = missing[[1]],
+        "PD" = missing[[5]]
+    )
+}
 
 
 #########################################################
@@ -927,7 +872,7 @@ get_importance_tables <- function(full_model, drop_missing = F){
 #' NOTE: if genderM is not varname, then it will be included as a predictor in the model
 #' AD/PD/GBA flags take precedent over varname when determining the target var
 #' ie if AD_ind is TRUE, then the only purpose of varname is to set plot names
-logistic_control_analysis <- function(imputations, varname = "GenderM", imp_num = 1, nlambda = 100, AD_ind = FALSE, PD_ind = FALSE, GBA_ind = FALSE, APOE4_ind = FALSE, types = NULL, full_model = FALSE, penalize_age_gender = F){
+logistic_control_analysis <- function(imputations, varname = "GenderM", imp_num = 1, nlambda = 100, AD_ind = FALSE, PD_ind = FALSE, GBA_ind = FALSE, APOE4_ind = FALSE, types = NULL, full_model = FALSE, penalize_age_gender = F, include_age_gender = T, alpha = 0.5){
     
     imputed_c <- imputations[[imp_num]]
     imputed_c_Y <- imputed_c[[1]]
@@ -985,9 +930,15 @@ logistic_control_analysis <- function(imputations, varname = "GenderM", imp_num 
     #turn type into a dummy var (multiple columns. AD is the redundant column (chosen))
     imputed_c_features_target <- model.matrix(~., imputed_c_features_target_tmp)
     
+    if(include_age_gender == FALSE){
+        age_gender_index <- which(colnames(imputed_c_features_target) %in% c('Age', 'GenderM'))
+        imputed_c_features_target <- imputed_c_features_target[,-age_gender_index]
+    }
+    
+    
     if(full_model){
         full_fit <- fit_glmnet(features = imputed_c_features_target, labels = imputed_c_target, 
-                               alpha = 0.5, family = 'binomial', 
+                               alpha = alpha, family = 'binomial', 
                                penalize_age_gender = penalize_age_gender, 
                                nlambda = nlambda)
         return(full_fit)
@@ -995,7 +946,7 @@ logistic_control_analysis <- function(imputations, varname = "GenderM", imp_num 
     
     #full_model <- get_full_model(features= imputed_c_features_target, imputed_c_target, alpha = 0.5, family = "binomial", penalize_AD_PD = FALSE, penalize_age_gender = FALSE, nlambda = nlambda)
     fitpred_c_loo_target <- lapply(1:nrow(imputed_c_features_target), function(x) loo_cvfit_glmnet(x, imputed_c_features_target, imputed_c_target, 
-                                                                                                   alpha = 0.5, family = 'binomial', penalize_age_gender = penalize_age_gender, 
+                                                                                                   alpha = alpha, family = 'binomial', penalize_age_gender = penalize_age_gender, 
                                                                                                    nlambda = nlambda))
     
     fit_c_loo_target <- lapply(fitpred_c_loo_target, function(x) x[[1]])
@@ -1220,6 +1171,9 @@ imputation_df <- function(analysis, num_imps = 5){
     
 }
 
+#' from https://stackoverflow.com/questions/12643391/how-to-remove-leading-0-in-a-numeric-r-variable
+#' removes leading 0s for JoG formatting
+numformat <- function(val) { sub("^(-?)0.", "\\1.", sprintf("%.2f", val)) }
 
 #' create ggplot for pred vs truth in these grouped imputation tables
 #' @param df is a dataframe with columns truth, imp_avg, imp_min, imp_max, apoe, gender, type, id
@@ -1258,15 +1212,15 @@ predtruth_plot <- function(df, pred_name = "imp_avg", name, color = NULL, errorb
             ungroup()
         
         ggplot(df) + 
-            geom_errorbar(aes(x = truth, ymin = imp_min, ymax = imp_max, group = id, width = width), position = position_dodge(.3),  alpha = 0.7, size = 0.5) + 
-            geom_point(aes(truth, !!pred_name, color = !!color, group = id), size = 1, position = position_dodge(.3)) +
+            geom_errorbar(aes(x = truth, ymin = imp_min, ymax = imp_max, group = id, width = width), position = position_dodge(.3),  alpha = 0.7, size = 0.3) + 
+            geom_point(aes(truth, !!pred_name, color = !!color, group = id), size = 0.75, position = position_dodge(.3)) +
             scale_color_viridis_d() +
             labs(title = name,
                  x = 'Chronological Age',
                  y = 'Predicted Age') + 
             geom_abline(intercept = 0, slope = 1) + 
             expand_limits(x = 15, y = c(15, 100)) + 
-            geom_richtext(aes(x = box_pos$x, y = box_pos$y, hjust = box_pos$hjust, vjust = box_pos$vjust, label = paste0("R^2: ", cor(truth, !!pred_name, method = "pearson")^2 %>% round(2),
+            geom_richtext(aes(x = box_pos$x, y = box_pos$y, hjust = box_pos$hjust, vjust = box_pos$vjust, label = paste0("R^2: ", cor(truth, !!pred_name, method = "pearson")^2 %>% round(2) %>% numformat(),
                                                                                                                          "<br>RMSE: ", (truth - !!pred_name)^2 %>% mean %>% sqrt %>% round(2), " [",rmse_null,"]",
                                                                                                                          "<br>MAE: ", (truth - !!pred_name) %>% abs %>% mean %>% round(2), " [",mae_null,"]")),
                           size = rel(2))
@@ -1281,7 +1235,7 @@ predtruth_plot <- function(df, pred_name = "imp_avg", name, color = NULL, errorb
                  y = 'Predicted Age') + 
             geom_abline(intercept = 0, slope = 1) + 
             expand_limits(x = 15, y = c(15, 100)) + 
-            geom_richtext(aes(x = box_pos$x, y = box_pos$y, hjust = box_pos$hjust, vjust = box_pos$vjust, label = paste0("R^2: ", cor(truth, !!pred_name, method = "pearson")^2 %>% round(2), 
+            geom_richtext(aes(x = box_pos$x, y = box_pos$y, hjust = box_pos$hjust, vjust = box_pos$vjust, label = paste0("R^2: ", cor(truth, !!pred_name, method = "pearson")^2 %>% round(2) %>% numformat(), 
                                                                                                                          "<br>RMSE: ", (truth - !!pred_name)^2 %>% mean %>% sqrt %>% round(2), " [",rmse_null,"]", 
                                                                                                                          "<br>MAE: ", (truth - !!pred_name) %>% abs %>% mean %>% round(2), " [",mae_null,"]")),
                           size = rel(2))
@@ -1326,7 +1280,9 @@ post_select <- function(data, analysis, name){
 #' @param metabolite is a string name in data
 #' @param var is the other variable (either predicting/a predictor of metabolite)
 #' @param conc is whether we're looking at concentration or not. this puts metabolite on the lhs
-age_metabolite_p <- function(data, metabolite, var = "Age", family = "gaussian", conc = FALSE){
+#' @param get_coefs is whether to return full coefficient estimates, or just the t/p values
+age_metabolite_p <- function(data, metabolite, var = "Age", family = "gaussian", conc = FALSE,
+                             get_coefs = FALSE){
     
     if(conc == FALSE){
         form <- paste0(var, "~ `", metabolite, "`") %>%
@@ -1338,6 +1294,8 @@ age_metabolite_p <- function(data, metabolite, var = "Age", family = "gaussian",
         stop("conc must be true or false")
     }
     
+    # which summary items to keep (if get_coefs = TRUE, then include beta/sd)
+    summary_cols <- if(get_coefs) 1:4 else 3:4 
     
     metabolite <- sym(metabolite)
     var = sym(var)
@@ -1350,7 +1308,7 @@ age_metabolite_p <- function(data, metabolite, var = "Age", family = "gaussian",
         
         #get the t-value and p score (excluding intercept)
         tryCatch({
-            enframe(summary(fit)$coefficients[-1,3:4]) %>% spread(key = name, value = value) %>%
+            enframe(summary(fit)$coefficients[-1,summary_cols]) %>% spread(key = name, value = value) %>%
                 cbind('name' = rlang::as_string(metabolite))
         },
         error = function(w) cat('metabolite is ', metabolite, "\n")
@@ -1385,10 +1343,12 @@ age_metabolite_p <- function(data, metabolite, var = "Age", family = "gaussian",
 #' @return table with all of the variables with bh p values < 0.01
 #' @param data is a imputation list (eg imputed_c_combined5)
 #' @param imp_num is integer 1-5 (which imputation touse)
-#' @param var/family/conc are as in age_metabolite_p. 
+#' @param var/family/conc/get_coefs are as in age_metabolite_p. 
 #' @param types_index is a numeric vector of the row indices associated with the types of interest (eg if we're trying to classify pd against controls, types_index would the index of all PD and controls)
-#' 
-bh_univariate_age <- function(data, var = "Age", family = "gaussian", conc = FALSE, imp_num = 1, scale = F, types_index) {
+
+bh_univariate_age <- function(data, var = "Age", family = "gaussian", conc = FALSE, imp_num = 1, scale = F, types_index,
+                              get_coefs = F) {
+    message(str_glue("imp number is {imp_num}"))
     if(scale){
         df <- data[[imp_num]][[1]] %>%
             as_tibble() %>%
@@ -1406,13 +1366,13 @@ bh_univariate_age <- function(data, var = "Age", family = "gaussian", conc = FAL
     p_table <- df %>%
         names %>%
         setdiff(c("Age",var)) %>%
-        purrr::map(~age_metabolite_p(df, metabolite = .x, var = var, family = family, conc = conc)) %>%
+        purrr::map(~age_metabolite_p(df, metabolite = .x, var = var, family = family, conc = conc, get_coefs = get_coefs)) %>%
         purrr::reduce(rbind) %>%
         as_tibble()
     
     if(conc == FALSE){
         p_values <- p_table %>%
-            dplyr::rename('og_p_value' =  1)
+            dplyr::rename('og_p_value' =  `Pr(>|z|)`)
         p_table <- cbind(p_values,'bh_p_value' = p.adjust(p_values$og_p_value, method = 'BH'))
     }
     
@@ -1495,6 +1455,612 @@ brier <- function(pred, label){
 }
 
 
+### Functions for iterative, reduced elastic net models
+
+#' Fit an elastic net model
+#' @param imp_num is an integer, one of 1:length(imps)
+#' @param imps is the output of filter_and_imput_multi()
+#' @param target is a string,  the name of a variable in imps[[imp_num]]$Y, used as response
+#' @param family is a string, either gaussian or binomial
+#' @param alpha is a numeric between 0 and 1, the elastic net param
+#' @param nlambda is a positive number, how far glmnet searches for values of lambda
+#' @param *_indicator... deprecated?
+#' @param penalize_* are logicals, indicating whether we should penalize them in the fitting process.
+train_reduced_model <- function(imp_num, imps, target = "Age", 
+                                family = "gaussian", 
+                                alpha = 0.5, nlambda = 200, 
+                                AD_ind= F, PD_ind = F,
+                                GBA_ind = F, APOE4_ind = F,
+                                penalize_age_gender = F,
+                                penalize_AD_PD = T,
+                                types, post_select = F,
+                                take_log = F, include_age_gender = T,
+                                adpd_detrend = F
+){
+    message(str_glue('imp_num is {imp_num}'))
+    imputed_c <- imps[[imp_num]]
+    imputed_c_Y <- imputed_c[[1]]
+    imputed_c_type <- imputed_c[[2]]
+    imputed_c_apoe <- imputed_c[[3]]
+    imputed_c_id <- imputed_c[[4]]
+    imputed_c_gender <- imputed_c_Y[,'GenderM']
+    adpd_coef <- NULL
+    
+    # if types is null, we include all types
+    if(!is.null(types)){
+        # adpd_detrend required us to impute all types in reduced_fit()
+        # save AD/PD data separately if this is the case
+        if(adpd_detrend){
+            adpd_ind <- which(imputed_c_type %in% c("AD", "PD"))
+            imputed_adpd_Y <- imputed_c_Y[adpd_ind,]
+            adpd_adind <- imputed_c_type[adpd_ind] == "AD"
+        }
+        
+        types_index <- which(imputed_c_type %in% types)
+        imputed_c_Y <- imputed_c_Y[types_index,]
+        imputed_c_type <- imputed_c_type[types_index]
+        imputed_c_apoe <- imputed_c_apoe[types_index]
+        imputed_c_gender <- imputed_c_gender[types_index]
+    }
+    
+    
+    if(AD_ind & PD_ind){
+        stop("Only one of AD_ind and PD_ind must be selected")
+    }
+    # AD/PD flags take precedent over varname
+    if(AD_ind){
+        imputed_c_target <- ifelse(imputed_c_type == "AD", 1,0)
+    } else if(PD_ind){
+        imputed_c_target <- ifelse(imputed_c_type == "PD", 1,0)
+    } else if(GBA_ind){
+        
+        imputed_c_gba <- imputed_c[[5]]
+        imputed_c_target <- ifelse(imputed_c_gba %in% c('E326K Carrier', 'Pathogenic Carrier', 'CT'), 1, 0)
+    } else if(APOE4_ind){
+        imputed_c_target <- imputed_c_apoe %>%
+            as.character() %>%
+            str_detect("4")
+    } else{
+        imputed_c_target <- imputed_c_Y[,target]
+        
+        if(all(target == 'Age', take_log)){
+            imputed_c_target <- log(imputed_c_target)
+        }
+    }
+    
+    ## FIT AD vs PD model on n - 1 to remove 
+    # condition on 
+    if(adpd_detrend){
+        if(include_age_gender == FALSE){
+            age_gender_index_adpd <- which(colnames(imputed_adpd_Y) %in% c('Age', 'GenderM'))
+            imputed_adpd_Y <- imputed_adpd_Y[,-age_gender_index_adpd]
+        }
+        adpd_mod <- cv.glmnet(imputed_adpd_Y, adpd_adind,
+                              family = "binomial", alpha = alpha, 
+                              standardize = TRUE, nlambda = nlambda
+        )
+        
+        adpd_coef <- coef(adpd_mod, s = "lambda.min") %>%
+            as.matrix() %>%
+            as_tibble(rownames= "id") %>%
+            set_names(c("id", "beta")) %>%
+            # what to do with intercepts?. this removes duplicate intercept
+            filter(beta != 0)
+        
+        # orthogonalize dataset by ad/pd beta
+        imputed_c_Y <- purrr::map_dfr(1:nrow(imputed_c_Y), ~sub_coef(.x, imputed_c_Y, adpd_coef, meta = T)) %>%
+            as.matrix()
+        
+    }
+    
+    
+    
+    if(family == "binomial"){
+        # calculate what fraction of the total each class has
+        freq_frac <- table(imputed_c_target)/length(imputed_c_target)
+        # assign 1 - that value to a "weights" vector
+        weights <- 1 - freq_frac[as.character(imputed_c_target)]    
+    } else{
+        weights <- rep(1, length(imputed_c_target))
+    }
+    
+    # readd type as a feature in this analysis
+    imputed_c_features_tmp <- imputed_c_Y %>% 
+        as_tibble %>%
+        #mutate(Type = imputed_c_type) %>%
+        #1/8select(-Age)
+        # we'll add back intercept in model.matrix below.
+        select(-any_of(c(target, "(Intercept)")))
+    
+    
+    #turn factors into dummy variables
+    imputed_c_features <- model.matrix(~., imputed_c_features_tmp)
+    
+    
+    if(include_age_gender == FALSE){
+        age_gender_index <- which(colnames(imputed_c_features) %in% c('Age', 'GenderM'))
+        imputed_c_features <- imputed_c_features[,-age_gender_index]
+    }
+    
+    #set penalty factors. (1 for each is default)
+    p_factors <- rep(1, ncol(imputed_c_features))
+    
+    #set age/gender pfactors to 0 if penalize_age_gender flag is true. (assumes age/gender is very important)
+    if(penalize_age_gender == FALSE & include_age_gender == TRUE){
+        age_gender_index <- which(colnames(imputed_c_features) %in% c('Age', 'GenderM'))
+        p_factors[age_gender_index] <- 0
+    }
+    if(penalize_AD_PD == FALSE){
+        ad_pd_index <- which(colnames(imputed_c_features) %in% c("AD_ind", "PD_ind"))
+        p_factors[ad_pd_index] <- 0
+    }
+    
+    fit <- cv.glmnet(imputed_c_features, imputed_c_target, 
+                     family = family, alpha = alpha, 
+                     standardize = TRUE, penalty.factor = p_factors, 
+                     nlambda = nlambda, weights = weights
+    )
+    
+    if(post_select){
+        fit_coefs <- coef(fit, s = 'lambda.min') %>%
+            as.matrix() 
+        nonzero_coefs <- names(fit_coefs[which(fit_coefs != 0),])
+        
+        features_post <- imputed_c_features[,which(colnames(imputed_c_features) %in% nonzero_coefs)]
+        
+        if(penalize_age_gender == FALSE){
+            age_gender_index <- which(colnames(features_post) %in% c('Age', 'GenderM'))
+            p_factors[age_gender_index] <- 0
+        }
+        if(penalize_AD_PD == FALSE){
+            ad_pd_index <- which(colnames(features_post) %in% c("AD_ind", "PD_ind"))
+            p_factors[ad_pd_index] <- 0
+        }
+        
+        fit_post <- cv.glmnet(features_post, imputed_c_target, 
+                              family = family, alpha = alpha, 
+                              standardize = TRUE, penalty.factor = p_factors, 
+                              nlambda = nlambda, weights = weights
+        )
+        
+        # adpd coef is null unless adpd_detrend is TRUE
+        return(list('fit' = fit,
+                    feature_order = colnames(features_post),
+                    'fit_post' = fit_post,
+                    adpd_coef = adpd_coef
+        ))
+    }
+    # adpd coef is null unless adpd_detrend is TRUE
+    list(fit = fit,
+         feature_order = colnames(imputed_c_features),
+         adpd_coef = adpd_coef
+    )
+}
+
+
+
+#' Elastic net regression on an n-1 sized dataset
+#' where index is the row left out of data. Default settings fits the age prediction model
+#' @param index is an integer in 1:nrow(data)
+#' @param data is a dataframe, one of wide_data_* variants
+#' @param target is a string, the name of the reponse variable in data
+#' @param types is a string vector, some subset of CO, CY, CM, PD, AD. these will be used for analysis
+#' @param empri0 is the starting empirical prior for imputation. will be incremented by 5 until code runs
+#' @param remove_cor_age removes features with cor < .3 with age, following horvath dog paper
+#' @param all other params are exclusively for train_reduced_model
+reduced_fit <- function(index, data, target = 'Age', 
+                        types = c("CO", "CY", "CM"), 
+                        empri0 = 50, num = 5, family = "gaussian", 
+                        AD_ind= F, PD_ind = F,
+                        GBA_ind = F, APOE4_ind = F,
+                        penalize_age_gender = F,
+                        penalize_AD_PD = T,
+                        post_select = F,
+                        remove_cor_age = F,
+                        include_led = F,
+                        take_log = F, include_age_gender = T,
+                        adpd_detrend = F){
+    message(str_glue("index = {index}"))
+    train <- data[-index,]
+    test <- data[index,]
+    
+    test_meta <- test %>%
+        select(any_of(metadata_cols)) %>%
+        mutate(GBAStatus = as.factor(case_when(GBA_T369M == 'CT' ~ 'CT', 
+                                               TRUE ~ GBAStatus))) %>%
+        mutate(AD_ind = ifelse(Type == "AD", 1, 0),
+               PD_ind = ifelse(Type == "PD", 1, 0),
+               GBA_ind = ifelse(GBAStatus %in% c('E326K Carrier', 'Pathogenic Carrier', 'CT'), 1, 0),
+               APOE4_ind = ifelse(str_detect(as.character(APOE), "4"), 1, 0)
+        )
+    
+    test_x <- test %>% 
+        select(-any_of(metadata_cols)) 
+    
+    
+    missingness_cols <- names(test_x[,which(is.na(test_x))])
+    
+    train_reduced <- train %>%
+        select(-all_of(missingness_cols))
+    # mutate(across(all_of(missingness_cols), ~if_else(is.na(.x), 0, 1)))
+    
+    #could just set these all to 0, but keeping same format as sanity check
+    test_reduced <- test %>%
+        select(-all_of(missingness_cols))
+    # mutate(across(all_of(missingness_cols), ~if_else(is.na(.x), 0, 1)))
+    
+    
+    # if Age is not the reponse, include it in the model
+    if(target != "Age"){
+        unused_cols <- setdiff(metadata_cols, c('Gender', 'Age'))
+    } else{
+        unused_cols <- setdiff(metadata_cols, c('Gender'))
+    }
+    
+    if(include_age_gender == F){
+        unused_cols <- metadata_cols
+    }
+    
+    
+    # for scaling, filter out types (filter_and_impute_multi will do this for everything else)
+    train_used <- train_reduced %>%
+        filter(Type %in% types)
+    
+    # remove cols with <.3 correlation (following horvath dog paper)
+    if(remove_cor_age){
+        # make sure gender isn't there and age is there
+        train_used_numeric <- train_used %>%
+            select(-any_of(c(unused_cols, 'Gender') %>% 
+                               setdiff('Age'))
+            )
+        
+        # completely NA cols and cols with < .3 correlation with age
+        low_cor_cols <- train_used_numeric %>%
+            select(where(~is.na(cor(.x, train_used_numeric$Age, use = 'na.or.complete', method = 'spearman')) || abs(cor(.x, train_used_numeric$Age, use = 'complete.obs', method = 'spearman')) < .3)) %>%
+            names()
+        
+        train_reduced <- train_reduced %>%
+            select(-all_of(low_cor_cols))
+        test_reduced <- test_reduced %>%
+            select(-all_of(low_cor_cols))
+    }
+    
+    test_reduced_x <- test_reduced %>%
+        select(-any_of(unused_cols)) %>%
+        #select(-any_of(metadata_cols)) %>%
+        # scale each column using the same scaling done on the training data
+        furrr::future_map2_dfc(names(.), ~scale_data(.x, train_used, .y)) %>%
+        model.matrix(~., .)
+    
+    
+    # check for missing values
+    
+    train_reduced_metabolites <- train_reduced %>%
+        select(-any_of(metadata_cols))
+    
+    if(sum(is.na(train_reduced_metabolites)) > 0){
+        # don't transpose before amelia if matrix is long
+        # subtract 2 for intercept and gender
+        if(ncol(test_reduced_x) - 2 < nrow(train_reduced)){
+            transpose <- F
+        } else{
+            transpose <- T
+        }
+        
+        ## if we are orthogonalizing by ad/pd regression, then we need to impute the ENTIRE dataset
+        # which is different from what we were doing before (i.e. if we're doing PD v C, we didn't impute AD)
+        # ....so create a new "types" vector to include both AD and PD
+        if(adpd_detrend){
+            if(!("AD" %in% types)){
+                types_imp <- c(types, "AD")
+            }
+            if(!("PD" %in% types)){
+                types_imp <- c(types, "PD")
+            }
+        } else{
+            types_imp <- types
+        }
+        
+        train_imps <- try(filter_and_impute_multi(train_reduced, types_imp, scale = T, empri = empri0, num = num, transpose = transpose, include_led = include_led), silent = T)
+        while(class(train_imps) == "try-error"){
+            empri0 <- empri0 + 10
+            message(str_glue('empri0 = {empri0}'))
+            train_imps <- try(
+                filter_and_impute_multi(train_reduced, types_imp, scale = T, empri = empri0, num = num), 
+                silent = T
+            )
+        }
+    } else{
+        # if there are no missing values, no imputation is needed, so set impute = F
+        train_imps <- filter_and_impute_multi(train_reduced, types_imp,  scale = T, empri = empri0, impute = F)
+        
+    }
+    
+    
+    # with_progress({
+    #   p <- progressor(steps = length(train_imps))
+    #   train_fits <- furrr::future_map(1:length(train_imps), ~{
+    #     p()
+    #     Sys.sleep(.2)
+    #     train_reduced_model(.x, train_imps,
+    #                         target = target,
+    #                         family = family,
+    #                         AD_ind = AD_ind,
+    #                         PD_ind = PD_ind,
+    #                         GBA_ind = GBA_ind,
+    #                         APOE4_ind = APOE4_ind,
+    #                         types = types,
+    #                         penalize_age_gender = penalize_age_gender,
+    #                         penalize_AD_PD = penalize_AD_PD,
+    #                         post_select = post_select,
+    #                         take_log = take_log, include_age_gender = include_age_gender,
+    #                         adpd_detrend = adpd_detrend
+    #     )
+    #   }, .options = furrr_options(seed = T))
+    # })
+    
+    train_fits <- purrr::map(1:length(train_imps), ~train_reduced_model(.x, train_imps,
+                                                                        target = target,
+                                                                        family = family,
+                                                                        AD_ind = AD_ind,
+                                                                        PD_ind = PD_ind,
+                                                                        GBA_ind = GBA_ind,
+                                                                        APOE4_ind = APOE4_ind,
+                                                                        types = types,
+                                                                        penalize_age_gender = penalize_age_gender,
+                                                                        penalize_AD_PD = penalize_AD_PD,
+                                                                        post_select = post_select,
+                                                                        take_log = take_log, include_age_gender = include_age_gender,
+                                                                        adpd_detrend = adpd_detrend
+    ))
+    
+    
+    # making sure the column ordering is consistent between train and test, and cut down to post select cols
+    # and converting result back into a matrix of appropriate size.
+    
+    test_reduced_x <- purrr::map(train_fits, 
+                                 ~{
+                                     # if adpd_detrend, then need to orthogonalize the test row by beta
+                                     if(adpd_detrend){
+                                         new_test_reduced_x_tmp <- sub_coef(1, test_reduced_x, .x$adpd_coef, meta = T)
+                                         new_test_reduced_x <- matrix(new_test_reduced_x_tmp, nrow = 1, dimnames = list("", names(new_test_reduced_x_tmp)))
+                                     } else{
+                                         new_test_reduced_x <- test_reduced_x
+                                     }
+                                     matrix(new_test_reduced_x[,.x$feature_order], 
+                                            nrow = 1, 
+                                            dimnames = list("", .x$feature_order)
+                                     )
+                                 }
+    )
+    
+    if(post_select){
+        test_preds <- purrr::map_dbl(1:length(train_fits), ~predict(train_fits[[.x]]$fit_post, newx = test_reduced_x[[.x]], s = "lambda.min", type = "response"))
+    } else{
+        # # making sure the column ordering is consistent between train and test
+        # # and converting result back into a matrix of appropriate size.
+        # test_reduced_x <- matrix(test_reduced_x[,train_fits[[1]]$feature_order], 
+        #                          nrow = 1, 
+        #                          dimnames = list("", train_fits[[1]]$feature_order) 
+        # )
+        test_preds <- purrr::map_dbl(1:length(train_fits), ~predict(train_fits[[.x]]$fit, newx = test_reduced_x[[.x]], s = "lambda.min", type = "response"))
+    }
+    
+    if(take_log){
+        test_preds <- exp(test_preds)
+    }
+    
+    pred_df <- test_preds %>%
+        enframe() %>%
+        pivot_wider(names_from = "name", values_from = "value", names_prefix = "imp") %>%
+        mutate(imp_avg = mean(c_across(starts_with('imp'))),
+               na_cols = n_distinct(missingness_cols)) %>%
+        cbind(test_meta)
+    
+    
+    list(
+        fit = train_fits, 
+        pred = pred_df,
+        empri_final = empri0
+    )
+}
+
+
+
+#' Fit all n leave one out gaussian elastic net aging models
+#' @param data is one of the wide_data_* variant
+#' @param remove_cor_age and post_select are as in reduced_fit(.)
+#' @returns fit_age has each individual fit, a list where each output is an element of reduced_fit_age()
+#' @returns pred_df is a dataframe with a summary of predictions
+#' @returns figure is a truth v predicted plot
+reduced_age_analysis <- function(data, target = 'Age', types = c('CO', 'CM', 'CY'), post_select = F, remove_cor_age = F, include_led = F, take_log = F){
+    set.seed(1)
+    c_data <- data %>%
+        filter(Type %in% types)
+    data_reduced <- furrr::future_map(1:nrow(c_data), ~reduced_fit(.x, c_data, types = types, target = target, post_select = post_select, remove_cor_age = remove_cor_age, include_led = include_led, take_log = take_log),
+                                      .options = furrr_options(seed = TRUE))
+    
+    
+    reduced_pred_df <- data_reduced %>%
+        purrr::map_df(~.x$pred) %>%
+        rowwise() %>%
+        mutate(imp_avg = mean(c_across(starts_with('imp'))),
+               imp_min = min(c_across(starts_with('imp'))),
+               imp_max = max(c_across(starts_with('imp')))
+        ) %>%
+        ungroup() %>%
+        rename_with(~str_to_lower(.x), everything()) %>%
+        rename("truth" = age)
+    
+    reduced_plot <- predtruth_plot(reduced_pred_df, name = "Reduced")
+    
+    list(fit_age = data_reduced,
+         pred_df = reduced_pred_df,
+         figure = reduced_plot
+    )
+    
+}
+
+
+
+
+
+reduced_logistic_analysis <- function(data, target = 'GenderM', AD_ind = F, PD_ind = F, GBA_ind = F, APOE4_ind = F, types, empri0 = 50, num = 5, penalize_age_gender = F, include_age_gender = T, adpd_detrend = F){
+    set.seed(1)
+    
+    message(str_glue('target is {target} and ncol is {ncol(data)}'))
+    data_to_use <- data #%>%
+    #filter(Type %in% types)
+    
+    types_index <- which(data$Type %in% types)
+    
+    with_progress({
+        p <- progressor(steps = length(types_index))
+        data_reduced <- furrr::future_map(types_index, ~{
+            p()
+            Sys.sleep(.2)
+            reduced_fit(.x, data_to_use,
+                        family = 'binomial', target = target,
+                        AD_ind = AD_ind, PD_ind = PD_ind,
+                        GBA_ind = GBA_ind, APOE4_ind = APOE4_ind,
+                        types = types, empri0 = empri0, num = num,
+                        penalize_age_gender = penalize_age_gender,
+                        include_age_gender = include_age_gender,
+                        adpd_detrend = adpd_detrend
+            )
+        }, .options = furrr_options(seed = T))
+    })
+    
+    # data_reduced <- purrr::map(types_index, ~reduced_fit(.x, data_to_use,
+    #                                                              family = 'binomial', target = target,
+    #                                                              AD_ind = AD_ind, PD_ind = PD_ind,
+    #                                                              GBA_ind = GBA_ind, APOE4_ind = APOE4_ind,
+    #                                                              types = types, empri0 = empri0, num = num,
+    #                                                              penalize_age_gender = penalize_age_gender,
+    #                                                              include_age_gender = include_age_gender,
+    #                                                              adpd_detrend = adpd_detrend
+    # ))
+    
+    
+    reduced_pred_df <- data_reduced %>%
+        purrr::map_df(~.x$pred) %>%
+        rowwise() %>%
+        mutate(imp_avg = mean(c_across(starts_with('imp'))),
+               imp_min = min(c_across(starts_with('imp'))),
+               imp_max = max(c_across(starts_with('imp')))
+        ) %>%
+        ungroup() %>%
+        rename("truth" = target) %>%
+        rename_with(~str_to_lower(.x), -contains('_ind'))
+    
+    
+    roc_mean <- fpr_tpr(reduced_pred_df$imp_avg, reduced_pred_df$truth)
+    pr_mean <- fpr_tpr(reduced_pred_df$imp_avg, reduced_pred_df$truth, x = "rec", y = "prec") %>%
+        mutate(pos_class_rate = mean(reduced_pred_df$truth))
+    
+    roc_min <- fpr_tpr(reduced_pred_df$imp_min, reduced_pred_df$truth)
+    pr_min <- fpr_tpr(reduced_pred_df$imp_min, reduced_pred_df$truth, x = "rec", y = "prec") %>%
+        mutate(pos_class_rate = mean(reduced_pred_df$truth))
+    
+    roc_max <- fpr_tpr(reduced_pred_df$imp_max, reduced_pred_df$truth)
+    pr_max <- fpr_tpr(reduced_pred_df$imp_max, reduced_pred_df$truth, x = "rec", y = "prec") %>%
+        mutate(pos_class_rate = mean(reduced_pred_df$truth))
+    
+    roc_df <- bind_rows("mean" = roc_mean,
+                        "max" = roc_max,
+                        "min" = roc_min,
+                        .id = "imp")
+    
+    pr_df <- bind_rows("mean" = pr_mean,
+                       "max" = pr_max,
+                       "min" = pr_min,
+                       .id = "imp")
+    
+    list(fit_binom = data_reduced,
+         predtruth_df = reduced_pred_df,
+         roc_df = roc_df,
+         pr_df = pr_df
+    )
+    
+}
+
+roc_fig <- function(roc_df, predtruth_df){
+    #brier_score <- with(predtruth_df, brier(imp_avg, truth))
+    
+    
+    ggplot(roc_df) + 
+        geom_line(mapping = aes(x, y, group = imp), lwd = 1.5) + 
+        geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+        labs(#title = "ROC: AD vs C",
+            #subtitle = TeX('Untargeted'),
+            x = 'False Positive Rate',
+            y = 'True Positive Rate') + 
+        geom_richtext(x = Inf, y = -Inf, 
+                      hjust = 1, vjust = 0, 
+                      size = rel(7),# label.padding = unit(1, "lines"),
+                      label = paste0('AUC:', round(mean(roc_df$auc), 3) 
+                                     #'<br>Brier:', round(brier_score, 3)
+                      )
+        ) +
+        theme(
+            axis.text = element_text(size = rel(1.25)),
+            axis.title = element_text(size = rel(2)),
+            plot.title = element_text(size = rel(2.5))
+        )
+}
+
+
+#' Function to get the median coefficient across five imputations for one of the leave one out models
+#' @param index is a natural number between 1 and the number of observations used in reduced_output
+#' @param reduced_output is the output of reduced_age_analysis()
+#' @return a vector of median retained coefficients across the five imputations for models fit on that loo model
+retained_one_obs <- function(index, reduced_output){
+    # quick check in case there is only 1 imputation
+    number_of_imputations <- length(reduced_output[[1]][[1]]$fit)
+    purrr::map(1:number_of_imputations, ~importance(reduced_output[[1]][[index]]$fit[[.x]]$fit, metabolites = F) %>%
+                   enframe(value = str_glue("imp{.x}"))) %>%
+        reduce(full_join, by = "name") %>%
+        rowwise() %>%
+        transmute(name, median_coef = median(c_across(starts_with('imp')), na.rm = T)) %>%
+        ungroup() %>%
+        deframe()
+}
+
+
+#' look at the retained coefs for fits across each of n leave one out models
+#' select the ones that show up > 1 - pct_mis% of the time.
+#' @param reduced_output is the output of reduced_age_analysis
+#' @param pct_mis -- only select variables that are present in 1 - pct_mis% of the fits
+#' @param only_return_pct ignores pct_mis and just shows the percentage of missingness for each feature
+retained_over_fits <- function(reduced_output, pct_mis = 0.05, only_return_pct = FALSE){
+    
+    if(only_return_pct){
+        return(
+            purrr::map(1:length(reduced_output[[1]]), ~retained_one_obs(.x, reduced_output)) %>%
+                bind_rows() %>%
+                map_dbl(~sum(is.na(.x) / length(.x))) %>%
+                enframe(value = "pct_mis")
+        )
+    }
+    
+    purrr::map(1:length(reduced_output[[1]]), ~retained_one_obs(.x, reduced_output)) %>%
+        bind_rows() %>%
+        select_if(function(x) sum(is.na(x))/length(x) <= pct_mis) %>%
+        map_dbl(~median(exp(.x), na.rm = T)) %>%
+        enframe(value = "median_OR")
+}
+
+
+#' get lambda value for 5 imputations for a single observation
+#' @param reduced_obj is an output of reduced_age_analysis()
+#' @param index is 1:85 in the case of controls, (i.e. the row number of the left-out obs)
+#' @return vector of 5 lambda values, corresponding to the 5 imputations for the given index
+get_lambda_median <- function(reduced_obj, index){
+    reduced_obj[[1]][[index]]$fit %>%
+        purrr::map_dbl(~.x$fit$lambda.min)
+}
+
+
 
 ############################
 
@@ -1511,8 +2077,9 @@ set.seed(1)
 data_path <- file.path('E:', 'Projects', 'metabolomics', 'ND_Metabolomics')
 processed_files <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_gotms_data*")
 ## Most recent file
-load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])))
+load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])), verbose = T)
 load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"), verbose = T)
+
 
 wide_data_got_og <- subject_data %>%     
     filter(!(Type %in% c("Other"))) %>%
@@ -1541,6 +2108,14 @@ wide_data_raw <- subject_data %>%
                           "RunIndex", "Name","Data File")) %>%
     spread(key=Metabolite, value=Raw)
 
+subject_data_detrend <- readRDS(here::here("output_files", "subject_data_got_detrend.Rds"))
+wide_data_got_detrend <- subject_data_detrend %>%     
+    filter(!(Type %in% c("Other"))) %>%
+    unite("Metabolite", c("Metabolite", "Mode")) %>% 
+    mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+    dplyr::select(-one_of("Raw", "RawScaled", "Trend", "Abundance",
+                          "RunIndex", "Name","Data File", "Code")) %>%
+    spread(key=Metabolite, value=Abundance_as)
 
 
 ### code snippit from Alex for better metabolite_matching
@@ -1563,7 +2138,8 @@ level_key <- level_key[!duplicated(names(level_key))]
 ### End code snippit
 
 metabolite_lookup_table <- feature_names %>% 
-    select("Name" = MetId, "Metabolite" =  MetaboliteName)
+    dplyr::select("Name" = MetId, "Metabolite" =  MetaboliteName)
+
 
 
 
@@ -1571,7 +2147,6 @@ metabolite_lookup_table <- feature_names %>%
 
 
 ### NOTE: For lipids, need to load in new files. the GOT subject_data df is overwritten with the below lines!!
-
 processed_files_lipids <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_lipid_data*")
 ## Most recent file
 load(max(file.path(data_path, 'analysis', processed_files_lipids[grep("-20+", processed_files_lipids)])))
@@ -1589,8 +2164,14 @@ wide_data_lipids_og <- subject_data %>%
     spread(key=Lipid, value=Abundance) %>%
     as_tibble(.name_repair = 'minimal')
 
-
-
+subject_data_detrend <- readRDS(here::here("output_files", "subject_data_lipids_detrend.Rds"))
+wide_data_lipids_detrend <- subject_data_detrend %>%     
+    filter(!(Type %in% c("Other"))) %>%
+    mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+    dplyr::select(-one_of("Raw", "RawScaled", "Trend", "Abundance",
+                          "RunIndex", "Name","Data File", "Code", "Mode")) %>%
+    spread(key=Lipid, value=Abundance_as) %>%
+    as_tibble(.name_repair = 'minimal')
 
 ### untargeted data
 processed_files_untargeted <- dir(path = file.path(data_path, 'analysis'), pattern="^preprocessed_untargeted_data*")
@@ -1627,7 +2208,39 @@ wide_data_untargeted_rawscaled <- subject_data %>%
     #                       "RunIndex", "Name","Data File")) %>%
     spread(key=Metabolite, value=RawScaled)
 
+subject_data_detrend <- readRDS(here::here("output_files", "subject_data_untargeted_detrend.Rds"))
 
+wide_data_untargeted_detrend <- subject_data_detrend %>%     
+    filter(!(Type %in% c("Other"))) %>%
+    unite("Metabolite", c("Metabolite", "Mode")) %>% 
+    dplyr::select(Age, Gender, APOE, Type, Metabolite, Abundance_as, GBAStatus, GBA_T369M, Id) %>%
+    # mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+    # dplyr::select(-one_of("Raw", "RawScaled", "Trend", "Abundance",
+    #                       "RunIndex", "Name","Data File", "Code")) %>%
+    spread(key=Metabolite, value=Abundance_as)
+    
+
+wide_data_untargeted_detrend_nolev <- subject_data_detrend %>%
+    filter(!between(`m/z`, 196, 199)) %>%
+    filter(!(Type %in% c("Other"))) %>%
+    unite("Metabolite", c("Metabolite", "Mode")) %>% 
+    dplyr::select(Age, Gender, APOE, Type, Metabolite, Abundance_as, GBAStatus, GBA_T369M, Id) %>%
+    # mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+    # dplyr::select(-one_of("Raw", "RawScaled", "Trend", "Abundance",
+    #                       "RunIndex", "Name","Data File", "Code")) %>%
+    spread(key=Metabolite, value=Abundance_as)
+
+
+wide_data_untargeted_detrend_nolev_noenta <- subject_data_detrend %>%
+    filter(!between(`m/z`, 192, 202)) %>% #l-dopa mass is 197.19
+    filter(!between(`m/z`, 300, 310)) %>% #entacapone mass is 305.29
+    filter(!(Type %in% c("Other"))) %>%
+    unite("Metabolite", c("Metabolite", "Mode")) %>% 
+    dplyr::select(Age, Gender, APOE, Type, Metabolite, Abundance_as, GBAStatus, GBA_T369M, Id) %>%
+    # mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+    # dplyr::select(-one_of("Raw", "RawScaled", "Trend", "Abundance",
+    #                       "RunIndex", "Name","Data File", "Code")) %>%
+    spread(key=Metabolite, value=Abundance_as)
 
 
 
@@ -1647,7 +2260,15 @@ wide_data_targeted_og <- subject_data %>%
 #create foldid so we can test different alphas on same sets
 #set.seed(1)
 #foldid <- sample(nrow(imputed_pd_co_y))
+subject_data_detrend <- readRDS(here::here("output_files", "subject_data_targeted_detrend.Rds"))
 
+wide_data_targeted_detrend <- subject_data_detrend %>%     
+    filter(!(Type %in% c("Other"))) %>%
+    unite("Metabolite", c("Metabolite", "Mode")) %>% 
+    mutate(Type = droplevels(Type), Type2 = droplevels(Type2)) %>%
+    dplyr::select(-one_of("Raw", "RawScaled", "Trend", "Abundance",
+                          "RunIndex", "Name","Data File", "Code")) %>%
+    spread(key=Metabolite, value=Abundance_as)
 
 
 #######################################
@@ -1655,11 +2276,16 @@ wide_data_targeted_og <- subject_data %>%
 ### Coering outliers to NAs ###
 
 #######################################
-wide_data_untargeted <- wide_data_untargeted_og %>% modify_outliers(subject_data)
+
 wide_data_targeted <- wide_data_targeted_og %>% modify_outliers(subject_data)
 wide_data <- wide_data_got_og %>% modify_outliers(subject_data)
 wide_data_lipids <- wide_data_lipids_og %>% modify_outliers(subject_data)
+wide_data_untargeted <- wide_data_untargeted_og %>% modify_outliers(subject_data)
 
+wide_data_untargeted_detrend <- wide_data_untargeted_detrend %>% modify_outliers(subject_data)
+wide_data_targeted_detrend <- wide_data_targeted_detrend %>% modify_outliers(subject_data)
+wide_data_detrend <- wide_data_got_detrend %>% modify_outliers(subject_data)
+wide_data_lipids_detrend <- wide_data_lipids_detrend %>% modify_outliers(subject_data)
 
 
 
@@ -1671,7 +2297,7 @@ metadata_cols <- c("Type2", "Type", "Gender", "Age", "APOE", "Batch",
                       "Index", "GBAStatus",  "Id",
                       "GBA_T369M", "cognitive_status",
                       #found in panuc
-                      "subject_id", "no_meds_reported", "led")
+                      "subject_id", "no_meds_reported", "led", "Code")
 
 
 #get the types in our dataset (ie AD, PD, CO, ..)
@@ -1704,6 +2330,9 @@ untargeted_all_processed <- wide_data_untargeted %>%
     select_if(~sum(is.na(.x))/nrow(wide_data_untargeted) < .1) %>%
     mutate_at(vars(-any_of(metadata_cols)), ~as.vector(scale(.x, center = TRUE, scale = TRUE)))
 
+untargeted_all_processed_detrend <- wide_data_untargeted_detrend %>%
+    select_if(~sum(is.na(.x))/nrow(wide_data_untargeted_detrend) < .1) %>%
+    mutate_at(vars(-any_of(metadata_cols)), ~as.vector(scale(.x, center = TRUE, scale = TRUE)))
 
 
 wide_data_combined <- wide_data %>%
