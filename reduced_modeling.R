@@ -569,6 +569,35 @@ roc_fig <- function(roc_df, predtruth_df){
 }
 
 
+pr_fig <- function(pr_df, predtruth_df){
+  #brier_score <- with(predtruth_df, brier(imp_avg, truth))
+  
+  pr_df %>%
+    filter(x != 0) %>%
+    ggplot() + 
+    geom_line(mapping = aes(x, y, group = imp), lwd = 1.5) + 
+    # geom_point(mapping = aes(x, y, group = imp), color = "red") + 
+    # geom_abline(intercept = 0, slope = 1, linetype = 2) + 
+    labs(#title = "ROC: AD vs C",
+      #subtitle = TeX('Untargeted'),
+      x = 'Recall',
+      y = 'Precision') + 
+    geom_richtext(x = Inf, y = -Inf, 
+                  hjust = 1, vjust = 0, 
+                  size = rel(7),# label.padding = unit(1, "lines"),
+                  label = paste0('AUC:', round(mean(pr_df$auc), 3) 
+                                 #'<br>Brier:', round(brier_score, 3)
+                  )
+    ) +
+    theme(
+      axis.text = element_text(size = rel(1.25)),
+      axis.title = element_text(size = rel(2)),
+      plot.title = element_text(size = rel(2.5))
+    ) +
+    expand_limits(y = 0)
+}
+
+
 #' Function to get the median coefficient across five imputations for one of the leave one out models
 #' @param index is a natural number between 1 and the number of observations used in reduced_output
 #' @param reduced_output is the output of reduced_age_analysis()
@@ -605,8 +634,13 @@ retained_over_fits <- function(reduced_output, pct_mis = 0.05, only_return_pct =
   purrr::map(1:length(reduced_output[[1]]), ~retained_one_obs(.x, reduced_output)) %>%
     bind_rows() %>%
     select_if(function(x) sum(is.na(x))/length(x) <= pct_mis) %>%
-    map_dbl(~median(exp(.x), na.rm = T)) %>%
-    enframe(value = "median_OR")
+    imap_dfr(~tibble(name = .y,
+                     mean_OR = mean(exp(.x), na.rm = T), 
+                     sd_coef = sd(.x, na.rm = T)
+                     )
+    )
+    # map_dbl(~mean(exp(.x), na.rm = T)) %>%
+    # enframe(value = "mean_OR")
 }
 
 
@@ -1544,6 +1578,111 @@ ggsave("figure_3.tiff",
 
 
 
+##########
+
+# NEW 2022/02/20!!!!!!!
+# getting pr curves, spec, sencs, ppv, npv, f1
+
+##########
+
+# precision recall curve by letting x = rec (or tpr), y = prec (or ppv)
+untargeted_ad_c_pr_detrend <- untargeted_ad_reduced_detrend %$%
+  pr_fig(pr_df, predtruth_df) +
+  labs(title = 'AD vs Controls')
+
+untargeted_pd_c_pr_detrend <- untargeted_pd_reduced_detrend %$%
+  pr_fig(pr_df, predtruth_df) +
+  labs(title = 'PD vs Controls')
+
+untargeted_adpd_pr_detrend <- untargeted_adpd_reduced_detrend %$%
+  pr_fig(pr_df, predtruth_df) +
+  labs(title = 'AD vs PD')
+
+
+
+untar_pr_fig <- untargeted_ad_c_pr_detrend + untargeted_pd_c_pr_detrend + untargeted_adpd_pr_detrend +
+  plot_annotation(title = "Precision-Recall curves using the untargeted profile", theme = theme(title = element_text(size = rel(2))))
+
+ggsave("precision_recall.jpg",
+       type = 'cairo',
+       device = 'jpg',
+       plot = untar_pr_fig,
+       path = here("plots", "adpd_figs", "appendix_figs"),
+       width = 83*5,
+       height = 150,
+       units = 'mm', dpi = 300)
+
+
+#' summary measure options from ROCR: measure = "f"; "sens" ; "spec", "ppv", "npv"
+
+
+#' function to get different values of some measure across cutoffs
+#' e.g. getting f1 score across many different cutoffs
+#' @param my_measure is one of the summary options from ROCR::performance(), 
+#' say measure = "f"; "sens" ; "spec", "ppv", "npv"; "rec"
+get_metric_cutoff <- function(predtruth_df, my_measure){
+  rocr_out <- predtruth_df %$%
+    ROCR::prediction(imp_avg, truth) %>%
+    ROCR::performance(measure = my_measure)
+  
+  tibble(cutoff = deframe(rocr_out@x.values), 
+         y = deframe(rocr_out@y.values),
+         measure = my_measure)
+}
+
+get_all_measures <- function(reduced_detrend){
+  measures_of_interest <- c("f", "sens", "spec", "ppv", "npv")
+  
+  f1_cutoff <- get_metric_cutoff(reduced_detrend$predtruth_df, "f") %>%
+    slice_max(y) %>%
+    pull(cutoff)
+  
+  map_dfr(measures_of_interest, 
+               ~get_metric_cutoff(reduced_detrend$predtruth_df, .x) %>%
+                 filter(cutoff == f1_cutoff))
+}
+
+
+untar_perf_summary <- list(
+  ad_c = get_all_measures(untargeted_ad_reduced_detrend),
+  pd_c = get_all_measures(untargeted_pd_reduced_detrend),
+  ad_pd = get_all_measures(untargeted_adpd_reduced_detrend)
+) %>%
+  bind_rows(.id = "model") %>%
+  select(-cutoff) %>%
+  mutate(y = round(y, 2)) %>%
+  pivot_wider(names_from = "model", values_from = "y") %>%
+  mutate(
+    measure = case_when(
+      measure == "f" ~ "F1 score",
+      measure == "sens" ~ "Sensitivity",
+      measure == "spec" ~ "Specificity",
+      measure == "ppv" ~ "Positive predictive value",
+      measure == "npv" ~ "Negative predictive value",
+    )
+  )
+
+
+write_csv(untar_perf_summary, here("ad_pd", "tables", "post_revision", "untar_perf_summary.csv"))
+
+
+##########
+
+# NEW 2022/02/20!!!!!!!
+# getting average OR +/- 1 standard deviations across LOO
+# ....orrrrr across imputations!!! (just because we're using full models)
+# adpd_glmnet.R line # 1698
+# see below for across LOO
+##########
+
+
+targeted_ad_reduced_detrend
+
+
+
+
+
+
 
 ### which metabolites are retained in EVERY SINGLE model (n models * 5 imputations)
 
@@ -1555,22 +1694,50 @@ lipids_pd_detrend_retained <- retained_over_fits(lipids_pd_reduced_detrend, pct_
 # untar didn't have any retained.. check the distn of pct_retained
 untar_pd_detrend_retained <- retained_over_fits(untargeted_pd_reduced_detrend, only_return_pct = T)
 
+tar_pd_detrend_retained <- readRDS(here("aging_output_files", "tar_pd_detrend_retained.Rds"))
+lipids_pd_detrend_retained <- readRDS(here("aging_output_files", "lipids_pd_detrend_retained.Rds"))
+
+
+# saveRDS(tar_pd_detrend_retained, here("aging_output_files", "tar_pd_detrend_retained.Rds"))
+# saveRDS(lipids_pd_detrend_retained, here("aging_output_files", "lipids_pd_detrend_retained.Rds"))
+
 (pd_detrend_retained_summary <- bind_rows(
   Targeted = tar_pd_detrend_retained,
   Lipids = lipids_pd_detrend_retained,
   .id = "profile"
 ) %>%
-  filter(name != "(Intercept)") %>%
-  group_by(profile) %>%
-  arrange(desc(abs(log(median_OR)))) %>%
-  ungroup() %>%
-  knitr::kable()
+    filter(name != "(Intercept)") %>%
+    group_by(profile) %>%
+    arrange(desc(abs(log(mean_OR)))) %>%
+    ungroup() %>%
+    mutate(
+      name = str_replace_all(name, "_neg|_pos", ""),
+      OR_lower2sd = round(exp(log(mean_OR) - 2*sd_coef), digits = 2),
+      OR_upper2sd = round(exp(log(mean_OR) + 2*sd_coef), digits = 2),
+    ) %>%
+    transmute(profile, name, mean_OR = round(mean_OR, 2),
+              OR_2sd = str_glue("({OR_lower2sd}, {OR_upper2sd})")
+    ) %>%
+    unite(mean_OR, mean_OR, OR_2sd, sep = " ")
 )
+
+write_delim(pd_detrend_retained_summary, delim = ";",
+          here("ad_pd", "tables", "post_revision", "OR_pd_c_allmodels.csv"))
+
+
 
 # AD
 tar_ad_detrend_retained <- retained_over_fits(targeted_ad_reduced_detrend, pct_mis= 0)
 untar_ad_detrend_retained <- retained_over_fits(untargeted_ad_reduced_detrend, pct_mis= 0)
 lipids_ad_detrend_retained <- retained_over_fits(lipids_ad_reduced_detrend, pct_mis= 0)
+
+
+tar_ad_detrend_retained <- readRDS(here("aging_output_files", "tar_ad_detrend_retained.Rds"))
+lipids_ad_detrend_retained <- readRDS(here("aging_output_files", "lipids_ad_detrend_retained.Rds"))
+
+# saveRDS(tar_ad_detrend_retained, here("aging_output_files", "tar_ad_detrend_retained.Rds"))
+# saveRDS(lipids_ad_detrend_retained, here("aging_output_files", "lipids_ad_detrend_retained.Rds"))
+
 
 
 (ad_detrend_retained_summary <- bind_rows(
@@ -1580,15 +1747,34 @@ lipids_ad_detrend_retained <- retained_over_fits(lipids_ad_reduced_detrend, pct_
 ) %>%
     filter(name != "(Intercept)") %>%
     group_by(profile) %>%
-    arrange(desc(abs(log(median_OR)))) %>%
+    arrange(desc(abs(log(mean_OR)))) %>%
     ungroup() %>%
-    knitr::kable()
+    mutate(
+      name = str_replace_all(name, "_neg|_pos", ""),
+      OR_lower2sd = round(exp(log(mean_OR) - 2*sd_coef), digits = 2),
+      OR_upper2sd = round(exp(log(mean_OR) + 2*sd_coef), digits = 2),
+    ) %>%
+    transmute(profile, name, mean_OR = round(mean_OR, 2),
+              OR_2sd = str_glue("({OR_lower2sd}, {OR_upper2sd})")
+    ) %>%
+    unite(mean_OR, mean_OR, OR_2sd, sep = " ")
 )
+
+write_delim(ad_detrend_retained_summary, delim = ";",
+          here("ad_pd", "tables", "post_revision", "OR_ad_c_allmodels.csv"))
+
 
 # AD v PD
 tar_adpd_detrend_retained <- retained_over_fits(targeted_adpd_reduced_detrend, pct_mis= 0)
 untar_adpd_detrend_retained <- retained_over_fits(untargeted_adpd_reduced_detrend, pct_mis= 0)
 lipids_adpd_detrend_retained <- retained_over_fits(lipids_adpd_reduced_detrend, pct_mis= 0)
+
+
+tar_adpd_detrend_retained <- readRDS(here("aging_output_files", "tar_adpd_detrend_retained.Rds"))
+lipids_adpd_detrend_retained <- readRDS(here("aging_output_files", "lipids_adpd_detrend_retained.Rds"))
+
+# saveRDS(tar_adpd_detrend_retained, here("aging_output_files", "tar_adpd_detrend_retained.Rds"))
+# saveRDS(lipids_adpd_detrend_retained, here("aging_output_files", "lipids_adpd_detrend_retained.Rds"))
 
 (adpd_detrend_retained_summary <- bind_rows(
   Targeted = tar_adpd_detrend_retained,
@@ -1597,11 +1783,21 @@ lipids_adpd_detrend_retained <- retained_over_fits(lipids_adpd_reduced_detrend, 
 ) %>%
     filter(name != "(Intercept)") %>%
     group_by(profile) %>%
-    arrange(desc(abs(log(median_OR)))) %>%
+    arrange(desc(abs(log(mean_OR)))) %>%
     ungroup() %>%  
-    knitr::kable()
+    mutate(
+      name = str_replace_all(name, "_neg|_pos", ""),
+      OR_lower2sd = round(exp(log(mean_OR) - 2*sd_coef), digits = 2),
+      OR_upper2sd = round(exp(log(mean_OR) + 2*sd_coef), digits = 2),
+    ) %>%
+    transmute(profile, name, mean_OR = round(mean_OR, 2),
+              OR_2sd = str_glue("({OR_lower2sd}, {OR_upper2sd})")
+    ) %>%
+    unite(mean_OR, mean_OR, OR_2sd, sep = " ")
 )
 
+write_delim(adpd_detrend_retained_summary, delim = ";",
+          here("ad_pd", "tables", "post_revision", "OR_ad_pd_allmodels.csv"))
 
 
 
@@ -1641,21 +1837,44 @@ lipids_pd_reduced_detrend_orthog <- reduced_logistic_analysis(data = wide_data_l
 )
 
 
-saveRDS(targeted_pd_reduced_detrend_orthog, file = here('aging_output_files', 'targeted_pd_reduced_detrend_orthog.Rds'))
-saveRDS(untargeted_pd_reduced_detrend_orthog, file = here('aging_output_files', 'untargeted_pd_reduced_detrend_orthog.Rds'))
-saveRDS(lipids_pd_reduced_detrend_orthog, file = here('aging_output_files', 'lipids_pd_reduced_detrend_orthog.Rds'))
+targeted_ad_reduced_detrend_orthog <- readRDS(file = here('aging_output_files', 'targeted_ad_reduced_detrend_orthog.Rds'))
+targeted_pd_reduced_detrend_orthog <- readRDS(file = here('aging_output_files', 'targeted_pd_reduced_detrend_orthog.Rds'))
+untargeted_pd_reduced_detrend_orthog <- readRDS(file = here('aging_output_files', 'untargeted_pd_reduced_detrend_orthog.Rds'))
+lipids_pd_reduced_detrend_orthog <- readRDS(file = here('aging_output_files', 'lipids_pd_reduced_detrend_orthog.Rds'))
+
+
+
+# saveRDS(targeted_pd_reduced_detrend_orthog, file = here('aging_output_files', 'targeted_pd_reduced_detrend_orthog.Rds'))
+# saveRDS(untargeted_pd_reduced_detrend_orthog, file = here('aging_output_files', 'untargeted_pd_reduced_detrend_orthog.Rds'))
+# saveRDS(lipids_pd_reduced_detrend_orthog, file = here('aging_output_files', 'lipids_pd_reduced_detrend_orthog.Rds'))
 
 
 
 targeted_ad_c_roc_detrend_orthog <- roc_fig(targeted_ad_reduced_detrend_orthog$roc_df, targeted_ad_reduced_detrend_orthog$predtruth_df) + 
-  labs(title = 'Targeted')
+  labs(title = 'AD vs Controls')
 
 targeted_pd_c_roc_detrend_orthog <- roc_fig(targeted_pd_reduced_detrend_orthog$roc_df, targeted_pd_reduced_detrend_orthog$predtruth_df) + 
-  labs(title = 'Targeted')
+  labs(title = 'PD vs Controls')
 
+untargeted_pd_c_roc_detrend_orthog <- roc_fig(untargeted_pd_reduced_detrend_orthog$roc_df, untargeted_pd_reduced_detrend_orthog$predtruth_df) + 
+  labs(title = 'Untargeted')
+
+
+detrend_orthog_fig <- targeted_ad_c_roc_detrend_orthog + targeted_pd_c_roc_detrend_orthog +
+  plot_annotation(title = "ROC curves after batch correction (targeted profile)", theme = theme(title = element_text(size = rel(2))),
+                  tag_levels = "a", tag_prefix = "(", tag_suffix = ")")
+
+ggsave("detrend_orthog_fig.jpg",
+       type = 'cairo',
+       device = 'jpg',
+       plot = detrend_orthog_fig,
+       path = here("plots", "adpd_figs", "appendix_figs"),
+       width = 83*3,
+       height = 150,
+       units = 'mm', dpi = 300)
 
 a <- which(targeted_pd_reduced_detrend_orthog$predtruth_df$type != "AD")
-aa <- targeted_pd_reduced_detrend_orthog$predtruth_df %>%
+aa <- untargeted_pd_reduced_detrend_orthog$predtruth_df %>%
   filter(type != "AD")
 fpr_tpr(aa$imp1, aa$type == "PD")
 

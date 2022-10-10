@@ -228,7 +228,9 @@ ggsave("pca_plsda_untar.png",
        height = 10)
 
 
-ggsave("figure_2.png",
+ggsave("figure_2.tiff",
+       type = 'cairo',
+       device = 'tiff',
        plot = pca_plsda_untar,
        path = here("plots", "aging_figs", "main_figs"),
        width = 83,
@@ -580,21 +582,21 @@ ggsave("pca_plsda_tar.png",
 
 
 
-# ########
-# 
-# ### Targeted
-# 
-# ########
-# 
-# message("Targeted -------------------------------------------")
-# 
-# imputed_c_targeted5 <- filter_and_impute_multi(wide_data_targeted, c('CO', 'CY', 'CM'), scale = T)
-# targeted_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_targeted5, name = "Targeted", color = NULL, imp_num = .x))
-# 
-# imputed_c_targeted5 <- readRDS(here("aging_output_files", "imputed_c_targeted5.Rds"))
-# targeted_age_analysis <- readRDS(here("aging_output_files", "targeted_age_analysis.Rds"))
-# # saveRDS(imputed_c_targeted5, here("aging_output_files", "imputed_c_targeted5.Rds"))
-# # saveRDS(targeted_age_analysis, here("aging_output_files", "targeted_age_analysis.Rds"))
+########
+
+### Targeted
+
+########
+
+message("Targeted -------------------------------------------")
+
+imputed_c_targeted5 <- filter_and_impute_multi(wide_data_targeted, c('CO', 'CY', 'CM'), scale = T)
+targeted_age_analysis <- purrr::map(1:5, ~age_control_analysis(imputed_c_targeted5, name = "Targeted", color = NULL, imp_num = .x))
+
+imputed_c_targeted5 <- readRDS(here("aging_output_files", "imputed_c_targeted5.Rds"))
+targeted_age_analysis <- readRDS(here("aging_output_files", "targeted_age_analysis.Rds"))
+# saveRDS(imputed_c_targeted5, here("aging_output_files", "imputed_c_targeted5.Rds"))
+# saveRDS(targeted_age_analysis, here("aging_output_files", "targeted_age_analysis.Rds"))
 # 
 # 
 # targeted_pred_df <- imputation_df(targeted_age_analysis)
@@ -1343,6 +1345,7 @@ lipids_pred_df %>%
 
 targeted_age_full <- purrr::map(1:5, ~age_control_analysis(imputed_c_targeted5, name = "Targeted, full", color = NULL, imp_num = .x, full_model = T))
 lipids_age_full <- purrr::map(1:5, ~age_control_analysis(imputed_c_lipids5, name = "Lipids, full", color = NULL, imp_num = .x, full_model = T))
+untargeted_age_full <- purrr::map(1:5, ~age_control_analysis(imputed_c_untargeted5, name = "Lipids, full", color = NULL, imp_num = .x, full_model = T))
 
 full_targeted_age_coefs <- get_importance_tables(targeted_age_full)
 
@@ -1461,6 +1464,66 @@ ggsave("mummichog_pos.png",
        width = 24,
        height = 14)
 
+
+# backtrack to find untargeted matches to the carnitine shuttle, to see whether it is overregulated or under-regulated
+
+# overlap empirical compound IDs from mcg_pathwayanalysis_..._posResults.xlsx
+carnitine_shuttle_eid <- c('E1448','E1207','E3','E1','E1107','E143','E144','E1265','E1447')
+
+# now map these ids to row numbers in our input list
+emp_compounds <- read_tsv(here("aging_output_files", "1591847290.3476467.06-10-2020_posResults", "tables", "ListOfEmpiricalCompounds.tsv")) %>%
+  separate_rows(massfeature_rows, sep = ";") %>%
+  filter(EID %in% carnitine_shuttle_eid) %>%
+  transmute(EID, compound_names, 
+            massfeature_rows = as.numeric(str_replace(massfeature_rows, 'row', '')))
+
+# now find the corresponding mz/retention in our original data
+mummichog_input_pos_carnitine <- read_tsv(here("aging_output_files", str_glue('2020-06-10_mummichog_untargeted_pos.txt'))) %>%
+  rowid_to_column(var = 'massfeature_rows') %>%
+  right_join(emp_compounds, by = 'massfeature_rows') %>%
+  mutate(compound_names = case_when(
+    compound_names == 'docosa-4,7,10,13,16-pentaenoyl carnitine$clupanodonyl carnitine' ~ 'Clupanodonyl-Carnitine',
+    compound_names == 'Tetradecanoyl-CoA (n-C14:0CoA)' ~ 'Tetradecanoyl-CoA',
+    TRUE ~ compound_names %>%
+      str_to_title() %>%
+      str_replace("\\s", "-")
+  )
+  )
+
+# plot results
+mummichog_carnitine_fig <- mummichog_input_pos_carnitine %>%
+  ggplot(aes(reorder(compound_names, `t-score`), `t-score`)) +
+  geom_point() +
+  geom_boxplot() +
+  coord_flip() +
+  geom_hline(yintercept = 0, lty = 'dashed', alpha = 0.5) +
+  labs(x = 'Proposed Compound',
+       y = 't')
+
+figure_5 <- trypto_msea_fig / mummichog_carnitine_fig
+
+ggsave(filename = 'figure_5.tiff',
+       device = 'tiff',
+       type = 'cairo',
+       path = here('plots', 'aging_figs', 'main_figs'),
+       plot = figure_5,
+       width = 83, height = 100,
+       units = 'mm', dpi = 300)
+
+
+
+# alt plot: distribution of each metabolite by age
+carnitine_metabolites <- mummichog_input_pos_carnitine %>%
+  unite(col = Metabolite_mode, Metabolite, Mode) %>%
+  pull(Metabolite_mode)
+
+imputed_c_untargeted_df %>%
+  select(Age, all_of(carnitine_metabolites)) %>%
+  pivot_longer(-Age, names_to = 'Metabolite', values_to = 'Concentration') %>%
+  ggplot(aes(Age, Concentration)) +
+  geom_point() +
+  geom_smooth() + 
+  facet_wrap(~Metabolite)
 
 ## GOT-MS ----------------------------------------
 
@@ -1829,7 +1892,7 @@ untargeted_adpd_pred_df_separate <- untargeted_adpd_pred_df_separate %>%
 
 ## Update regular ADPD plot with the stats for this one:
 untargeted_adpd_age_predtruth_separate <- predtruth_plot(untargeted_adpd_pred_df_separate, name = "Untargeted AD/PD", data_name = "AD/PD, separate", color = "type") +
-    geom_richtext(aes(x = -Inf, y = Inf, hjust = 0, vjust = 1, label = paste0("R^2: ", cor(truth, imp_avg, method = "pearson")^2 %>% round(2), 
+    geom_richtext(aes(x = -Inf, y = Inf, hjust = 0, vjust = 1, label = paste0("R^2: ", cor(truth, imp_avg, method = "pearson")^2 %>% round(2) %>% numformat(), 
                                                                               "<br>RMSE: ", (truth - imp_avg)^2 %>% mean %>% sqrt %>% round(2), " [",adpd_rmse_null,"]", 
                                                                               "<br>MAE: ", (truth - imp_avg) %>% abs %>% mean %>% round(2), " [",adpd_mae_null,"]")),
                   size =rel(2)) + 
@@ -1847,7 +1910,9 @@ figure_4a <- predtruth_plot(untargeted_c_matched_age_reduced, name = "Untargeted
 figure_4 <- figure_4a / 
   untargeted_adpd_age_predtruth_separate
 
-ggsave(filename = 'figure_4.png',
+ggsave(filename = 'figure_4.tiff',
+       device = 'tiff',
+       type = 'cairo',
        path = here('plots', 'aging_figs', 'main_figs'),
        plot = figure_4,
        width = 83, height = 100,
@@ -2271,7 +2336,9 @@ c_combined_univariate_table <- bh_univariate_age(imputed_c_combined_amelia5) %>%
   filter(bh_p_value < 0.01)
 
 ## Targeted
-c_targeted_univariate_table <- bh_univariate_age(imputed_c_targeted5)
+c_targeted_univariate_table <- bh_univariate_age(imputed_c_targeted5, types_index = 85)
+
+write_csv(c_targeted_univariate_table,here('aging_tables', 'c_targeted_univariate_table.csv'))
 
 c_targeted_univar_sig <- c_targeted_univariate_table %>%
   filter(bh_p_value < 0.01)
@@ -2475,6 +2542,30 @@ ggsave("msea_smpdb.png",
        path = here("plots", "aging_figs"),
        width = 14,
        height = 10)
+
+
+# look only at trypophan pathway
+
+# overlap from metaboanalyst
+trypto_overlap <- c('Alanine_pos', 'Serotonin_pos', 'Kynurenine_pos', '3?-Hydroxy-12 Ketolithocholic Acid_neg', 'Adenosyl-L-homocysteine_pos', 'Anthranilic acid_pos')
+c_targeted_univariate_trypto <- read_csv(here('aging_tables', 'c_targeted_univariate_table.csv')) %>%
+  filter(name %in% trypto_overlap) %>%
+  mutate(name = case_when(
+    name == 'Alanine_pos' ~ "L-Alanine",
+    name == 'Serotonin_pos' ~ "Serotonin",
+    name == 'Kynurenine_pos' ~ "L-Kynurenine",
+    name == '3?-Hydroxy-12 Ketolithocholic Acid_neg' ~ '5-Hydroxyindoleacetic acid',
+    name == 'Adenosyl-L-homocysteine_pos' ~ 'S-Adenosylhomocysteine',
+    name == 'Anthranilic acid_pos' ~ '2-Aminobenzoic acid',
+    TRUE ~ name
+  ))
+
+trypto_msea_fig <- c_targeted_univariate_trypto %>%
+  ggplot(aes(reorder(name, `t value`), `t value`)) +
+  geom_col() +
+  coord_flip() +
+  labs(x = 'Metabolite',
+       y = 't')
 
 ### once we have the msea result table, recreate the enrichment bar plot in ggplot
 msea_csf <- read_csv(here("aging_tables", "msea_ora_csf_result.csv")) %>%
@@ -2786,7 +2877,9 @@ ggsave("missingness_overview_bar.png",
        dpi = 300, units = 'mm')
 
 figure_1 <- age_dist_c / missingness_overview_plot
-ggsave("figure_1.png",
+ggsave("figure_1.tiff",
+       type = 'cairo',
+       device = 'tiff',
        plot = figure_1,
        path = here("plots", "aging_figs", 'main_figs'),
        width = 83,

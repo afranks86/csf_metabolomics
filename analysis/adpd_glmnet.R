@@ -7,6 +7,10 @@ panuc_data <- read_csv('E:/Projects/metabolomics/ND_Metabolomics/data/PANUC/panu
 ad_c_tracking <- read_csv('E:/Projects/metabolomics/ND_Metabolomics/data/ADTracking.csv') %>%
   select(LPAge, Sex = Gender, Type = PrimaryDx, OnsetAge) %>%
   mutate(Type = fct_collapse(Type,'Control' = c('CO', 'CY', 'CM')))
+ad_c_tracking_wrace <- readxl::read_xlsx('E:/Projects/metabolomics/ND_Metabolomics/data/ADTracking 2_20210621.xlsx') %>%
+  transmute(type2 = fct_collapse(PrimaryDx, "C" = c("CO", "CM", "CY")),
+            Gender, Race,
+            is_white = Race == "White")
 pd_tracking <- read_csv('E:/Projects/metabolomics/ND_Metabolomics/data/PDTracking.csv') %>%
   left_join(panuc_data, by = c('PaNUCID' = 'subject_id')) %>%
   transmute(LPAge = AgeAtDraw, Sex, race, Type = `Disease Diagnosis`, 
@@ -43,8 +47,111 @@ summary_subject_info <- ad_c_tracking %>%
             has_dementia,
             no_cognitive_impairment)
 
+
+# chi squared test of sex and type
+ad_c_tracking %>%
+  bind_rows(pd_tracking) %$%
+  chisq.test(Sex, Type)
+
+# anova on age and type
+ad_c_tracking %>%
+  bind_rows(pd_tracking) %>%
+  aov(LPAge ~ Type + Sex, data = .) %>%
+  anova()
+
+
+# check out QCS
+# consensus value = median(site means)???
+QC_long %>% 
+  group_by(Metabolite) %>% 
+  summarize(metabolite_mean = mean(Abundance, na.rm = T)) %>%
+  ggplot() +
+  geom_histogram(aes(metabolite_mean))
+
+QC_long %>% 
+  group_by(Code) %>% 
+  summarize(sample_mean = mean(Abundance, na.rm = T)) %>%
+  ggplot() +
+  geom_histogram(aes(sample_mean))
+
 # write_csv(summary_subject_info, path = here('ad_pd', 'summary_subject_info.csv'))
 
+# new from cyrus
+cyrus_panuc <- readxl::read_xlsx("E:/Projects/metabolomics/ND_Metabolomics/data/PANUC/panuc-0161-2021_11_04 - CPZ  (copy).xlsx")
+
+# logical memory immediate summary
+cyrus_panuc %>%
+  filter(logical_memory_immediate > 0) %>%
+  summarize(mean(logical_memory_immediate), sd(logical_memory_immediate))
+
+# logical memory delayed
+cyrus_panuc %>%
+  filter(logical_memory_delayed > 0) %>%
+  summarize(mean(logical_memory_delayed), sd(logical_memory_delayed))
+
+# animals
+cyrus_panuc %>%
+  filter(animals > 0) %>%
+  summarize(mean(animals), sd(animals))
+
+
+# trails A
+cyrus_panuc %>%
+  filter(trails_a_seconds_utc150 > 0) %>%
+  summarize(mean(trails_a_seconds_utc150), sd(trails_a_seconds_utc150))
+
+
+# trails B
+cyrus_panuc %>%
+  filter(trails_b_seconds_utc300 > 0) %>%
+  summarize(mean(trails_b_seconds_utc300), sd(trails_b_seconds_utc300))
+
+
+
+################
+
+# looking at LP dates
+# trying to see if there's a difference in storage date betweenAd/C and PD
+################
+
+
+
+pd_dates_raw <- readxl::read_xlsx("E:\\Projects\\metabolomics\\adpd_submission\\Data for CSF sent to Daniel Promislow_add date_02-17-22.xlsx")
+ad_dates_raw <- readxl::read_xlsx("E:\\Projects\\metabolomics\\adpd_submission\\Tracking_85_Promislow_FINAL_selected_by_Libby_forCDv5_de_ID_2_16_22.xlsx", skip = 9)
+
+# remove subject not used in our study (optmization sample)
+pd_dates <- pd_dates_raw %>%
+  select(PaNUCID, DateOfDraw, PrimaryDx = `Disease Diagnosis`) %>%
+  filter(PaNUCID != "PWA12-0533", PrimaryDx != "Other")
+  
+ad_dates <- ad_dates_raw %>%
+  transmute(Gender, 
+            DateOfDraw = LP,
+            PrimaryDx = fct_collapse(PrimaryDx, Control = c("CM", "CO", "CY"))
+            )
+
+
+adpd_dates <- bind_rows(ad_dates, pd_dates) %>%
+  mutate(PrimaryDx = fct_relevel(PrimaryDx, "Control", after = 0))
+
+draw_date_hist <- ggplot(adpd_dates, aes(DateOfDraw, fill = PrimaryDx)) + 
+  geom_histogram(alpha = 0.9, bins = 20) +
+  labs(
+    title = "Distribution of LP Draw Dates",
+    x = "Date of LP Draw",
+    y = "Count",
+    fill = "Type"
+  )
+
+
+ggsave("figure_a_lpdate.jpg",
+       type = 'cairo',
+       device = 'jpg',
+       plot = draw_date_hist,
+       path = here("plots", "adpd_figs", "main_figs"),
+       width = 83*2,
+       height = 60,
+       units = 'mm', dpi = 300)
 
 # transpose
 tar_c_index <- which(imputed_all_targeted5[[1]][[2]] %in% c("CO", "CM", "CY")) %>%
@@ -133,15 +240,24 @@ pct_missing_data_adpd <- purrr::map2(data_sources, data_names, ~percent_missing_
 
 missingness_overview_adpd_plot <- ggplot(pct_missing_data_adpd) + 
   geom_col(aes(x = source, y= pct_missing, fill = Type), position = 'dodge') +
-  labs(title = "Percent Missingness By Dataset",
+  labs(title = "Proportion of Missingness By Dataset",
        x = "Dataset",
-       y = "Percent Missing")
+       y = "Proportion Missing")
 ggsave("missingness_overview_adpd_bar.png",
        plot = missingness_overview_adpd_plot,
        path = here("plots", "adpd_figs"),
        width = 14,
        height = 10)
 
+figure_1 <- age_dist_ad_pd + missingness_overview_adpd_plot
+ggsave("figure_1.tiff",
+       type = 'cairo',
+       device = 'tiff',
+       plot = figure_1,
+       path = here("plots", "adpd_figs", "main_figs"),
+       width = 83 * 2,
+       height = 60,
+       units = 'mm', dpi = 300)
 
 
 #### PCA ---------
@@ -174,8 +290,8 @@ pc2_all_var_explained <- pca_all_untargeted@modelDF["p2","R2X"] %>%
 #   summarize(p1_median_age = median(Age))
 
 pca_type_untargeted <- ggplot(pca_scores_all_untargeted, aes(p1, p2, color = Type)) + 
-  geom_point(size = 5) +
-  stat_ellipse(size = 2) +
+  geom_point(size = 1) +
+  stat_ellipse(size = 0.5) +
   labs(title = "Principal Component Analysis",
        subtitle = "Colored by Phenotype",
        x = str_glue("PC1 ({pc1_all_var_explained})"),
@@ -185,6 +301,16 @@ ggsave("pca_adpd_untar.png",
        path = here("plots", "adpd_figs"),
        width = 14,
        height = 10)
+
+ggsave("figure_2.tiff",
+       type = 'cairo',
+       device = 'tiff',
+       plot = pca_type_untargeted,
+       path = here("plots", "adpd_figs", "main_figs"),
+       width = 83,
+       height = 60,
+       units = 'mm', dpi = 300)
+
 
 
 ### PLS-DA on phenotype
@@ -220,6 +346,35 @@ ggsave("plsda_type_untar.png",
        path = here("plots", "adpd_figs"),
        width = 14,
        height = 10)
+
+
+
+#### pca on phenotype after detrending sex/age
+
+pca_untargeted_x_detrend <- untargeted_all_processed_detrend %>% 
+  dplyr::select(-any_of(metadata_cols)) 
+
+pca_all_untargeted_detrend <- pca_untargeted_x_detrend %>%
+  opls(algoC = "nipals")
+
+
+pca_scores_all_untargeted_detrend <- pca_all_untargeted_detrend@scoreMN %>%
+  as_tibble() %>%
+  bind_cols(untargeted_all_processed_detrend %>% select(Age, "Sex" = Gender, APOE, Type, Id)) %>%
+  collapse_controls()
+
+pc1_all_var_explained_detrend <- pca_all_untargeted_detrend@modelDF["p1","R2X"] %>%
+  scales::percent()
+pc2_all_var_explained_detrend <- pca_all_untargeted_detrend@modelDF["p2","R2X"] %>%
+  scales::percent()
+
+pca_type_untargeted_detrend <- ggplot(pca_scores_all_untargeted_detrend, aes(p1, p2, color = Type)) + 
+  geom_point(size = 5) +
+  stat_ellipse(size = 2) +
+  labs(title = "Principal Component Analysis",
+       subtitle = "Colored by Phenotype, after detrending age/sex",
+       x = str_glue("PC1 ({pc1_all_var_explained_detrend})"),
+       y = str_glue("PC2 ({pc2_all_var_explained_detrend})"))
 
 
 #### not stratifying the imputation at all
@@ -1570,6 +1725,270 @@ get_importance_tables(targeted_adpd_full_naind_nopenalize) %>%
 
 
 
+#########
+
+## Full models for coefficients, not including age and sex
+
+#############
+
+targeted_pd_full_detrend <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_targeted5, varname ="PD_ind", imp_num = .x, nlambda = 200, PD_ind = T, types = c("CO", "CM", "CY", "PD"), full_model = T, include_age_gender = FALSE))
+targeted_ad_full_detrend <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_targeted5, varname ="AD_ind", imp_num = .x, nlambda = 200, AD_ind = T, types = c("CO", "CM", "CY", "AD"), full_model = T, include_age_gender = FALSE))
+lipids_pd_full_detrend <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_lipids5, varname ="PD_ind", imp_num = .x, nlambda = 200, PD_ind = T, types = c("CO", "CM", "CY", "PD"), full_model = T, include_age_gender = FALSE))
+lipids_ad_full_detrend <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_lipids5, varname ="AD_ind", imp_num = .x, nlambda = 200, AD_ind = T, types = c("CO", "CM", "CY", "AD"), full_model = T, include_age_gender = FALSE))
+
+targeted_adpd_full_detrend <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_targeted5, varname ="AD_ind", imp_num = .x, nlambda = 200, AD_ind = T, types = c("PD", "AD"), full_model = T, include_age_gender = FALSE))
+lipids_adpd_full_detrend <- purrr::map(1:5, ~logistic_control_analysis(imputed_all_lipids5, varname ="AD_ind", imp_num = .x, nlambda = 200, AD_ind = T, types = c("PD", "AD"), full_model = T, include_age_gender = FALSE))
+
+
+targeted_pd_full_detrend <- readRDS(file = here('ad_pd', 'targeted_pd_full_detrend.Rds'))
+targeted_ad_full_detrend <- readRDS(file = here('ad_pd', 'targeted_ad_full_detrend.Rds'))
+lipids_pd_full_detrend <- readRDS(file = here('ad_pd', 'lipids_pd_full_detrend.Rds'))
+lipids_ad_full_detrend <- readRDS(file = here('ad_pd', 'lipids_ad_full_detrend.Rds'))
+targeted_adpd_full_detrend <- readRDS(file = here('ad_pd', 'targeted_adpd_full_detrend.Rds'))
+lipids_adpd_full_detrend <- readRDS(file = here('ad_pd', 'lipids_adpd_full_detrend.Rds'))
+
+untargeted_pd_full_detrend <- readRDS(file = here('ad_pd', 'untargeted_pd_full_detrend.Rds'))
+
+
+
+# saveRDS(targeted_pd_full_detrend, file = here('ad_pd', 'targeted_pd_full_detrend.Rds'))
+# saveRDS(targeted_ad_full_detrend, file = here('ad_pd', 'targeted_ad_full_detrend.Rds'))
+# saveRDS(lipids_pd_full_detrend, file = here('ad_pd', 'lipids_pd_full_detrend.Rds'))
+# saveRDS(lipids_ad_full_detrend, file = here('ad_pd', 'lipids_ad_full_detrend.Rds'))
+# saveRDS(targeted_adpd_full_detrend, file = here('ad_pd', 'targeted_adpd_full_detrend.Rds'))
+# saveRDS(lipids_adpd_full_detrend, file = here('ad_pd', 'lipids_adpd_full_detrend.Rds'))
+# 
+# saveRDS(untargeted_pd_full_detrend, file = here('ad_pd', 'untargeted_pd_full_detrend.Rds'))
+
+
+# AD, targeted --------------------
+
+full_detrend_targeted_ad_coefs <- get_importance_tables(targeted_ad_full_detrend, drop_missing = T)
+
+# write separate tables for positive and negative coefs
+# exponentiate to get odds ratios associated with a unit increase in the predictor.
+full_detrend_targeted_ad_coefs %>%
+  filter(`Avg Coef` > 0) %>%
+  mutate(
+    OR = round(exp(`Avg Coef`), digits = 2),
+    OR_lower2sd = round(exp(`Avg Coef` - 2*sd), digits = 2),
+    OR_upper2sd = round(exp(`Avg Coef` + 2*sd), digits = 2)
+  ) %>%
+  filter(OR > 1.1) %>%
+  transmute(Name, OR,
+            OR_2sd = str_glue("({OR_lower2sd}, {OR_upper2sd})")
+            ) %>%
+  unite(OR, OR, OR_2sd, sep = " ") %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_delim(delim = ";", here("ad_pd", "tables", "post_revision", "OR_targeted_ad_c_pos.csv"))
+  # write_csv(here("ad_pd", "pos_OR_table_targeted_ad_full_detrend.csv"))
+
+full_detrend_targeted_ad_coefs %>%
+  filter(`Avg Coef` < 0) %>%
+  mutate(
+    OR = round(exp(`Avg Coef`), digits = 2),
+    OR_lower2sd = round(exp(`Avg Coef` - 2*sd), digits = 2),
+    OR_upper2sd = round(exp(`Avg Coef` + 2*sd), digits = 2)
+  ) %>%
+  filter(OR < 0.9) %>%
+  transmute(Name, OR,
+            OR_2sd = str_glue("({OR_lower2sd}, {OR_upper2sd})")
+  ) %>%
+  unite(OR, OR, OR_2sd, sep = " ") %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_delim(delim = ";",here("ad_pd", "tables", "post_revision", "OR_targeted_ad_c_neg.csv"))
+  # write_csv(here("ad_pd", "neg_OR_table_targeted_ad_full_detrend.csv"))
+
+# PD, targeted ---------------
+
+full_detrend_targeted_pd_coefs <- get_importance_tables(targeted_pd_full_detrend, drop_missing = TRUE)
+# write separate tables for positive and negative coefs
+full_detrend_targeted_pd_coefs %>%
+  filter(`Avg Coef` > 0) %>%
+  mutate(
+    OR = round(exp(`Avg Coef`), digits = 2),
+    OR_lower2sd = round(exp(`Avg Coef` - 2*sd), digits = 2),
+    OR_upper2sd = round(exp(`Avg Coef` + 2*sd), digits = 2)
+  ) %>%
+  filter(OR > 1.1) %>%
+  transmute(Name, OR,
+            OR_2sd = str_glue("({OR_lower2sd}, {OR_upper2sd})")
+  ) %>%
+  unite(OR, OR, OR_2sd, sep = " ") %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_delim(delim = ";",here("ad_pd", "tables", "post_revision", "OR_targeted_pd_c_pos.csv"))
+  # write_csv(here("ad_pd", "pos_OR_table_targeted_pd_full_detrend.csv"))
+
+full_detrend_targeted_pd_coefs %>%
+  filter(`Avg Coef` < 0) %>%
+  mutate(
+    OR = round(exp(`Avg Coef`), digits = 2),
+    OR_lower2sd = round(exp(`Avg Coef` - 2*sd), digits = 2),
+    OR_upper2sd = round(exp(`Avg Coef` + 2*sd), digits = 2)
+  ) %>%
+  filter(OR <0.9) %>%
+  transmute(Name, OR,
+            OR_2sd = str_glue("({OR_lower2sd}, {OR_upper2sd})")
+  ) %>%
+  unite(OR, OR, OR_2sd, sep = " ") %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_delim(delim = ";",here("ad_pd", "tables", "post_revision", "OR_targeted_pd_c_neg.csv"))
+  # write_csv(here("ad_pd", "neg_OR_table_targeted_pd_full_detrend.csv"))
+
+
+# Lipids, AD  -------------------
+
+full_detrend_lipids_ad_coefs <- get_importance_tables(lipids_ad_full_detrend, drop_missing = T)
+
+# write separate tables for positive and negative coefs
+full_detrend_lipids_ad_coefs %>%
+  filter(`Avg Coef` > 0) %>%
+  mutate(
+    OR = round(exp(`Avg Coef`), digits = 2),
+    OR_lower2sd = round(exp(`Avg Coef` - 2*sd), digits = 2),
+    OR_upper2sd = round(exp(`Avg Coef` + 2*sd), digits = 2)
+  ) %>%
+  filter(OR > 1.1) %>%
+  transmute(Name, OR,
+            OR_2sd = str_glue("({OR_lower2sd}, {OR_upper2sd})")
+  ) %>%
+  unite(OR, OR, OR_2sd, sep = " ") %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_delim(delim = ";",here("ad_pd", "tables", "post_revision", "OR_lipids_ad_c_pos.csv"))
+  # write_csv(here("ad_pd", "pos_OR_table_lipids_ad_full_detrend.csv"))
+
+full_detrend_lipids_ad_coefs %>%
+  filter(`Avg Coef` < 0) %>%
+  mutate(
+    OR = round(exp(`Avg Coef`), digits = 2),
+    OR_lower2sd = round(exp(`Avg Coef` - 2*sd), digits = 2),
+    OR_upper2sd = round(exp(`Avg Coef` + 2*sd), digits = 2)
+  ) %>%
+  filter(OR <= 0.9) %>%
+  transmute(Name, OR,
+            OR_2sd = str_glue("({OR_lower2sd}, {OR_upper2sd})")
+  ) %>%
+  unite(OR, OR, OR_2sd, sep = " ") %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_delim(delim = ";",here("ad_pd", "tables", "post_revision", "OR_lipids_ad_c_neg.csv"))
+  # write_csv(here("ad_pd", "neg_OR_table_lipids_ad_full_detrend.csv"))
+
+# Lipids, PD -------------------
+
+full_detrend_lipids_pd_coefs <- get_importance_tables(lipids_pd_full_detrend, drop_missing = T)
+
+# write separate tables for positive and negative coefs
+full_detrend_lipids_pd_coefs %>%
+  filter(`Avg Coef` > 0) %>%
+  mutate(
+    OR = round(exp(`Avg Coef`), digits = 2),
+    OR_lower2sd = round(exp(`Avg Coef` - 2*sd), digits = 2),
+    OR_upper2sd = round(exp(`Avg Coef` + 2*sd), digits = 2)
+  ) %>%
+  filter(OR > 1.1) %>%
+  transmute(Name, OR,
+            OR_2sd = str_glue("({OR_lower2sd}, {OR_upper2sd})")
+  ) %>%
+  unite(OR, OR, OR_2sd, sep = " ") %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_delim(delim = ";",here("ad_pd", "tables", "post_revision", "OR_lipids_pd_c_pos.csv"))
+  # write_csv(here("ad_pd", "pos_OR_table_lipids_pd_full_detrend.csv"))
+
+full_detrend_lipids_pd_coefs %>%
+  filter(`Avg Coef` < 0) %>%
+  mutate(
+    OR = round(exp(`Avg Coef`), digits = 2),
+    OR_lower2sd = round(exp(`Avg Coef` - 2*sd), digits = 2),
+    OR_upper2sd = round(exp(`Avg Coef` + 2*sd), digits = 2)
+  ) %>%
+  filter(OR < 0.9) %>%
+  transmute(Name, OR,
+            OR_2sd = str_glue("({OR_lower2sd}, {OR_upper2sd})")
+  ) %>%
+  unite(OR, OR, OR_2sd, sep = " ") %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_delim(delim = ";",here("ad_pd", "tables", "post_revision", "OR_lipids_pd_c_neg.csv"))
+  # write_csv(here("ad_pd", "neg_OR_table_lipids_pd_full_detrend.csv"))
+
+
+# targeted, AD v PD -------------------
+
+full_detrend_targeted_adpd_coefs <- get_importance_tables(targeted_adpd_full_detrend, drop_missing = T)
+
+# write separate tables for positive and negative coefs
+full_detrend_targeted_adpd_coefs %>%
+  filter(`Avg Coef` > 0) %>%
+  mutate(
+    OR = round(exp(`Avg Coef`), digits = 2),
+    OR_lower2sd = round(exp(`Avg Coef` - 2*sd), digits = 2),
+    OR_upper2sd = round(exp(`Avg Coef` + 2*sd), digits = 2)
+  ) %>%
+  filter(OR > 1.1) %>%
+  transmute(Name, OR,
+            OR_2sd = str_glue("({OR_lower2sd}, {OR_upper2sd})")
+  ) %>%
+  unite(OR, OR, OR_2sd, sep = " ") %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_delim(delim = ";",here("ad_pd", "tables", "post_revision", "OR_targeted_ad_pd_pos.csv"))
+
+  # write_csv(here("ad_pd", "pos_OR_table_targeted_adpd_full_detrend.csv"))
+
+full_detrend_targeted_adpd_coefs %>%
+  filter(`Avg Coef` < 0) %>%
+  mutate(
+    OR = round(exp(`Avg Coef`), digits = 2),
+    OR_lower2sd = round(exp(`Avg Coef` - 2*sd), digits = 2),
+    OR_upper2sd = round(exp(`Avg Coef` + 2*sd), digits = 2)
+  ) %>%
+  filter(OR < 0.9) %>%
+  transmute(Name, OR,
+            OR_2sd = str_glue("({OR_lower2sd}, {OR_upper2sd})")
+  ) %>%
+  unite(OR, OR, OR_2sd, sep = " ") %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_delim(delim = ";",here("ad_pd", "tables", "post_revision", "OR_targeted_ad_pd_neg.csv"))
+  # write_csv(here("ad_pd", "neg_OR_table_targeted_adpd_full_detrend.csv"))
+
+full_detrend_targeted_adpd_coefs %>%
+  filter(Name %in% c("(Intercept)", "Age", "GenderM"))
+
+# Lipids, AD v PD -------------------
+
+full_detrend_lipids_adpd_coefs <- get_importance_tables(lipids_adpd_full_detrend, drop_missing = T)
+
+full_detrend_lipids_adpd_coefs %>%
+  filter(`Avg Coef` > 0) %>%
+  mutate(
+    OR = round(exp(`Avg Coef`), digits = 2),
+    OR_lower2sd = round(exp(`Avg Coef` - 2*sd), digits = 2),
+    OR_upper2sd = round(exp(`Avg Coef` + 2*sd), digits = 2)
+  ) %>%
+  filter(OR > 1.1) %>%
+  transmute(Name, OR,
+            OR_2sd = str_glue("({OR_lower2sd}, {OR_upper2sd})")
+  ) %>%
+  unite(OR, OR, OR_2sd, sep = " ") %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_delim(delim = ";",here("ad_pd", "tables", "post_revision", "OR_lipids_ad_pd_pos.csv"))
+  # write_csv(here("ad_pd", "pos_OR_table_lipids_adpd_full_detrend.csv"))
+
+full_detrend_lipids_adpd_coefs %>%
+  filter(`Avg Coef` < 0) %>%
+  mutate(
+    OR = round(exp(`Avg Coef`), digits = 2),
+    OR_lower2sd = round(exp(`Avg Coef` - 2*sd), digits = 2),
+    OR_upper2sd = round(exp(`Avg Coef` + 2*sd), digits = 2)
+  ) %>%
+  filter(OR <0.9) %>%
+  transmute(Name, OR,
+            OR_2sd = str_glue("({OR_lower2sd}, {OR_upper2sd})")
+  ) %>%
+  unite(OR, OR, OR_2sd, sep = " ") %>%
+  filter(!(Name %in% c("(Intercept)", "Age", "GenderM"))) %>%
+  write_delim(delim = ";",here("ad_pd", "tables", "post_revision", "OR_lipids_ad_pd_neg.csv"))
+  # write_csv(here("ad_pd", "neg_OR_table_lipids_adpd_full_detrend.csv"))
+
+
 ###########################
 
 ### Univariate AD/PD Logistic Regresion on untargeted
@@ -1593,7 +2012,9 @@ untargeted_all_amelia5_ad_ind <- imputed_all_untargeted5 %>%
 
 ad_c_index <- which(imputed_all_untargeted5[[1]][[2]] %in% c('AD', 'CO', 'CY', 'CM'))
 
-untargeted_univar_ad_logistic_list <- purrr::map(1:5, ~bh_univariate_age(untargeted_all_amelia5_ad_ind, var = "AD_ind", family = "binomial", conc = FALSE, imp_num = .x, types_index = ad_c_index))
+untargeted_univar_ad_logistic_list <- furrr::future_map(1:5, ~bh_univariate_age(untargeted_all_amelia5_ad_ind, var = "AD_ind", family = "binomial", conc = FALSE, imp_num = .x, types_index = ad_c_index, get_coefs = T))
+# saveRDS(untargeted_univar_ad_logistic_list, here("ad_pd", "untargeted_univar_ad_logistic_list.Rds"))
+
 
 untargeted_univar_ad_logistic <- untargeted_univar_ad_logistic_list %>%
   bind_rows(.id = "imp") %>%
@@ -1612,7 +2033,7 @@ mummichog_ad_untargeted <- untargeted_univar_ad_logistic %>%
   tidyr::unite(col = "Metabolite", Metabolite1, Metabolite2) %>%
   left_join(mz_retention_untargeted, by = c('Metabolite', 'Mode')) %>%
   # dplyr::filter(bh_p_value < 0.05) %>%
-  dplyr::select('mz' = `m/z`, 'rtime' = `Retention time (min)`, 'p-value' = bh_p_value, 'z-score' = `z value`, Metabolite, Mode)
+  dplyr::select('mz' = `m/z`, 'rtime' = `Retention time (min)`, 'p-value' = bh_p_value, 'z-score' = `z value`, Metabolite, Mode, Estimate)
 
 mummichog_ad_untargeted %>%
   dplyr::filter(Mode == 'neg') %>%
@@ -1624,13 +2045,32 @@ mummichog_ad_untargeted %>%
 
 
 mummichog_ad_pos_plot <- mummichog_plot(here("ad_pd", "mummichog_ad_pos", "tables", "mcg_pathwayanalysis_mummichog_ad_pos.tsv")) +
-  labs(title = "Positive Mode") + 
-  theme(axis.text.y = element_text(size = rel(1.75)))
+  labs(title = "AD vs Controls")+#,
+       #subtitle = "Positive Mode") + 
+  theme(axis.text.y = element_text(size = rel(1.75)),
+        axis.title.x = element_text(size = rel(1.5)),
+        plot.title = element_text(size = rel(1.75)))
 ggsave("mummichog_ad_pos.png",
        plot = mummichog_ad_pos_plot, 
        path = here("plots", "adpd_figs"),
        width = 20,
        height = 14)
+
+
+
+
+# reporting large univar coefs
+untargeted_univar_ad_median_coef <- untargeted_univar_ad_logistic_list %>%
+  bind_rows(.id = "imp") %>%
+  group_by(name) %>%
+  filter(Estimate == median(Estimate)) %>%
+  # break ties
+  slice(1) %>%
+  ungroup() %>%
+  arrange(desc(abs(Estimate))) %>%
+  mutate(OR_est = exp(Estimate))
+
+
 
 
 
@@ -1642,7 +2082,12 @@ untargeted_all_amelia5_pd_ind <- imputed_all_untargeted5 %>%
 
 pd_c_index <- which(imputed_all_untargeted5[[1]][[2]] %in% c('PD', 'CO', 'CY', 'CM'))
 
-untargeted_univar_pd_logistic_list <- purrr::map(1:5, ~bh_univariate_age(untargeted_all_amelia5_pd_ind, types_index = pd_c_index, var = "PD_ind", family = "binomial", conc = FALSE, imp_num = .x))
+untargeted_univar_pd_logistic_list <- 
+  furrr::future_map(1:5, ~bh_univariate_age(untargeted_all_amelia5_pd_ind, 
+                                     types_index = pd_c_index, 
+                                     var = "PD_ind", family = "binomial", conc = FALSE, imp_num = .x, get_coefs = T))
+
+# saveRDS(untargeted_univar_pd_logistic_list, here("ad_pd", "untargeted_univar_pd_logistic_list.Rds"))
 
 untargeted_univar_pd_logistic <- untargeted_univar_pd_logistic_list %>%
   bind_rows(.id = "imp") %>%
@@ -1673,7 +2118,7 @@ mummichog_pd_untargeted %>%
 
 # pretty much null i think
 mummichog_pd_neg_plot <- mummichog_plot(here("ad_pd", "mummichog_pd_neg", "tables", "mcg_pathwayanalysis_mummichog_pd_neg.tsv")) +
-  labs(title = "Negative Mode")
+  labs(title = "PD vs Controls",subtitle = "Negative Mode")
 ggsave("mummichog_pd_neg.png",
        plot = mummichog_pd_neg_plot, 
        path = here("plots", "adpd_figs"),
@@ -1681,20 +2126,43 @@ ggsave("mummichog_pd_neg.png",
        height = 18)
 
 mummichog_pd_pos_plot <- mummichog_plot(here("ad_pd", "mummichog_pd_pos", "tables", "mcg_pathwayanalysis_mummichog_pd_pos.tsv")) +
-  labs(title = "Positive Mode") + 
-  theme(axis.text.y = element_text(size = rel(1.75)))
+  labs(title = "PD vs Controls") +#, subtitle = "Positive Mode") + 
+  theme(axis.text.y = element_text(size = rel(1.75)),
+        axis.title.x = element_text(size = rel(1.5)),
+        plot.title = element_text(size = rel(1.75)))
 ggsave("mummichog_pd_pos.png",
        plot = mummichog_pd_pos_plot, 
        path = here("plots", "adpd_figs"),
        width = 20,
        height = 14)
 
+
+
+mummichog_pd_pos_plot + mummichog_ad_pos_plot +
+  plot_annotation(title = "Mummichog Identified Pathways (Positive Mode)",
+                  theme = theme(plot.title = element_text(size = rel(2))))
+
+
+
+# reporting large univar coefs
+untargeted_univar_pd_median_coef <- untargeted_univar_pd_logistic_list %>%
+  bind_rows(.id = "imp") %>%
+  group_by(name) %>%
+  filter(Estimate == median(Estimate)) %>%
+  # break ties
+  slice(1) %>%
+  ungroup() %>%
+  arrange(desc(abs(Estimate))) %>%
+  mutate(OR_est = exp(Estimate))
+
 ######## PD vs AD ----------------------------------------------------------
 
 
 pd_ad_index <- which(imputed_all_untargeted5[[1]][[2]] %in% c('PD', 'AD'))
 
-untargeted_univar_adpd_logistic_list <- purrr::map(1:5, ~bh_univariate_age(untargeted_all_amelia5_pd_ind, types_index = pd_ad_index, var = "PD_ind", family = "binomial", conc = FALSE, imp_num = .x))
+untargeted_univar_adpd_logistic_list <- furrr::future_map(1:5, ~bh_univariate_age(untargeted_all_amelia5_pd_ind, types_index = pd_ad_index, var = "PD_ind", family = "binomial", conc = FALSE, imp_num = .x, get_coefs = T))
+# saveRDS(untargeted_univar_adpd_logistic_list, here("ad_pd", "untargeted_univar_adpd_logistic_list.Rds"))
+
 
 untargeted_univar_adpd_logistic <- untargeted_univar_adpd_logistic_list %>%
   bind_rows(.id = "imp") %>%
@@ -1740,6 +2208,18 @@ ggsave("mummichog_adpd_pos.png",
        path = here("plots", "adpd_figs"),
        width = 20,
        height = 14)
+
+
+# reporting large univar coefs
+untargeted_univar_adpd_median_coef <- untargeted_univar_adpd_logistic_list %>%
+  bind_rows(.id = "imp") %>%
+  group_by(name) %>%
+  filter(Estimate == median(Estimate)) %>%
+  # break ties
+  slice(1) %>%
+  ungroup() %>%
+  arrange(desc(abs(Estimate))) %>%
+  mutate(OR_est = exp(Estimate))
 
 
 ######## PD missingness indicator ----------------------------------------------------------
@@ -1888,7 +2368,7 @@ targeted_all_amelia5_ad_ind <- imputed_all_targeted5 %>%
 ad_c_index_targeted <- which(imputed_all_targeted5[[1]][[2]] %in% c('AD', "CO", "CM", "CY"))
 
 # Create table with bh-corrected p values
-targeted_univar_ad_logistic_list <- purrr::map(1:5, ~bh_univariate_age(targeted_all_amelia5_ad_ind, var = "AD_ind", family = "binomial", conc = FALSE, imp_num = .x, types_index = ad_c_index_targeted))
+targeted_univar_ad_logistic_list <- purrr::map(1:5, ~bh_univariate_age(targeted_all_amelia5_ad_ind, var = "AD_ind", family = "binomial", conc = FALSE, imp_num = .x, types_index = ad_c_index_targeted, get_coefs = T))
 targeted_univar_ad_logistic <- targeted_univar_ad_logistic_list %>%
   bind_rows(.id = "imp") %>%
   group_by(name) %>%
@@ -1931,6 +2411,18 @@ write_tsv(univar_ad_names_sig, here("ad_pd", "msea_ad_names_sig.txt"))
 
 
 
+# reporting large univar coefs
+targeted_univar_ad_median_coef <- targeted_univar_ad_logistic_list %>%
+  bind_rows(.id = "imp") %>%
+  group_by(name) %>%
+  filter(Estimate == median(Estimate)) %>%
+  # break ties
+  slice(1) %>%
+  ungroup() %>%
+  arrange(desc(abs(Estimate))) %>%
+  mutate(OR_est = exp(Estimate))
+
+
 
 #### PD -------------------------------------
 # # we want a PD indicator, but not an AD one
@@ -1945,7 +2437,7 @@ targeted_all_amelia5_pd_ind <- imputed_all_targeted5 %>%
 
 pd_c_index_targeted <- which(imputed_all_targeted5[[1]][[2]] %in% c('PD', "CO", "CM", "CY"))
 # Create table with bh-corrected p values
-targeted_univar_pd_logistic_list <- purrr::map(1:5, ~bh_univariate_age(targeted_all_amelia5_pd_ind, var = "PD_ind", family = "binomial", conc = FALSE, imp_num = .x, types_index = pd_c_targeted_index))
+targeted_univar_pd_logistic_list <- purrr::map(1:5, ~bh_univariate_age(targeted_all_amelia5_pd_ind, var = "PD_ind", family = "binomial", conc = FALSE, imp_num = .x, types_index = pd_c_index_targeted, get_coefs = T))
 
 # for each metabolite, use the smallest p value out of the 5 imputations. this is very generous
 targeted_univar_pd_logistic <- targeted_univar_pd_logistic_list %>%
@@ -1989,13 +2481,26 @@ univar_pd_names_sig <- msea_pd_table %>%
 write_tsv(univar_pd_names_sig, here("ad_pd", "msea_pd_names_sig.txt"))
 
 
+
+# reporting large univar coefs
+targeted_univar_pd_median_coef <- targeted_univar_pd_logistic_list %>%
+  bind_rows(.id = "imp") %>%
+  group_by(name) %>%
+  filter(Estimate == median(Estimate)) %>%
+  # break ties
+  slice(1) %>%
+  ungroup() %>%
+  arrange(desc(abs(Estimate))) %>%
+  mutate(OR_est = exp(Estimate))
+
+
 #### ADPD classification -----------------------------
 # classify AD against PD (ad is positive class)
 
 ad_pd_index_targeted <- which(imputed_all_targeted5[[1]][[2]] %in% c('AD', "PD"))
 
 # Create table with bh-corrected p values
-targeted_univar_adpd_logistic_list <- purrr::map(1:5, ~bh_univariate_age(targeted_all_amelia5_ad_ind, var = "AD_ind", family = "binomial", conc = FALSE, imp_num = .x, types_index = ad_pd_index_targeted))
+targeted_univar_adpd_logistic_list <- purrr::map(1:5, ~bh_univariate_age(targeted_all_amelia5_ad_ind, var = "AD_ind", family = "binomial", conc = FALSE, imp_num = .x, types_index = ad_pd_index_targeted, get_coefs = T))
 targeted_univar_adpd_logistic <- targeted_univar_adpd_logistic_list %>%
   bind_rows(.id = "imp") %>%
   group_by(name) %>%
@@ -2068,6 +2573,19 @@ msea_pd_smpdb <- read_csv(here("ad_pd", "msea_ora_smpdb_pd_result.csv")) %>%
 
 write_csv(msea_pd_smpdb, here("ad_pd", "msea_smpdb_pd_result_top10.csv"))
 
+
+
+
+# reporting large univar coefs
+targeted_univar_adpd_median_coef <- targeted_univar_adpd_logistic_list %>%
+  bind_rows(.id = "imp") %>%
+  group_by(name) %>%
+  filter(Estimate == median(Estimate)) %>%
+  # break ties
+  slice(1) %>%
+  ungroup() %>%
+  arrange(desc(abs(Estimate))) %>%
+  mutate(OR_est = exp(Estimate))
 
 
 
@@ -3050,12 +3568,12 @@ ggplot(missingness_by_type_untargeted_sig_pct, aes(pct_missing, name)) +
 untar_missingness_adpd_plot <- ggplot(missingness_by_type_untargeted_sig_pct, aes(fct_reorder(name, pct_missing), pct_missing)) +
   geom_col(aes(fill = fct_relevel(Type, "AD", after = 1)), position = "dodge", width = 0.75) + 
   #scale_color_manual(labels = c("CY", "CM", "CO", "AD", "PD"), values = c("lightskyblue", "dodgerblue", "blue", "darkgreen", "purple")) +
-  #theme(axis.text.x = element_text(angle= 90, hjust =1)) + 
-  theme(axis.text.x = element_blank()) + 
+  theme(axis.text.x = element_text(angle= 90, hjust =1)) + 
+  #theme(axis.text.x = element_blank()) + 
   labs(title = 'Percent Missingness by Type',
        subtitle = 'Untargeted, FDR < 0.05',
        y = "Percent Missing",
-       x = "Name",
+       x = "Metabolite",
        fill = "Type")  
 
 ggsave("untar_missingness_adpd.png",
@@ -3330,3 +3848,744 @@ lipids_naind_pd_in_all <- lipids_naind_pd_logistic %>%
 
 
 
+
+
+##### USING REDUCED_MODELING ANALYSIS, COMPARE PREDICTIONS TO TEST SCORES
+
+
+# get data with test scores
+ad_c_tracking_full <- read_csv('E:/Projects/metabolomics/csf_metabolomics/ad_pd/AD_C_Tracking2_tests.csv') %>%
+  mutate(LPDate = ifelse(str_sub(LPDate, 2, 2) == "/",
+                         str_c("0", LPDate),
+                         LPDate)) %>%
+  mutate(LPDate = ifelse(str_sub(LPDate, 5, 5) == "/",
+                         str_c(str_sub(ad_c_tracking_full$LPDate, 1,3), 
+                               "0", 
+                               str_sub(ad_c_tracking_full$LPDate, 4)),
+                         LPDate)) %>%
+  unite("id", c("LabLabel", "LPDate"), sep = "-")
+  #mutate(Type = fct_collapse(Type,'Control' = c('CO', 'CY', 'CM')))
+pd_tracking_full <- read_csv('E:/Projects/metabolomics/ND_Metabolomics/data/PDTracking.csv') %>%
+  left_join(panuc_data, by = c('PaNUCID' = 'subject_id'))
+
+
+
+# combine predictions to test scores
+# mostly interested in ad because prediction is poor
+untar_ad_pred <- untargeted_ad_reduced_detrend$predtruth_df %>%
+  inner_join(ad_c_tracking_full, by = "id")
+
+tar_ad_pred <- targeted_ad_reduced_detrend$predtruth_df %>%
+  inner_join(ad_c_tracking_full, by = "id")
+
+lipids_ad_pred <- lipids_ad_reduced_detrend$predtruth_df %>%
+  inner_join(ad_c_tracking_full, by = "id")
+
+untar_ad_pred %>%
+  pivot_longer(all_of(c("MMSWORLD", "IMMSCORE", "ANIMAL", "TMTTIMEA", "TMTTIMEB", "DELSCORE")), 
+               names_to = "test", values_to = "score") %>%
+  ggplot() +
+  geom_point(aes(score, imp_avg)) +
+  facet_wrap(~test, scales = "free_x")
+
+lipids_ad_pred %>%
+  pivot_longer(all_of(c("MMSWORLD", "IMMSCORE", "ANIMAL", "TMTTIMEA", "TMTTIMEB", "DELSCORE")), 
+               names_to = "test", values_to = "score") %>%
+  ggplot() +
+  geom_point(aes(score, imp_avg)) +
+  facet_wrap(~test, scales = "free_x")
+
+
+# PD
+untar_pd_pred <- untargeted_pd_reduced_detrend$predtruth_df %>%
+  inner_join(pd_tracking_full, by = c("id" = "PaNUCID"))
+tar_pd_pred <- targeted_pd_reduced_detrend$predtruth_df %>%
+  inner_join(pd_tracking_full, by = c("id" = "PaNUCID"))
+lipids_pd_pred <- lipids_pd_reduced_detrend$predtruth_df %>%
+  inner_join(pd_tracking_full, by = c("id" = "PaNUCID"))
+
+lipids_pd_pred %>%
+  pivot_longer(all_of(c("moca_score", "updrs_new_3_total")), 
+               names_to = "test", values_to = "score") %>%
+  filter(score > -500) %>%
+  ggplot() +
+  geom_point(aes(score, imp_avg, col = cognitive_status.x)) +
+  facet_wrap(~test, scales = "free_x")
+
+
+# AD/PD
+
+untar_adpd_pred <- untargeted_adpd_reduced_detrend$predtruth_df %>%
+  left_join(pd_tracking_full, by = c("id" = "PaNUCID")) %>%
+  left_join(ad_c_tracking_full, by = "id") %>%
+  mutate(TMTA = ifelse(type == "AD", TMTTIMEA, trails_a_seconds),
+         TMTB = ifelse(type == "AD", TMTTIMEB, trails_b_seconds_utc300),
+         animal = ifelse(type == "AD", ANIMAL, animals)
+         )
+tar_adpd_pred <- targeted_adpd_reduced_detrend$predtruth_df %>%
+  left_join(pd_tracking_full, by = c("id" = "PaNUCID")) %>%
+  left_join(ad_c_tracking_full, by = "id") %>%
+  mutate(TMTA = ifelse(type == "AD", TMTTIMEA, trails_a_seconds),
+         TMTB = ifelse(type == "AD", TMTTIMEB, trails_b_seconds_utc300),
+         animal = ifelse(type == "AD", ANIMAL, animals)
+  )
+lipids_adpd_pred <- lipids_adpd_reduced_detrend$predtruth_df %>%
+  left_join(pd_tracking_full, by = c("id" = "PaNUCID")) %>%
+  left_join(ad_c_tracking_full, by = "id") %>%
+  mutate(TMTA = ifelse(type == "AD", TMTTIMEA, trails_a_seconds),
+         TMTB = ifelse(type == "AD", TMTTIMEB, trails_b_seconds_utc300),
+         animal = ifelse(type == "AD", ANIMAL, animals)
+  )
+
+untar_adpd_pred %>%
+  pivot_longer(all_of(c("animal", "TMTA", "TMTB")), 
+               names_to = "test", values_to = "score") %>%
+  filter(score > -500 & score < 750) %>%
+  ggplot() +
+  geom_point(aes(score, imp_avg, col = type)) +
+  facet_wrap(~test, scales = "free_x")
+
+
+
+
+
+
+############ 
+
+# problem: we classify PD against AD well, and PD against controls well.
+#          Controls and AD were processed in one place, and PD was classified in a different place
+#          Q: Is PD easy to classify, or is the main difference the way they were processed?
+# goal: want to see if the main driver of performance is the processing difference
+# idea: 
+# fit ridge, then correlation between coef vectors
+
+# first read in imputed_all_targeted5
+t_pd_test <- logistic_control_analysis(imputed_all_targeted5, varname ="PD_ind", imp_num = 1, nlambda = 200, PD_ind = T, types = c("CO", "CM", "CY", "PD"), full_model = T, include_age_gender = FALSE,
+                                                      alpha = 0)
+t_ad_test <- logistic_control_analysis(imputed_all_targeted5, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("CO", "CM", "CY", "AD"), full_model = T, include_age_gender = FALSE,
+                                                      alpha = 0)
+t_adpd_test <- logistic_control_analysis(imputed_all_untargeted5, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("PD", "AD"), full_model = T, include_age_gender = FALSE,
+                                                        alpha = 0.5)
+
+adpd_coef_test <- coef(t_adpd_test, s = "lambda.min") %>% 
+  as.matrix() %>%
+  as_tibble(rownames= "id") %>%
+  set_names(c("id", "beta")) %>%
+  # what to do with intercepts?. this removes duplicate intercept
+  filter(beta != 0)
+
+
+# targeted data, just one imputation, remove age/sex
+test_dat_wmeta <- imputed_all_untargeted5[[1]][[1]]
+test_dat <- imputed_all_untargeted5[[1]][[1]][,-c(110,111)]
+# @param meta: do we include age and gender?
+# @param indices_to_transform: if we only want to transform PD subjects, then pass in the row indices of pd subjects from `data`
+sub_coef <- function(rownum, data, beta, meta = FALSE, indices_to_transform = NULL){
+  # check if we want to transform this row
+  if(!is.null(indices_to_transform)){
+    if(!(rownum %in% indices_to_transform)){
+      if(meta){
+        return(data[rownum,])
+      } else{
+        return(data[rownum, - which(colnames(data) %in% c("Age", "GenderM"))])
+      }
+      
+    }
+  }
+  # get row
+  a_row <- data[rownum,] %>% 
+    enframe() 
+  
+  # match row with beta
+  joined_row_beta <- a_row %>%
+    mutate(name2 = ifelse(str_detect(name, "\\s|-"), str_c("`", name, "`"), name)) %>%
+    left_join(beta, by = c("name2" = "id")) %>%
+    # if elastic net, 0 coefs will show up as NA in join
+    mutate(beta = ifelse(is.na(beta), 0, beta))
+  
+  # age/sex are detrended and not included in this model
+  # so set beta = 0 for age/sex
+  if(!meta){
+    joined_row_beta <- joined_row_beta %>% 
+      filter(!(name %in% c("Age", "GenderM")))
+  }
+  
+  
+  # row - row \cdot beta / norm(beta) * \beta
+  x_new <- joined_row_beta %>%
+    mutate(value_new = value -  sum(value * beta) / norm(beta, "f")^2 * beta) %>%
+    select(name, value_new) %>%
+    deframe()
+  
+  x_new
+}
+
+adpd_labels <- imputed_all_targeted5[[1]]$Type == "AD"
+
+# new_test_dat should not be able to distinguish ad from pd
+new_test_dat <- purrr::map_dfr(1:nrow(test_dat_wmeta), ~sub_coef(.x, test_dat, adpd_coef_test, meta = F)) %>%
+  as.matrix()
+
+new_test_dat_wmeta <- furrr::future_map_dfr(1:nrow(test_dat_wmeta), ~sub_coef(.x, test_dat_wmeta, adpd_coef_test, meta = T)) %>%
+  as.matrix()
+
+
+# prediction on the original, untransformed data. no expectations, can be anything
+
+predict(t_adpd_test, s = "lambda.min", type = "response", newx = test_dat)
+# (matches predict(t_adpd_test, s = "lambda.min", type = "response", newx = test_dat))
+# adpd_pred <- exp(test_dat %*% adpd_coef_test$beta) / (1 +exp(test_dat %*% adpd_coef_test$beta) )
+# check that i'm doing the math right
+#all(round(adpd_pred,3) == round(predict(t_adpd_test, s = "lambda.min", type = "response", newx = test_dat), 3))
+
+
+# prediction using the new, orthog test set -- check that this is all 0.5 
+new_adpd_pred <- exp(new_test_dat %*% adpd_coef_test$beta) / (1 +exp(new_test_dat %*% adpd_coef_test$beta) )
+predict(t_adpd_test, s = "lambda.min", type = "response", newx = new_test_dat)
+
+# potential problem: even in the new_test_dat (i.e. dataset orthogonal to the original beta vector)
+#                    we could have really good predictions. so let's try doing the same process again.
+
+imputed_all_targeted5_2 <- imputed_all_targeted5
+imputed_all_targeted5_2[[1]][[1]] <- new_test_dat_wmeta
+t_adpd_test2 <- logistic_control_analysis(imputed_all_targeted5_2, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("PD", "AD"), full_model = T, include_age_gender = FALSE,
+                                          alpha = 0.5)
+
+# see if we can separate ad/pd in the orthog dataset. (i.e is there rashomon set)
+predict(t_adpd_test2, newx = new_test_dat, s = "lambda.min", type = "response")
+
+
+### next.... test to see if we can still separate pd and control on this modified set
+pd_labels <- imputed_all_targeted5[[1]]$Type == "PD"
+t_pd_ORTHOG <- logistic_control_analysis(imputed_all_targeted5_2, varname ="PD_ind", imp_num = 1, nlambda = 200, PD_ind = T, types = c("CO", "CM", "CY", "PD"), full_model = T, include_age_gender = FALSE,
+                                         alpha = 0.5)
+orthog_pred <- predict(t_pd_ORTHOG, s = "lambda.min", type = "response", newx = new_test_dat)
+
+as_tibble(orthog_pred) %>% 
+  bind_cols(imputed_all_targeted5[[1]]$Type) %>% 
+  set_names(c("pred", "type")) %>% 
+  ggplot(aes(pred)) + 
+  geom_histogram() + 
+  facet_wrap(~type)
+
+pd_c_preds <- as_tibble(orthog_pred) %>% 
+  bind_cols(imputed_all_targeted5[[1]]$Type) %>% 
+  set_names(c("pred", "type")) %>%
+  filter(type != "AD") 
+
+fpr_tpr(pd_c_preds$pred, pd_c_preds$type == "PD")
+
+
+
+
+
+
+# idea: only transform the PD rows
+# so we will not be able to disguish the PD rows from AD.
+# i don't think I like this idea.
+pd_labels_o <- which(imputed_all_targeted5[[1]]$Type  == "PD")
+
+new_test_dato <- purrr::map_dfr(1:nrow(test_dat_wmeta), ~sub_coef(.x, test_dat_wmeta, adpd_coef_test, indices_to_transform = pd_labels_o)) %>%
+  as.matrix()
+new_test_dato_wmeta <- purrr::map_dfr(1:nrow(test_dat_wmeta), ~sub_coef(.x, test_dat_wmeta, adpd_coef_test, indices_to_transform = pd_labels_o, meta = T)) %>%
+  as.matrix()
+
+new_adpd_predo <- exp(new_test_dato %*% adpd_coef_test$beta) / (1 +exp(new_test_dato %*% adpd_coef_test$beta) )
+
+# check that this is all 0.5
+new_adpd_predo[pd_labels_o,]
+
+
+imputed_all_targeted5_2o <- imputed_all_targeted5
+imputed_all_targeted5_2o[[1]][[1]] <- new_test_dato_wmeta
+t_adpd_test2o <- logistic_control_analysis(imputed_all_targeted5_2o, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("PD", "AD"), full_model = T, include_age_gender = FALSE,
+                                          alpha = 0)
+
+# these are all 0.5, so it looks like we don't have the rashomom set we were concerned about
+predict(t_adpd_test2o, newx = new_test_dato, s = "lambda.min", type = "response")
+
+
+### next.... test to see if we can still separate pd and control on this modified set
+pd_labels <- imputed_all_targeted5[[1]]$Type == "PD"
+t_pd_ORTHOGo <- logistic_control_analysis(imputed_all_targeted5_2o, varname ="PD_ind", imp_num = 1, nlambda = 200, PD_ind = T, types = c("CO", "CM", "CY", "PD"), full_model = T, include_age_gender = FALSE,
+                                         alpha = 0)
+orthog_predo <- predict(t_pd_ORTHOGo, s = "lambda.min", type = "response", newx = new_test_dato)
+fpr_tpr(orthog_predo, pd_labels)
+
+
+as_tibble(orthog_predo) %>% 
+  bind_cols(imputed_all_targeted5[[1]]$Type) %>% 
+  set_names(c("pred", "type")) %>% 
+  ggplot(aes(pred)) + 
+  geom_histogram() + 
+  facet_wrap(~type)
+
+
+
+pd_c_predso <- as_tibble(orthog_predo) %>% 
+  bind_cols(imputed_all_targeted5[[1]]$Type) %>% 
+  set_names(c("pred", "type")) %>%
+  filter(type != "AD") 
+
+fpr_tpr(pd_c_predso$pred, pd_c_predso$type == "PD")
+
+
+### end ORTHOG PD ONLY idea.
+
+
+#### OK ABOVE JUST WORKS WITH ONE IMPUTATION, AND PREDICTIONS ARE NOT LOO (ONLY LAMBDA IS)
+#### NOW LETS DO LOO WITH ONE IMPUTATION
+
+
+
+t_pd_ORTHOG2o <- logistic_control_analysis(imputed_all_targeted5_2o, varname ="PD_ind", imp_num = 1, nlambda = 200, PD_ind = T, types = c("CO", "CM", "CY", "PD"), full_model = F, include_age_gender = FALSE,
+                                         alpha = 0)
+
+tibble(pred = t_pd_ORTHOG2o$pred, type = t_pd_ORTHOG2o$truth) %>%
+  filter(type != "AD") %$%
+  fpr_tpr(pred, type)
+
+tibble(pred = t_pd_ORTHOG2o$pred, type = t_pd_ORTHOG2o$truth) %>%
+  ggplot(aes(pred)) + 
+  geom_histogram() + 
+  facet_wrap(~type)
+
+t_ad_ORTHOG <- logistic_control_analysis(imputed_all_targeted5_2, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("CO", "CM", "CY", "AD"), full_model = F, include_age_gender = FALSE,
+                                       alpha = 0)
+
+
+
+
+
+#### OK ABOVE JUST WORKS WITH LOO WITH ONE IMPUTATION
+
+
+# does this orthogonalization strategy work if we use elastic net?
+t_adpd_test_enet <- logistic_control_analysis(imputed_all_targeted5, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("PD", "AD"), full_model = T, include_age_gender = FALSE,
+                                              alpha = 0)
+
+adpd_coef_test_enet <- coef(t_adpd_test_enet, s = "lambda.min") %>% 
+  as.matrix() %>%
+  as_tibble(rownames= "id") %>%
+  set_names(c("id", "beta")) %>%
+  # what to do with intercepts?. this removes duplicate intercept
+  filter(beta != 0)
+
+new_test_dat_wmeta_enet <- purrr::map_dfr(1:nrow(test_dat_wmeta), ~sub_coef(.x, test_dat_wmeta, adpd_coef_test_enet, meta = T)) %>%
+  as.matrix()
+
+new_test_dat_enet <- purrr::map_dfr(1:nrow(test_dat_wmeta), ~sub_coef(.x, test_dat_wmeta, adpd_coef_test_enet, meta = F)) %>%
+  as.matrix()
+
+
+imputed_all_targeted5_2_enet <- imputed_all_targeted5
+imputed_all_targeted5_2_enet[[1]][[1]] <- new_test_dat_wmeta_enet
+t_adpd_test2_enet <- logistic_control_analysis(imputed_all_targeted5_2_enet, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("PD", "AD"), full_model = T, include_age_gender = FALSE,
+                                          alpha = 0)
+
+# these are not around 0.5, so it looks like we have the rashomom set we were concerned about
+predict(t_adpd_test2_enet, newx = new_test_dat_enet, s = "lambda.min", type = "response")
+
+
+
+adpd_coef_test_enet2 <- coef(t_adpd_test2_enet, s = "lambda.min") %>% 
+  as.matrix() %>%
+  as_tibble(rownames= "id") %>%
+  set_names(c("id", "beta")) %>%
+  # what to do with intercepts?. this removes duplicate intercept
+  filter(beta != 0)
+
+new_test_dat_enet2 <- purrr::map_dfr(1:nrow(new_test_dat_wmeta_enet), ~sub_coef(.x, new_test_dat_wmeta_enet, adpd_coef_test_enet2, meta = F)) %>%
+  as.matrix()
+
+
+
+imputed_all_targeted5_3_enet <- imputed_all_targeted5_2_enet
+imputed_all_targeted5_3_enet[[1]][[1]] <- new_test_dat_enet2
+t_adpd_test2_enet <- logistic_control_analysis(imputed_all_targeted5_2_enet, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("PD", "AD"), full_model = T, include_age_gender = FALSE,
+                                               alpha = 0)
+
+# these are all 0.5, so it looks like we don't have the rashomom set we were concerned about
+predict(t_adpd_test2_enet, newx = new_test_dat_enet2, s = "lambda.min", type = "response")
+
+
+test_orthog <- function(beta, imp = imputed_all_targeted5){
+  
+}
+
+
+
+
+
+
+
+#### check univariate tests before and after orthogonalization
+
+unt_adpd_mod <- logistic_control_analysis(imputed_all_untargeted5, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("PD", "AD"), full_model = T, include_age_gender = FALSE,
+                                              alpha = 0.5)
+
+unt_adpd_coef <- coef(unt_adpd_mod, s = "lambda.min") %>% 
+  as.matrix() %>%
+  as_tibble(rownames= "id") %>%
+  set_names(c("id", "beta")) %>%
+  # what to do with intercepts?. this removes duplicate intercept
+  filter(beta != 0)
+
+#' quick function to orthogonalize each row of dat (a dataframe) by coef (a vector)
+adpd_orthog <- function(dat, coef){
+  purrr::map_dfr(1:nrow(dat), ~sub_coef(.x, dat, coef, meta = T)) %>%
+    as.matrix()
+}
+
+unt_impute5_orthog <- furrr::future_map(imputed_all_untargeted5, function(lst){
+  lst[[1]]  <- adpd_orthog(lst[[1]], coef = unt_adpd_coef)
+  lst
+})
+
+
+unt_all_amelia5_pd_ind_orthog <- unt_impute5_orthog %>%
+  purrr::map(~cbind(.x[[1]], "PD_ind" = ifelse(unt_impute5_orthog[[1]][[2]] == "PD", 1, 0)) %>% list())
+
+pd_c_index <- which(unt_impute5_orthog[[1]][[2]] %in% c('PD', 'CO', 'CY', 'CM'))
+
+unt_univar_pd_list_orthog <- 
+  furrr::future_map(seq_along(unt_all_amelia5_pd_ind_orthog), 
+             ~bh_univariate_age(unt_all_amelia5_pd_ind_orthog, 
+                                types_index = pd_c_index, 
+                                var = "PD_ind", family = "binomial", conc = FALSE, imp_num = .x))
+
+unt_univar_pd_orthog <- unt_univar_pd_list_orthog %>%
+  bind_rows(.id = "imp") %>%
+  group_by(name) %>%
+  filter(bh_p_value == median(bh_p_value)) %>%
+  # break ties
+  slice(1) %>%
+  ungroup()
+
+unt_univar_pd_orthog  <- readRDS(here("ad_pd", "unt_univar_pd_orthog.Rds"))
+# saveRDS(unt_univar_pd_orthog, here("ad_pd", "unt_univar_pd_orthog.Rds"))
+
+
+unt_univar_pd_orthog_ridge  <- readRDS(here("ad_pd", "unt_univar_pd_orthog_ridge.Rds"))
+# saveRDS(unt_univar_pd_orthog, here("ad_pd", "unt_univar_pd_orthog_ridge.Rds"))
+
+
+
+### compare
+
+
+
+untargeted_univar_pd_logistic %>%
+  select(name, imp, "full" = bh_p_value) %>%
+  inner_join(unt_univar_pd_orthog, by = c("imp", "name")) %>%
+  pivot_longer(c("full", "bh_p_value"), names_to = "var", values_to = "bh_p_val")  %>%
+  mutate(var = ifelse(var == "bh_p_value", "orthog", var))
+
+
+
+
+
+
+
+
+
+
+### targeted version
+#### check univariate tests before and after orthogonalization
+
+t_adpd_mod <- logistic_control_analysis(imputed_all_targeted5, varname ="AD_ind", imp_num = 1, nlambda = 200, AD_ind = T, types = c("PD", "AD"), full_model = T, include_age_gender = FALSE,
+                                          alpha = 0.5)
+
+t_adpd_coef <- coef(t_adpd_mod, s = "lambda.min") %>% 
+  as.matrix() %>%
+  as_tibble(rownames= "id") %>%
+  set_names(c("id", "beta")) %>%
+  # what to do with intercepts?. this removes duplicate intercept
+  filter(beta != 0)
+
+
+t_impute5_orthog <- furrr::future_map(imputed_all_targeted5, function(lst){
+  lst[[1]]  <- adpd_orthog(lst[[1]], coef = t_adpd_coef)
+  lst
+})
+
+
+t_all_amelia5_pd_ind_orthog <- t_impute5_orthog %>%
+  purrr::map(~cbind(.x[[1]], "PD_ind" = ifelse(t_impute5_orthog[[1]][[2]] == "PD", 1, 0)) %>% list())
+
+pd_c_index <- which(t_impute5_orthog[[1]][[2]] %in% c('PD', 'CO', 'CY', 'CM'))
+
+t_univar_pd_list_orthog <- 
+  furrr::future_map(seq_along(t_all_amelia5_pd_ind_orthog), 
+                    ~bh_univariate_age(t_all_amelia5_pd_ind_orthog, 
+                                       types_index = pd_c_index, 
+                                       var = "PD_ind", family = "binomial", conc = FALSE, imp_num = .x))
+
+t_univar_pd_orthog <- t_univar_pd_list_orthog %>%
+  bind_rows(.id = "imp") %>%
+  group_by(name) %>%
+  filter(bh_p_value == median(bh_p_value)) %>%
+  # break ties
+  slice(1) %>%
+  ungroup()
+
+t_univar_pd_orthog  <- readRDS(here("ad_pd", "t_univar_pd_orthog.Rds"))
+# saveRDS(t_univar_pd_orthog, here("ad_pd", "t_univar_pd_orthog.Rds"))
+
+
+# unt_univar_pd_orthog_ridge  <- readRDS(here("ad_pd", "unt_univar_pd_orthog_ridge.Rds"))
+# saveRDS(unt_univar_pd_orthog, here("ad_pd", "unt_univar_pd_orthog_ridge.Rds"))
+
+
+
+### compare
+
+
+
+tar_pval_compare <- targeted_univar_pd_logistic %>%
+  select(name, imp, "full" = bh_p_value) %>%
+  inner_join(t_univar_pd_orthog, by = c("imp", "name")) %>%
+  rename("orthog" = bh_p_value) %>%
+  mutate(is_sig = case_when(
+    (full < 0.05 & orthog > 0.05) | (full > 0.05 & orthog < 0.05) ~ "one",
+    full < 0.05 &  orthog < 0.05 ~ "both",
+    TRUE ~ "neither") %>%
+      fct_relevel("both", "one")
+    )
+  #pivot_longer(c("full", "bh_p_value"), names_to = "var", values_to = "bh_p_val")  %>%
+  #mutate(var = ifelse(var == "bh_p_value", "orthog", var))
+
+
+tar_pval_compare %>% filter(is_sig != "zero")
+
+figure_a4 <- tar_pval_compare %>%
+  mutate(across(all_of(c("full", "orthog")), ~ -log10(.x))) %>%
+  ggplot() +
+  geom_point(aes(full, orthog, color = is_sig), size = 5) +
+  geom_abline(slope = 1, intercept = 0) +
+  labs(
+    title = "Comparison of univariate p-values before and after orthogonalization",
+    subtitle = "Targeted profile, logistic regression classifying PD vs control",
+    x = "BH-corrected -log10 p-value before orthogonalization",
+    y = "BH-corrected -log10 p-value after orthogonalization",
+    color = "p < 0.05?"
+  ) #+
+  #scale_color_viridis_d()
+
+ggsave("figure_a4.tiff",
+       type = 'cairo',
+       device = 'tiff',
+       plot = figure_a4,
+       path = here("plots", "adpd_figs", "appendix_figs"),
+       width = 83*2,
+       height = 100,
+       units = 'mm', dpi = 300)
+
+
+
+
+#### check untargeted performance after removing all missingness
+
+untar_nomis <- filter_and_impute_multi(wide_data_untargeted_detrend, c('CO', 'CY', 'CM',  "PD"), transpose = F, impute =F, na_threshold = 0)
+
+no_mis_pd_mod <- logistic_control_analysis(untar_nomis, varname ="PD_ind", imp_num = 1, nlambda = 200, PD_ind = T, types = c("PD", "CO", "CY", "CM"), full_model = F, include_age_gender = FALSE,
+                                           alpha = 0.5)
+
+
+#### check untargeted performance after removing almost all missingness
+
+untar_mis10 <- filter_and_impute_multi(wide_data_untargeted_detrend, c('CO', 'CY', 'CM',  "PD"), na_threshold = 0.1)
+
+mis10_pd_mod <- furrr::future_map(seq_along(untar_mis10), ~logistic_control_analysis(untar_mis10, varname ="PD_ind", imp_num = .x, nlambda = 200, PD_ind = T, types = c("PD", "CO", "CY", "CM"), full_model = F, include_age_gender = FALSE,
+                                           alpha = 0.5), .options = furrr_options(seed = T))
+
+
+mis10_pd_mod[[1]]$roc_df
+
+
+saveRDS(mis10_pd_mod, here("ad_pd", "mis10_pd_mod.Rds"))
+
+
+#### check untargeted performance after removing almost all missingness
+
+untar_mis05 <- filter_and_impute_multi(wide_data_untargeted_detrend, c('CO', 'CY', 'CM',  "PD"), na_threshold = 0.05)
+
+mis05_pd_mod <- 
+  furrr::future_map(
+    seq_along(untar_mis05), 
+    ~logistic_control_analysis(
+      untar_mis05, varname ="PD_ind", imp_num = .x, nlambda = 200, 
+      PD_ind = T, types = c("PD", "CO", "CY", "CM"), 
+      full_model = F, include_age_gender = FALSE,
+      alpha = 0.5), .options = furrr_options(seed = T)
+    )
+
+
+mis05_pd_mod[[1]]$roc_df
+
+saveRDS(mis05_pd_mod, here("ad_pd", "mis05_pd_mod.Rds"))
+
+### even less missingness allowed
+
+untar_mis01 <- filter_and_impute_multi(wide_data_untargeted_detrend, c('CO', 'CY', 'CM',  "PD"), na_threshold = 0.01)
+
+mis01_pd_mod <- 
+  furrr::future_map(
+    seq_along(untar_mis01), 
+    ~logistic_control_analysis(
+      untar_mis05, varname ="PD_ind", imp_num = .x, nlambda = 200, 
+      PD_ind = T, types = c("PD", "CO", "CY", "CM"), 
+      full_model = F, include_age_gender = FALSE,
+      alpha = 0.5), .options = furrr_options(seed = T)
+  )
+
+
+mis01_pd_mod[[1]]$roc_df
+
+
+saveRDS(mis01_pd_mod, here("ad_pd", "mis01_pd_mod.Rds"))
+
+
+
+
+
+
+####### no levodopa? levodopa has mass 197.19, so remove all features between 196 and 199
+untar_nolev_impute5 <- filter_and_impute_multi(wide_data_untargeted_detrend_nolev, c('CO', 'CY', 'CM',  "PD"))
+noled_pd_mod <- 
+  furrr::future_map(
+    seq_along(untar_nolev_impute5), 
+    ~logistic_control_analysis(
+      untar_nolev_impute5, varname ="PD_ind", imp_num = .x, nlambda = 200, 
+      PD_ind = T, types = c("PD", "CO", "CY", "CM"), 
+      full_model = F, include_age_gender = FALSE,
+      alpha = 0.5), .options = furrr_options(seed = T)
+  )
+saveRDS(noled_pd_mod, here("ad_pd", "noled_pd_mod.Rds"))
+
+
+noled_pd_mod[[1]]$roc_df
+
+
+untar_nolev_impute5_adpd <- filter_and_impute_multi(wide_data_untargeted_detrend_nolev, c("AD",  "PD"))
+noled_adpd_mod <- 
+  furrr::future_map(
+    seq_along(untar_nolev_impute5_adpd), 
+    ~logistic_control_analysis(
+      untar_nolev_impute5_adpd, varname ="AD_ind", imp_num = .x, nlambda = 200, 
+      AD_ind = T, types = c("PD", "AD"), 
+      full_model = F, include_age_gender = FALSE,
+      alpha = 0.5), .options = furrr_options(seed = T)
+  )
+saveRDS(noled_adpd_mod, here("ad_pd", "noled_adpd_mod.Rds"))
+
+
+
+####### no levodopa? levodopa has mass 197.19, so remove all features between 196 and 199
+untar_nolev_enta_impute5 <- filter_and_impute_multi(wide_data_untargeted_detrend_nolev_noenta, c('CO', 'CY', 'CM',  "PD"))
+noled_noenta_pd_mod <- 
+  furrr::future_map(
+    seq_along(untar_nolev_enta_impute5), 
+    ~logistic_control_analysis(
+      untar_nolev_enta_impute5, varname ="PD_ind", imp_num = .x, nlambda = 200, 
+      PD_ind = T, types = c("PD", "CO", "CY", "CM"), 
+      full_model = F, include_age_gender = FALSE,
+      alpha = 0.5), .options = furrr_options(seed = T)
+  )
+saveRDS(noled_noenta_pd_mod, here("ad_pd", "noled_pd_mod.Rds"))
+
+
+noled_noenta_pd_mod[[1]]$roc_df
+
+
+untar_nolev_enta_impute5_adpd <- filter_and_impute_multi(wide_data_untargeted_detrend_nolev_noenta, c("AD",  "PD"))
+noled_noenta_adpd_mod <- 
+  furrr::future_map(
+    seq_along(untar_nolev_enta_impute5_adpd), 
+    ~logistic_control_analysis(
+      untar_nolev_enta_impute5_adpd, varname ="AD_ind", imp_num = .x, nlambda = 200, 
+      AD_ind = T, types = c("PD", "AD"), 
+      full_model = F, include_age_gender = FALSE,
+      alpha = 0.5), .options = furrr_options(seed = T)
+  )
+saveRDS(noled_noenta_adpd_mod, here("ad_pd", "noled_noenta_adpd_mod.Rds"))
+
+
+noled_noenta_adpd_mod[[1]]$roc_df
+
+
+
+
+
+
+
+
+
+# disease duration modeling
+
+pd_index <- imputed_all_untargeted5[[1]]$Type == "PD"
+
+duration_dat <- panuc_data %>%
+  select(subject_id, disease_duration_onset)
+
+pd_duration_test <- imputed_all_untargeted5[[1]]$Y[pd_index,] %>%
+  as_tibble() %>%
+  bind_cols(Id = imputed_all_untargeted5[[1]]$ID[pd_index]) %>%
+  inner_join(duration_dat, by = c("Id" = "subject_id"))
+
+# a <- cv.glmnet(x = imputed_all_untargeted5[[1]]$Y[pd_index,], y = pd_duration_test$disease_duration_onset, alpha = 0.5)
+# duration_pred <- predict(a, newx = imputed_all_untargeted5[[1]]$Y[pd_index,], s = "lambda.min")
+
+
+# pd_index <- imputed_all_targeted5[[1]]$Type == "PD"
+# pd_duration_test <- imputed_all_targeted5[[1]]$Y[pd_index,] %>%
+#   as_tibble() %>%
+#   bind_cols(Id = imputed_all_targeted5[[1]]$ID[pd_index]) %>%
+#   inner_join(duration_dat, by = c("Id" = "subject_id")) %>%
+#   select(-Id)
+# 
+# 
+# a <- cv.glmnet(imputed_all_targeted5[[1]]$Y[pd_index,], y = pd_duration_test$disease_duration_onset, nlambda = 1000, alpha = 0.5)
+# predict(a, newx = imputed_all_targeted5[[1]]$Y[pd_index,], s = "lambda.min")
+# 
+# a <- lm(disease_duration_onset ~ ., data = pd_duration_test %>% select(1:50, disease_duration_onset))
+# 
+# plot(predict(a) ~ pd_duration_test$disease_duration_onset)
+
+
+
+test_dat <- imputed_all_untargeted5[[1]]$Y[pd_index,]
+aa <- lapply(1:nrow(test_dat), function(x) loo_cvfit_glmnet(x, test_dat, pd_duration_test$disease_duration_onset, alpha = 0.5, 
+                                                                                         family = 'gaussian', penalize_age_gender = FALSE, penalize_AD_PD = FALSE, nlambda = 200, post_select = FALSE))
+
+
+fit_c_loo_age <- lapply(aa, function(x) x[[1]])
+pred_c_loo_age <- lapply(aa, function(x) x[[2]]) %>%
+  unlist
+
+#fit used to get lambda
+cv_fits <- lapply(aa, function(x) x[[3]])
+
+resid_c_loo_age <- pred_c_loo_age - pd_duration_test$disease_duration_onset
+
+
+### look at alpha = 0.5
+c_loo_age_table <- tibble(truth = pd_duration_test$disease_duration_onset,
+                          pred = pred_c_loo_age,
+                          resid = truth - pred
+)
+
+
+pred_truth_c <- ggplot(c_loo_age_table) + 
+  geom_point(aes(truth, pred, color = !!color)) + 
+  scale_color_brewer(type = 'qual', palette = 'Set1') +
+  labs(title = 'Control: True vs Predicted Age',
+       subtitle = paste0(name, ', alpha = 0.5, loo'),
+       x = 'True Age',
+       y = 'Predicted Age') + 
+  geom_abline(intercept = 0, slope = 1) + 
+  geom_richtext(aes(x = -Inf, y = Inf, hjust = 0, vjust = 1, label = paste0("R^2: ", cor(truth, pred, method = "pearson")^2 %>% round(2), 
+                                                                            "<br>RMSE: ", (truth - pred)^2 %>% mean %>% sqrt %>% round(2), 
+                                                                            "<br>MAE: ", (truth - pred) %>% abs %>% mean %>% round(2))),
+                size = 12
+  )

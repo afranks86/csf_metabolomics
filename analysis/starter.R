@@ -728,6 +728,7 @@ loo_cvfit_glmnet <- function(index, features, labels, lambda = NULL, full_fit = 
 #' @param y is the metric on y axis of desired plot (fpr for roc)
 #' @param x is the metric on x axis of desired plot (fpr for roc)
 #' Can also make precision recall curve by letting x = rec (or tpr), y = prec (or ppv)
+#' summary measure options from ROCR: measure = "f"; "sens" ; "spec", "ppv", "npv"
 fpr_tpr <- function(pred, label, y = 'tpr', x = 'fpr', label_ordering = NULL){
     rocpred <- ROCR::prediction(pred, label, label.ordering = label_ordering)
     rocfpr_tpr <- ROCR::performance(rocpred, measure = y, x.measure = x)
@@ -816,9 +817,11 @@ get_importance_tables <- function(full_model, drop_missing = F){
                 rowwise() %>%
                 mutate(name = str_replace_all(name, "_pos|_neg", ""),
                        mean_coef = mean(c(imp1, imp2, imp3, imp4, imp5)) %>% round(2),
-                       median_coef = median(c(imp1, imp2, imp3, imp4, imp5))) %>%
+                       median_coef = median(c(imp1, imp2, imp3, imp4, imp5)),
+                       sd_coef = sd(c(imp1, imp2, imp3, imp4, imp5)) %>% round(2)
+                       ) %>%
                 arrange(desc(abs(mean_coef))) %>%
-                select("Name" = name, "Avg Coef" = mean_coef) %>%
+                select("Name" = name, "Avg Coef" = mean_coef, "sd" = sd_coef) %>%
                 ungroup() %>%
                 filter(`Avg Coef` != 0)
         } else{
@@ -830,9 +833,11 @@ get_importance_tables <- function(full_model, drop_missing = F){
                 rowwise() %>%
                 mutate(name = str_replace_all(name, "_pos|_neg", ""),
                        mean_coef = mean(c(imp1, imp2, imp3, imp4, imp5)) %>% round(2),
-                       median_coef = median(c(imp1, imp2, imp3, imp4, imp5))) %>%
+                       median_coef = median(c(imp1, imp2, imp3, imp4, imp5)),
+                       sd_coef = sd(c(imp1, imp2, imp3, imp4, imp5)) %>% round(2)
+                       ) %>%
                 arrange(desc(abs(mean_coef))) %>%
-                select("Name" = name, "Avg Coef" = mean_coef) %>%
+                select("Name" = name, "Avg Coef" = mean_coef, "sd" = sd_coef) %>%
                 ungroup() %>%
                 filter(`Avg Coef` != 0)
         }
@@ -2010,23 +2015,6 @@ roc_fig <- function(roc_df, predtruth_df){
 }
 
 
-#' Function to get the median coefficient across five imputations for one of the leave one out models
-#' @param index is a natural number between 1 and the number of observations used in reduced_output
-#' @param reduced_output is the output of reduced_age_analysis()
-#' @return a vector of median retained coefficients across the five imputations for models fit on that loo model
-retained_one_obs <- function(index, reduced_output){
-    # quick check in case there is only 1 imputation
-    number_of_imputations <- length(reduced_output[[1]][[1]]$fit)
-    purrr::map(1:number_of_imputations, ~importance(reduced_output[[1]][[index]]$fit[[.x]]$fit, metabolites = F) %>%
-                   enframe(value = str_glue("imp{.x}"))) %>%
-        reduce(full_join, by = "name") %>%
-        rowwise() %>%
-        transmute(name, median_coef = median(c_across(starts_with('imp')), na.rm = T)) %>%
-        ungroup() %>%
-        deframe()
-}
-
-
 #' look at the retained coefs for fits across each of n leave one out models
 #' select the ones that show up > 1 - pct_mis% of the time.
 #' @param reduced_output is the output of reduced_age_analysis
@@ -2046,8 +2034,13 @@ retained_over_fits <- function(reduced_output, pct_mis = 0.05, only_return_pct =
     purrr::map(1:length(reduced_output[[1]]), ~retained_one_obs(.x, reduced_output)) %>%
         bind_rows() %>%
         select_if(function(x) sum(is.na(x))/length(x) <= pct_mis) %>%
-        map_dbl(~median(exp(.x), na.rm = T)) %>%
-        enframe(value = "median_OR")
+        imap_dfr(~tibble(name = .y,
+                         mean_OR = mean(exp(.x), na.rm = T), 
+                         sd_coef = sd(.x, na.rm = T)
+        )
+        )
+    # map_dbl(~mean(exp(.x), na.rm = T)) %>%
+    # enframe(value = "mean_OR")
 }
 
 
@@ -2080,6 +2073,8 @@ processed_files <- dir(path = file.path(data_path, 'analysis'), pattern="^prepro
 load(max(file.path(data_path, 'analysis', processed_files[grep("-20+", processed_files)])), verbose = T)
 load(file.path(data_path, 'data', 'got-ms',"identification_map.RData"), verbose = T)
 
+
+qc_long_got <- QC_long
 
 wide_data_got_og <- subject_data %>%     
     filter(!(Type %in% c("Other"))) %>%
@@ -2155,7 +2150,7 @@ load(max(file.path(data_path, 'analysis', processed_files_lipids[grep("-20+", pr
 # processed_files_lipids <- dir(path = data_path, pattern="^preprocessed_lipid_data*")
 # load(max(file.path(data_path, processed_files_lipids[grep("-20+", processed_files_lipids)])))
 
-
+qc_long_lipids <- QC_long
 
 wide_data_lipids_og <- subject_data %>%     
     filter(!(Type %in% c("Other"))) %>%
@@ -2178,6 +2173,8 @@ processed_files_untargeted <- dir(path = file.path(data_path, 'analysis'), patte
 load(max(file.path(data_path, 'analysis', processed_files_untargeted[grep("-20+", processed_files_untargeted)])), verbose = T)
 
 raw_data_untargeted <- subject_data
+
+qc_long_untargeted <- QC_long
 
 wide_data_untargeted_og <- subject_data %>%     
     filter(!(Type %in% c("Other"))) %>%
@@ -2247,6 +2244,7 @@ wide_data_untargeted_detrend_nolev_noenta <- subject_data_detrend %>%
 # Targeted data
 load(file.path(data_path, 'data', 'preprocessed_csf_data.RData'), verbose =  T)
 raw_data_targeted <- subject_data
+qc_long_targeted <- QC_long
 wide_data_targeted_og <- subject_data %>%     
     filter(!(Type %in% c("Other"))) %>%
     unite("Metabolite", c("Metabolite", "Mode")) %>% 
